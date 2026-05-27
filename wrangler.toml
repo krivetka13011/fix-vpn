@@ -1,6 +1,7 @@
 name = "fix-vpn"
 main = "worker/src/index.ts"
 compatibility_date = "2025-05-27"
+account_id = "abd3a9f30b070ba7b27946ecb6b82945"
 
 [assets]
 directory = "./dist"
@@ -9,8 +10,8 @@ not_found_handling = "single-page-application"
 
 [[kv_namespaces]]
 binding = "USERS_KV"
-id = "REPLACE_WITH_KV_NAMESPACE_ID"
-preview_id = "REPLACE_WITH_PREVIEW_KV_ID"
+id = "e520e4356dc24cbca90dfd32f962b34e"
+preview_id = "e520e4356dc24cbca90dfd32f962b34e"
 
 [vars]
-WEBAPP_URL = "https://fix-vpn.YOUR_SUBDOMAIN.workers.dev"
+WEBAPP_URL = "https://fix-vpn.workers.dev"

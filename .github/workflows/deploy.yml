@@ -1,0 +1,61 @@
+name: Deploy FIX VPN
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install and build
+        run: npm ci && npm run build
+
+      - name: Deploy to Cloudflare Workers
+        id: deploy
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: deploy
+
+      - name: Resolve deployment URL
+        id: url
+        run: |
+          URL="${{ steps.deploy.outputs.deployment-url }}"
+          if [ -z "$URL" ]; then
+            echo "deployment-url not returned by wrangler-action" >&2
+            exit 1
+          fi
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "Live URL: $URL"
+
+      - name: Sync Worker secrets
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          WEBAPP_URL: ${{ steps.url.outputs.url }}
+        run: |
+          printf '%s' "$TELEGRAM_BOT_TOKEN" | npx wrangler secret put TELEGRAM_BOT_TOKEN
+          printf '%s' "$WEBAPP_URL" | npx wrangler secret put WEBAPP_URL
+
+      - name: Configure Telegram webhook and menu
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          WEBAPP_URL: ${{ steps.url.outputs.url }}
+        run: |
+          curl -fsS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setWebhook?url=${WEBAPP_URL}/api/webhook/telegram"
+          curl -fsS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setChatMenuButton" \
+            -H "Content-Type: application/json" \
+            -d "{\"menu_button\":{\"type\":\"web_app\",\"text\":\"FIX VPN\",\"web_app\":{\"url\":\"${WEBAPP_URL}\"}}}"

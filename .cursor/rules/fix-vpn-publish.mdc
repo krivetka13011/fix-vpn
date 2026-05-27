@@ -1,0 +1,28 @@
+---
+description: FIX VPN — публикация после каждого изменения
+alwaysApply: true
+---
+
+# FIX VPN: публикация и готовый результат
+
+## После каждого значимого изменения
+
+1. `npm run build` — сборка без ошибок
+2. `git add` → `git commit` → `git push origin master` (или `main`)
+3. Деплой: push запускает `.github/workflows/deploy.yml` на Cloudflare Workers
+
+Не оставлять пользователю «промежуточные» инструкции — в конце ответа давать **готовые ссылки для проверки**.
+
+## Секреты (не коммитить)
+
+- `TELEGRAM_BOT_TOKEN`, `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` — только GitHub Secrets / Wrangler secrets
+- Токен бота никогда не писать в код, README и коммиты
+
+## Проверка для пользователя
+
+- Mini App: URL Worker + бот в Telegram → «FIX VPN» / «Открыть FIX VPN»
+- Репозиторий: https://github.com/krivetka13011/fix-vpn
+
+## Ошибки
+
+Исправлять самостоятельно после CI/деплоя; пользователь проверяет только итог в Telegram и в браузере.

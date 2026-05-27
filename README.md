@@ -86,15 +86,12 @@ npm run dev
 
 Полный API + UI в Telegram тестируется через `wrangler dev` и туннель или после деплоя.
 
-## GitHub
+## Репозиторий и автодеплой
 
-```bash
-git init
-git add .
-git commit -m "Initial FIX VPN Mini App"
-gh auth login
-gh repo create fix-vpn --public --source=. --push
-```
+- **GitHub:** https://github.com/krivetka13011/fix-vpn  
+- **Автодеплой:** каждый `git push` в `master` / `main` → GitHub Actions → Cloudflare Workers  
+
+Один раз добавьте секреты (см. `SETUP-SECRETS.md`), затем деплой идёт без вашего участия.
 
 ## Безопасность
 

@@ -3,11 +3,6 @@ main = "worker/src/index.ts"
 compatibility_date = "2025-05-27"
 account_id = "abd3a9f30b070ba7b27946ecb6b82945"
 
-[assets]
-directory = "./dist"
-binding = "ASSETS"
-not_found_handling = "single-page-application"
-
 [[kv_namespaces]]
 binding = "USERS_KV"
 id = "e520e4356dc24cbca90dfd32f962b34e"

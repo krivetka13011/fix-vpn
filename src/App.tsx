@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { fetchCatalog, fetchMe } from "./api/client";
+import { AppHeader } from "./components/AppHeader";
 import { TabBar } from "./components/TabBar";
 import { HelpTab } from "./components/HelpTab";
 import { PlansTab } from "./components/PlansTab";
@@ -113,8 +114,8 @@ export default function App() {
     const tg = window.Telegram?.WebApp;
     tg?.ready();
     tg?.expand();
-    tg?.setHeaderColor?.("#000000");
-    tg?.setBackgroundColor?.("#000000");
+    tg?.setHeaderColor?.("#0a0a0a");
+    tg?.setBackgroundColor?.("#0a0a0a");
     load();
   }, [load]);
 
@@ -123,6 +124,7 @@ export default function App() {
   if (!user) {
     return (
       <div className="app">
+        <div className="app-watermark" aria-hidden />
         <main className="content">
           <div className="error-state">
             <img src="/logo.png" alt="" className="error-logo" />
@@ -138,6 +140,8 @@ export default function App() {
 
   return (
     <div className="app">
+      <div className="app-watermark" aria-hidden />
+      <AppHeader />
       <main className="content">
         {syncing && <div className="sync-line" aria-hidden />}
         {tab === "help" && <HelpTab catalog={catalog} user={user} />}

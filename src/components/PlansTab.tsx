@@ -61,19 +61,21 @@ export function PlansTab({ catalog, onPurchased }: Props) {
 
   return (
     <>
-      <header className="page-head">
-        <p className="page-eyebrow">Подписка</p>
+      <section className="page-hero">
         <h1 className="page-title">Тарифы</h1>
-        <p className="page-desc">Базовый — от 199 ₽/мес · Про — личный сервер</p>
-      </header>
+        <p className="page-desc">
+          Базовый — от 199 ₽/мес · Про — личный сервер
+        </p>
+      </section>
 
       <div className="stack">
         {catalog.tariffs.map((tariff) => {
           const selected = planType === tariff.id;
+          const monthly = tariff.periods[1];
           return (
             <article
               key={tariff.id}
-              className={`surface tariff ${selected ? "selected" : ""}`}
+              className={`glass-panel tariff-card ${selected ? "selected" : ""} ${tariff.id === "personal" ? "popular" : ""}`}
               onClick={() => {
                 setPlanType(tariff.id);
                 if (tariff.id === "personal") setExtraDevices(0);
@@ -88,29 +90,35 @@ export function PlansTab({ catalog, onPurchased }: Props) {
               role="button"
               tabIndex={0}
             >
+              {tariff.id === "personal" && (
+                <span className="tariff-badge-pop">Про</span>
+              )}
               <div className="tariff-inner">
-                {tariff.id === "personal" && (
-                  <span className="tariff-badge">Про</span>
-                )}
-                <div className="tariff-top">
-                  <div className="tariff-radio" aria-hidden>
-                    <span className="tariff-radio-dot" />
-                  </div>
-                  <div className="tariff-info">
+                <div className="tariff-head">
+                  <div>
                     <div className="tariff-name">{tariff.name}</div>
                     <div className="tariff-sub">{tariff.subtitle}</div>
                   </div>
+                  <div className="tariff-price">
+                    <div className="tariff-price-value">{monthly} ₽</div>
+                    <div className="tariff-price-period">/ мес</div>
+                  </div>
                 </div>
+                <div className="tariff-divider" />
                 <ul className="feature-list">
                   {tariff.features.map((f) => (
-                    <li key={f}>{f}</li>
+                    <li key={f}>
+                      <span className="material-symbols-outlined filled">
+                        check_circle
+                      </span>
+                      {f}
+                    </li>
                   ))}
                 </ul>
               </div>
 
               {selected && (
                 <div className="tariff-expand">
-                  <div className="divider" />
                   <p className="section-label">Период</p>
                   <div className="chip-row periods">
                     {catalog.billingMonths.map((m) => (
@@ -131,7 +139,7 @@ export function PlansTab({ catalog, onPurchased }: Props) {
 
                   {tariff.id === "basic" && (
                     <>
-                      <div className="divider" />
+                      <div className="tariff-divider" />
                       <p className="section-label">Доп. устройства</p>
                       <p className="hint-text">
                         +{catalog.extraDevicePricePerMonth} ₽ за устройство в месяц
@@ -148,7 +156,7 @@ export function PlansTab({ catalog, onPurchased }: Props) {
                         >
                           −
                         </button>
-                        <div className="stepper-meta">
+                        <div>
                           <div className="stepper-value">+{extraDevices}</div>
                           <div className="stepper-hint">к тарифу</div>
                         </div>
@@ -173,7 +181,7 @@ export function PlansTab({ catalog, onPurchased }: Props) {
         })}
 
         {total != null && (
-          <div className="total-bar">
+          <div className="glass-panel total-bar">
             <span className="total-label">Итого (демо)</span>
             <span className="total-price">{total} ₽</span>
           </div>
@@ -181,7 +189,7 @@ export function PlansTab({ catalog, onPurchased }: Props) {
 
         <button
           type="button"
-          className="btn btn-fill"
+          className="btn btn-fill btn-pill"
           disabled={!planType || !months || loading}
           onClick={handleBuy}
         >

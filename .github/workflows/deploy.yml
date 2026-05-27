@@ -48,6 +48,7 @@ jobs:
           echo '```' >> "$GITHUB_STEP_SUMMARY"
 
           URLS=$(grep -oE 'https://[a-zA-Z0-9.-]+\.workers\.dev' deploy.log | sort -u)
+          URLS="$URLS https://fix-vpn.krivetka13011.workers.dev"
           for URL in $URLS; do
             echo "Testing $URL ..."
             CODE=$(curl -sS -o /tmp/health.json -w '%{http_code}' "$URL/api/health" || echo "000")

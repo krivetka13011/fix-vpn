@@ -36,55 +36,30 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
-          npx wrangler@4.69.0 deploy --verbose 2>&1 | tee deploy.log
+          npx wrangler@4.69.0 deploy 2>&1 | tee deploy.log
           npx wrangler@4.69.0 deployments list 2>&1 | tee -a deploy.log
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-          tail -30 deploy.log >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Upload deploy log on failure
-        if: failure() && steps.wrangler.outcome == 'failure'
-        uses: actions/upload-artifact@v4
-        with:
-          name: deploy-log
-          path: deploy.log
-
-      - name: Resolve deployment URL
-        id: url
-        if: steps.wrangler.outcome == 'success'
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-        run: |
-          URL=$(grep -oE 'https://[a-zA-Z0-9.-]+\.workers\.dev' deploy.log | head -1)
-          if [ -z "$URL" ]; then
-            URL=$(npx wrangler@4.69.0 deployments list 2>/dev/null | grep -oE 'https://[a-zA-Z0-9.-]+\.workers\.dev' | head -1)
-          fi
-          if [ -z "$URL" ]; then
-            echo "Could not parse URL from deploy.log:" >&2
-            cat deploy.log >&2
-            exit 1
-          fi
-          echo "url=$URL" >> "$GITHUB_OUTPUT"
-          echo "Live URL: $URL"
-          echo "## FIX VPN — Live URL" >> "$GITHUB_STEP_SUMMARY"
-          echo "**$URL**" >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Verify deployment
+      - name: Verify and get Live URL
         id: verify
         if: steps.wrangler.outcome == 'success'
         run: |
-          for URL in $(grep -oE 'https://[a-zA-Z0-9.-]+\.workers\.dev' deploy.log | sort -u); do
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          cat deploy.log >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+          URLS=$(grep -oE 'https://[a-zA-Z0-9.-]+\.workers\.dev' deploy.log | sort -u)
+          for URL in $URLS; do
             echo "Testing $URL ..."
             CODE=$(curl -sS -o /tmp/health.json -w '%{http_code}' "$URL/api/health" || echo "000")
-            echo "health HTTP $CODE"
-            cat /tmp/health.json 2>/dev/null || true
             if [ "$CODE" = "200" ] && grep -q '"ok":true' /tmp/health.json 2>/dev/null; then
               echo "url=$URL" >> "$GITHUB_OUTPUT"
+              echo "## FIX VPN — Live URL" >> "$GITHUB_STEP_SUMMARY"
+              echo "**$URL**" >> "$GITHUB_STEP_SUMMARY"
               curl -fsS -o /dev/null -w "home HTTP %{http_code}\n" "$URL/"
               exit 0
             fi
           done
-          echo "No working workers.dev URL found" >&2
+          echo "No working URL. Tried: $URLS" >&2
           exit 1
 
       - name: Set secrets

@@ -61,102 +61,132 @@ export function PlansTab({ catalog, onPurchased }: Props) {
 
   return (
     <>
-      <header className="header">
-        <img src="/logo.png" alt="" className="header-logo" />
-        <div>
-          <div className="header-title">Тарифы</div>
-          <div className="header-sub">Базовый и Про</div>
-        </div>
+      <header className="page-head">
+        <p className="page-eyebrow">Подписка</p>
+        <h1 className="page-title">Тарифы</h1>
+        <p className="page-desc">Базовый — от 199 ₽/мес · Про — личный сервер</p>
       </header>
 
-      {catalog.tariffs.map((tariff) => (
-        <div
-          key={tariff.id}
-          className={`card tariff-block ${planType === tariff.id ? "selected" : ""}`}
-        >
-          <button
-            type="button"
-            className="tariff-head"
-            onClick={() => {
-              setPlanType(tariff.id);
-              if (tariff.id === "personal") setExtraDevices(0);
-            }}
-          >
-            <div className="tariff-name">{tariff.name}</div>
-            <div className="tariff-sub">{tariff.subtitle}</div>
-          </button>
-          <ul className="feature-list">
-            {tariff.features.map((f) => (
-              <li key={f}>{f}</li>
-            ))}
-          </ul>
-          {planType === tariff.id && (
-            <>
-              <div className="period-wrap">
-                <span className="section-title-sm">Период</span>
-                <div className="chip-grid period-row">
-                  {catalog.billingMonths.map((m) => (
-                    <button
-                      key={m}
-                      type="button"
-                      className={`chip ${months === m ? "active" : ""}`}
-                      onClick={() => setMonths(m)}
-                    >
-                      <span>{PERIOD_LABELS[m]}</span>
-                      <span className="chip-price">{tariff.periods[m]} ₽</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-              {tariff.id === "basic" && (
-                <div className="extra-block">
-                  <span className="section-title-sm">Доп. устройства</span>
-                  <p className="hint-text">
-                    +{catalog.extraDevicePricePerMonth} ₽ / устройство / мес
-                  </p>
-                  <div className="device-stepper">
-                    <button
-                      type="button"
-                      className="stepper-btn"
-                      disabled={extraDevices <= 0}
-                      onClick={() => setExtraDevices((n) => Math.max(0, n - 1))}
-                    >
-                      −
-                    </button>
-                    <span className="stepper-value">+{extraDevices}</span>
-                    <button
-                      type="button"
-                      className="stepper-btn"
-                      disabled={extraDevices >= 10}
-                      onClick={() => setExtraDevices((n) => Math.min(10, n + 1))}
-                    >
-                      +
-                    </button>
+      <div className="stack">
+        {catalog.tariffs.map((tariff) => {
+          const selected = planType === tariff.id;
+          return (
+            <article
+              key={tariff.id}
+              className={`surface tariff ${selected ? "selected" : ""}`}
+              onClick={() => {
+                setPlanType(tariff.id);
+                if (tariff.id === "personal") setExtraDevices(0);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  setPlanType(tariff.id);
+                  if (tariff.id === "personal") setExtraDevices(0);
+                }
+              }}
+              role="button"
+              tabIndex={0}
+            >
+              <div className="tariff-inner">
+                <div className="tariff-top">
+                  <div className="tariff-radio" aria-hidden>
+                    <span className="tariff-radio-dot" />
+                  </div>
+                  <div className="tariff-info">
+                    <div className="tariff-name">{tariff.name}</div>
+                    <div className="tariff-sub">{tariff.subtitle}</div>
                   </div>
                 </div>
+                <ul className="feature-list">
+                  {tariff.features.map((f) => (
+                    <li key={f}>{f}</li>
+                  ))}
+                </ul>
+              </div>
+
+              {selected && (
+                <div className="tariff-expand">
+                  <div className="divider" />
+                  <p className="section-label">Период</p>
+                  <div className="chip-row periods">
+                    {catalog.billingMonths.map((m) => (
+                      <button
+                        key={m}
+                        type="button"
+                        className={`chip period ${months === m ? "active" : ""}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setMonths(m);
+                        }}
+                      >
+                        <span>{PERIOD_LABELS[m]}</span>
+                        <span className="chip-price">{tariff.periods[m]} ₽</span>
+                      </button>
+                    ))}
+                  </div>
+
+                  {tariff.id === "basic" && (
+                    <>
+                      <div className="divider" />
+                      <p className="section-label">Доп. устройства</p>
+                      <p className="hint-text">
+                        +{catalog.extraDevicePricePerMonth} ₽ за устройство в месяц
+                      </p>
+                      <div className="device-stepper">
+                        <button
+                          type="button"
+                          className="stepper-btn"
+                          disabled={extraDevices <= 0}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setExtraDevices((n) => Math.max(0, n - 1));
+                          }}
+                        >
+                          −
+                        </button>
+                        <div className="stepper-meta">
+                          <div className="stepper-value">+{extraDevices}</div>
+                          <div className="stepper-hint">к тарифу</div>
+                        </div>
+                        <button
+                          type="button"
+                          className="stepper-btn"
+                          disabled={extraDevices >= 10}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setExtraDevices((n) => Math.min(10, n + 1));
+                          }}
+                        >
+                          +
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
               )}
-            </>
-          )}
-        </div>
-      ))}
+            </article>
+          );
+        })}
 
-      {total != null && (
-        <div className="card total-card">
-          <span>Итого (демо)</span>
-          <span className="total-price">{total} ₽</span>
-        </div>
-      )}
+        {total != null && (
+          <div className="total-bar">
+            <span className="total-label">Итого (демо)</span>
+            <span className="total-price">{total} ₽</span>
+          </div>
+        )}
 
-      <button
-        type="button"
-        className="btn-primary"
-        disabled={!planType || !months || loading}
-        onClick={handleBuy}
-      >
-        {loading ? "Оформление…" : "Оформить подписку"}
-      </button>
+        <button
+          type="button"
+          className="btn btn-fill"
+          disabled={!planType || !months || loading}
+          onClick={handleBuy}
+        >
+          {loading ? "Оформление…" : "Оформить подписку"}
+        </button>
 
-      {message && <p className="message-text">{message}</p>}
+        {message && <p className="toast">{message}</p>}
+      </div>
     </>
   );
 }

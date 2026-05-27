@@ -125,11 +125,7 @@ export default function App() {
       <div className="app">
         <main className="content">
           <div className="error-state">
-            <img
-              src="/logo.png"
-              alt=""
-              style={{ width: 72, marginBottom: 16, borderRadius: 12 }}
-            />
+            <img src="/logo.png" alt="" className="error-logo" />
             <p>
               {apiError ??
                 "Откройте приложение в Telegram: @FIXVPNfast_bot"}
@@ -143,11 +139,7 @@ export default function App() {
   return (
     <div className="app">
       <main className="content">
-        {syncing && (
-          <div className="loading" style={{ marginBottom: 8 }}>
-            Синхронизация…
-          </div>
-        )}
+        {syncing && <div className="sync-line" aria-hidden />}
         {tab === "help" && <HelpTab catalog={catalog} user={user} />}
         {tab === "plans" && (
           <PlansTab catalog={catalog} onPurchased={load} />

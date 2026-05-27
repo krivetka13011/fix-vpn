@@ -44,11 +44,16 @@ export function ProfileTab({ user, fallbackPhoto }: Props) {
       ? `До ${formatRuDate(sub.endsAt)}`
       : sub.status === "expired"
         ? `Закончилась ${formatRuDate(sub.endsAt)}`
-        : "Нет активной подписки";
+        : "Нет подписки";
 
   return (
     <>
-      <div className="profile-hero">
+      <header className="page-head">
+        <p className="page-eyebrow">Аккаунт</p>
+        <h1 className="page-title">Профиль</h1>
+      </header>
+
+      <div className="profile-block">
         {photo ? (
           <img src={photo} alt="" className="profile-avatar" />
         ) : (
@@ -56,26 +61,30 @@ export function ProfileTab({ user, fallbackPhoto }: Props) {
             {user.displayName.charAt(0).toUpperCase()}
           </div>
         )}
+        <h2 className="profile-name">{user.displayName}</h2>
+        {user.username && (
+          <p className="profile-handle">@{user.username}</p>
+        )}
       </div>
 
-      <div className="card profile-card">
-        <div className="profile-stat">
-          <span className="profile-stat-label">Тариф</span>
-          <span className="profile-stat-value">{tariffName}</span>
+      <div className="stat-grid">
+        <div className="stat-cell">
+          <span className="stat-label">Тариф</span>
+          <span className="stat-value">{tariffName}</span>
         </div>
-        <div className="profile-stat">
-          <span className="profile-stat-label">Подписка</span>
-          <span className="profile-stat-value">
+        <div className="stat-cell">
+          <span className="stat-label">Статус</span>
+          <span className="stat-value">
             <span className={`badge ${statusClass}`}>{statusLabel}</span>
           </span>
         </div>
-        <div className="profile-stat">
-          <span className="profile-stat-label">Действие</span>
-          <span className="profile-stat-value">{actionLabel}</span>
+        <div className="stat-cell">
+          <span className="stat-label">Устройства</span>
+          <span className="stat-value">{devicesLabel}</span>
         </div>
-        <div className="profile-stat">
-          <span className="profile-stat-label">Устройства</span>
-          <span className="profile-stat-value">{devicesLabel}</span>
+        <div className="stat-cell wide">
+          <span className="stat-label">Подписка</span>
+          <span className="stat-value">{actionLabel}</span>
         </div>
       </div>
     </>

@@ -33,98 +33,93 @@ export function HelpTab({ catalog, user }: Props) {
       return;
     }
     copyText(key);
-    setHint("Ключ скопирован. Вставьте его в выбранный клиент и включите VPN.");
+    setHint("Ключ скопирован — вставьте в клиент и включите VPN");
     window.Telegram?.WebApp?.HapticFeedback?.impactOccurred("medium");
   }
 
   return (
     <>
-      <header className="header">
-        <img src="/logo.png" alt="FIX VPN" className="header-logo" />
-        <div>
-          <div className="header-title">Помощь</div>
-          <div className="header-sub">Поддержка и подключение</div>
-        </div>
+      <header className="page-head">
+        <p className="page-eyebrow">FIX VPN</p>
+        <h1 className="page-title">Помощь</h1>
+        <p className="page-desc">Поддержка, установка клиента и подключение</p>
       </header>
 
-      <div className="card">
-        <button
-          type="button"
-          className="btn-primary"
-          onClick={() => openSupportChat(catalog.supportTelegramId)}
-        >
-          Связаться с поддержкой
-        </button>
-        <button
-          type="button"
-          className="btn-secondary"
-          style={{ marginTop: 10 }}
-          onClick={() => openTelegramLink(catalog.telegramChannelUrl)}
-        >
-          Telegram-канал
-        </button>
-      </div>
-
-      <div className="card">
-        <h3 className="section-title-sm">Устройство</h3>
-        <div className="chip-grid">
-          {PLATFORMS.map((p) => (
-            <button
-              key={p.id}
-              type="button"
-              className={`chip ${platform === p.id ? "active" : ""}`}
-              onClick={() => setPlatform(p.id)}
-            >
-              {p.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div className="card">
-        <h3 className="section-title-sm">Клиент</h3>
-        <div className="chip-grid chip-grid-3">
-          {CLIENTS.map((c) => (
-            <button
-              key={c.id}
-              type="button"
-              className={`chip ${client === c.id ? "active" : ""}`}
-              onClick={() => setClient(c.id)}
-            >
-              {c.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <button type="button" className="btn-primary" onClick={handleInstall}>
-        Установить клиент
-      </button>
-      <button
-        type="button"
-        className="btn-secondary"
-        style={{ marginTop: 10 }}
-        onClick={handleConnect}
-      >
-        Подключиться
-      </button>
-
-      {hint && <p className="message-text">{hint}</p>}
-
-      {key && (
-        <div className="card">
-          <h3 className="section-title-sm">VPN-ключ</h3>
-          <div className="key-box">{key}</div>
+      <div className="stack">
+        <div className="surface">
           <button
             type="button"
-            className="btn-secondary"
-            style={{ marginTop: 10 }}
-            onClick={() => copyText(key)}
+            className="btn btn-fill"
+            onClick={() => openSupportChat(catalog.supportTelegramId)}
           >
-            Скопировать ключ
+            Написать в поддержку
+          </button>
+          <button
+            type="button"
+            className="btn btn-ghost"
+            style={{ marginTop: 10 }}
+            onClick={() => openTelegramLink(catalog.telegramChannelUrl)}
+          >
+            Telegram-канал
           </button>
         </div>
-      )}
+
+        <div className="surface">
+          <p className="section-label">Устройство</p>
+          <div className="chip-row">
+            {PLATFORMS.map((p) => (
+              <button
+                key={p.id}
+                type="button"
+                className={`chip ${platform === p.id ? "active" : ""}`}
+                onClick={() => setPlatform(p.id)}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="surface">
+          <p className="section-label">Клиент</p>
+          <div className="chip-row">
+            {CLIENTS.map((c) => (
+              <button
+                key={c.id}
+                type="button"
+                className={`chip ${client === c.id ? "active" : ""}`}
+                onClick={() => setClient(c.id)}
+              >
+                {c.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <button type="button" className="btn btn-fill" onClick={handleInstall}>
+          Установить клиент
+        </button>
+        <button type="button" className="btn btn-ghost" onClick={handleConnect}>
+          Подключиться
+        </button>
+
+        {hint && <p className="toast">{hint}</p>}
+
+        {key && (
+          <div className="surface">
+            <p className="section-label">VPN-ключ</p>
+            <div className="key-box">{key}</div>
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              style={{ marginTop: 12 }}
+              onClick={() => copyText(key)}
+            >
+              Скопировать
+            </button>
+          </div>
+        )}
+      </div>
     </>
   );
 }

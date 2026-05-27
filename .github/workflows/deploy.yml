@@ -46,6 +46,13 @@ jobs:
           fi
           echo "url=$URL" >> "$GITHUB_OUTPUT"
           echo "Live URL: $URL"
+          {
+            echo "## FIX VPN — Live URL"
+            echo ""
+            echo "**$URL**"
+            echo ""
+            echo "Скопируйте в [@BotFather](https://t.me/BotFather) → ваш бот → **Configure Mini App**"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Set WEBAPP_URL secret
         env:

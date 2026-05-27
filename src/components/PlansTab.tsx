@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
-import type { BillingMonths, Catalog, PlanType, UserProfile } from "../types";
+import type { BillingMonths, Catalog, PlanType } from "../types";
 import { purchasePlan } from "../api/client";
 import { useTelegramMainButton } from "../hooks/useTelegramMainButton";
 

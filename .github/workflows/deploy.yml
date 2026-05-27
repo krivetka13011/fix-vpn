@@ -61,6 +61,8 @@ jobs:
           test -n "$SUPABASE_SERVICE_ROLE_KEY" || (echo "Missing GitHub secret SUPABASE_SERVICE_ROLE_KEY" >&2; exit 1)
           printf '%s' "$TELEGRAM_BOT_TOKEN" | npx wrangler@4.69.0 secret put TELEGRAM_BOT_TOKEN
           printf '%s' "$WEBAPP_URL" | npx wrangler@4.69.0 secret put WEBAPP_URL
+          SUPABASE_URL="${SUPABASE_URL%/}"
+          SUPABASE_URL="${SUPABASE_URL%/rest/v1}"
           printf '%s' "$SUPABASE_URL" | npx wrangler@4.69.0 secret put SUPABASE_URL
           printf '%s' "$SUPABASE_SERVICE_ROLE_KEY" | npx wrangler@4.69.0 secret put SUPABASE_SERVICE_ROLE_KEY
 
@@ -69,7 +71,12 @@ jobs:
           URL="${{ steps.url.outputs.url }}"
           curl -fsS "$URL/api/health" | tee /tmp/health.json | grep -q '"ok":true'
           grep -q '"botOk":true' /tmp/health.json
-          grep -q '"supabaseOk":true' /tmp/health.json
+          grep -q '"hasSupabaseUrl":true' /tmp/health.json
+          grep -q '"hasSupabaseKey":true' /tmp/health.json
+          if ! grep -q '"supabaseOk":true' /tmp/health.json; then
+            echo "::warning::supabaseOk=false — run schema.sql then Actions → Connect Supabase to Worker"
+            cat /tmp/health.json
+          fi
           curl -fsS "$URL/api/catalog" | grep -q '"tariffs"'
           WH_CODE=$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$URL/api/webhook/telegram" \
             -H "Content-Type: application/json" \

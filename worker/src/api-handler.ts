@@ -168,6 +168,8 @@ export async function handleApiRequest(
       ok: true,
       hasToken: Boolean(env.TELEGRAM_BOT_TOKEN),
       hasWebAppUrl: Boolean(env.WEBAPP_URL),
+      hasSupabaseUrl: Boolean(env.SUPABASE_URL),
+      hasSupabaseKey: Boolean(env.SUPABASE_SERVICE_ROLE_KEY),
       botOk,
       supabaseOk,
       supabaseStatus,

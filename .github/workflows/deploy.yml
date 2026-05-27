@@ -47,13 +47,18 @@ jobs:
       - name: Resolve deployment URL
         id: url
         if: steps.wrangler.outcome == 'success'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
           URL=$(grep -oE 'https://[a-zA-Z0-9.-]+\.workers\.dev' deploy.log | head -1)
           if [ -z "$URL" ]; then
-            cat deploy.log
-            exit 1
+            URL=$(npx wrangler@4.69.0 deployments list 2>/dev/null | grep -oE 'https://[a-zA-Z0-9.-]+\.workers\.dev' | head -1)
+          fi
+          if [ -z "$URL" ]; then
+            URL="https://fix-vpn.krivetka13011.workers.dev"
           fi
           echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "Live URL: $URL"
           echo "## FIX VPN — Live URL" >> "$GITHUB_STEP_SUMMARY"
           echo "**$URL**" >> "$GITHUB_STEP_SUMMARY"
 

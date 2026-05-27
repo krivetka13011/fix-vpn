@@ -13,10 +13,15 @@ export function formatRuDate(iso: string | null | undefined): string {
 }
 
 export function openSupportChat(telegramId: number) {
+  openTelegramLink(`https://t.me/user?id=${telegramId}`);
+}
+
+export function openTelegramLink(url: string) {
   const tg = window.Telegram?.WebApp;
-  const url = `https://t.me/user?id=${telegramId}`;
   if (tg?.openTelegramLink) {
     tg.openTelegramLink(url);
+  } else if (tg?.openLink) {
+    tg.openLink(url);
   } else {
     window.open(url, "_blank");
   }

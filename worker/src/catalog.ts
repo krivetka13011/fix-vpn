@@ -1,8 +1,9 @@
 export type PlanType = "basic" | "personal";
-export type BillingMonths = 1 | 3 | 6 | 12;
+export type BillingMonths = 1 | 2 | 3 | 6 | 12;
 
-export const EXTRA_DEVICE_PRICE_PER_MONTH = 99;
+export const EXTRA_DEVICE_PRICE_PER_MONTH = 75;
 export const SUPPORT_TELEGRAM_ID = 8312175683;
+export const TELEGRAM_CHANNEL_URL = "https://t.me/fixvpn";
 
 export const TARIFFS: Record<
   PlanType,
@@ -11,30 +12,60 @@ export const TARIFFS: Record<
     name: string;
     subtitle: string;
     includedDevices: number | null;
+    speedMbps: number | null;
+    features: string[];
     periods: Record<BillingMonths, number>;
   }
 > = {
   basic: {
     id: "basic",
     name: "Базовый",
-    subtitle: "1 устройство в тарифе",
+    subtitle: "199 ₽ / мес",
     includedDevices: 1,
-    periods: { 1: 199, 3: 499, 6: 899, 12: 1499 },
+    speedMbps: null,
+    features: [
+      "Безлимитный трафик",
+      "Выбор нескольких стран",
+      "1 устройство в тарифе",
+      "Доп. устройства +75 ₽ / мес",
+    ],
+    periods: { 1: 199, 2: 378, 3: 529, 6: 999, 12: 1799 },
   },
   personal: {
     id: "personal",
-    name: "Персональный сервер",
-    subtitle: "Высокая скорость · безлимит устройств",
+    name: "Про",
+    subtitle: "999 ₽ / мес · личный сервер",
     includedDevices: null,
-    periods: { 1: 499, 3: 1299, 6: 2299, 12: 3999 },
+    speedMbps: 1000,
+    features: [
+      "Личный сервер",
+      "Безграничное количество устройств",
+      "Скорость до 1000 Мб/с",
+      "Безлимитный трафик",
+    ],
+    periods: { 1: 999, 2: 1898, 3: 2697, 6: 4799, 12: 8999 },
   },
 };
+
+export const BILLING_MONTHS: BillingMonths[] = [1, 2, 3, 6, 12];
 
 export function periodLabel(months: BillingMonths): string {
   const map: Record<BillingMonths, string> = {
     1: "1 месяц",
+    2: "2 месяца",
     3: "3 месяца",
     6: "6 месяцев",
+    12: "1 год",
+  };
+  return map[months];
+}
+
+export function periodChipLabel(months: BillingMonths): string {
+  const map: Record<BillingMonths, string> = {
+    1: "1 мес",
+    2: "2 мес",
+    3: "3 мес",
+    6: "6 мес",
     12: "1 год",
   };
   return map[months];

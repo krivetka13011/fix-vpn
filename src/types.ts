@@ -1,6 +1,8 @@
 export type PlanType = "basic" | "personal";
-export type BillingMonths = 1 | 3 | 6 | 12;
+export type BillingMonths = 1 | 2 | 3 | 6 | 12;
 export type SubscriptionStatus = "none" | "active" | "expired";
+export type DevicePlatform = "android" | "ios" | "windows" | "mac";
+export type VpnClientId = "happ" | "v2raytun" | "hiddify";
 
 export interface Subscription {
   status: SubscriptionStatus;
@@ -39,6 +41,8 @@ export interface Tariff {
   name: string;
   subtitle: string;
   includedDevices: number | null;
+  speedMbps: number | null;
+  features: string[];
   periods: Record<BillingMonths, number>;
 }
 
@@ -46,7 +50,8 @@ export interface Catalog {
   tariffs: Tariff[];
   extraDevicePricePerMonth: number;
   supportTelegramId: number;
+  telegramChannelUrl: string;
   billingMonths: BillingMonths[];
 }
 
-export type TabId = "instructions" | "plans" | "support" | "profile";
+export type TabId = "help" | "plans" | "profile";

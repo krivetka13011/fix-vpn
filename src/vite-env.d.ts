@@ -36,6 +36,7 @@ interface TelegramWebApp {
   setBackgroundColor?: (color: string) => void;
   enableClosingConfirmation?: () => void;
   openTelegramLink?: (url: string) => void;
+  openLink?: (url: string) => void;
 }
 
 interface Window {

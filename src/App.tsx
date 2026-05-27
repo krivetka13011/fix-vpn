@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { fetchCatalog, fetchMe } from "./api/client";
 import { TabBar } from "./components/TabBar";
-import { InstructionsTab } from "./components/InstructionsTab";
+import { HelpTab } from "./components/HelpTab";
 import { PlansTab } from "./components/PlansTab";
-import { SupportTab } from "./components/SupportTab";
 import { ProfileTab } from "./components/ProfileTab";
 import type { Catalog, TabId, UserProfile } from "./types";
 
@@ -12,21 +11,36 @@ const DEFAULT_CATALOG: Catalog = {
     {
       id: "basic",
       name: "Базовый",
-      subtitle: "1 устройство в тарифе",
+      subtitle: "199 ₽ / мес",
       includedDevices: 1,
-      periods: { 1: 199, 3: 499, 6: 899, 12: 1499 },
+      speedMbps: null,
+      features: [
+        "Безлимитный трафик",
+        "Выбор нескольких стран",
+        "1 устройство в тарифе",
+        "Доп. устройства +75 ₽ / мес",
+      ],
+      periods: { 1: 199, 2: 378, 3: 529, 6: 999, 12: 1799 },
     },
     {
       id: "personal",
-      name: "Персональный сервер",
-      subtitle: "Высокая скорость · безлимит устройств",
+      name: "Про",
+      subtitle: "999 ₽ / мес · личный сервер",
       includedDevices: null,
-      periods: { 1: 499, 3: 1299, 6: 2299, 12: 3999 },
+      speedMbps: 1000,
+      features: [
+        "Личный сервер",
+        "Безграничное количество устройств",
+        "Скорость до 1000 Мб/с",
+        "Безлимитный трафик",
+      ],
+      periods: { 1: 999, 2: 1898, 3: 2697, 6: 4799, 12: 8999 },
     },
   ],
-  extraDevicePricePerMonth: 99,
+  extraDevicePricePerMonth: 75,
   supportTelegramId: 8312175683,
-  billingMonths: [1, 3, 6, 12],
+  telegramChannelUrl: "https://t.me/fixvpn",
+  billingMonths: [1, 2, 3, 6, 12],
 };
 
 function emptySubscription(): UserProfile["subscription"] {
@@ -60,8 +74,7 @@ function devFallbackUser(): UserProfile | null {
 }
 
 export default function App() {
-  const [tab, setTab] = useState<TabId>("instructions");
-  const [plansFocusDevices, setPlansFocusDevices] = useState(false);
+  const [tab, setTab] = useState<TabId>("help");
   const [user, setUser] = useState<UserProfile | null>(() => devFallbackUser());
   const [catalog, setCatalog] = useState<Catalog>(DEFAULT_CATALOG);
   const [syncing, setSyncing] = useState(false);
@@ -100,12 +113,8 @@ export default function App() {
     const tg = window.Telegram?.WebApp;
     tg?.ready();
     tg?.expand();
-    tg?.setHeaderColor?.("#121212");
-    tg?.setBackgroundColor?.("#121212");
-    document.documentElement.style.setProperty(
-      "--bg",
-      tg?.themeParams?.bg_color ?? "#121212"
-    );
+    tg?.setHeaderColor?.("#000000");
+    tg?.setBackgroundColor?.("#000000");
     load();
   }, [load]);
 
@@ -135,45 +144,19 @@ export default function App() {
     <div className="app">
       <main className="content">
         {syncing && (
-          <div className="loading" style={{ marginBottom: 8, opacity: 0.7 }}>
+          <div className="loading" style={{ marginBottom: 8 }}>
             Синхронизация…
           </div>
         )}
-        {tab === "instructions" && (
-          <InstructionsTab
-            user={user}
-            onGoPlans={() => setTab("plans")}
-          />
-        )}
+        {tab === "help" && <HelpTab catalog={catalog} user={user} />}
         {tab === "plans" && (
-          <PlansTab
-            catalog={catalog}
-            user={user}
-            onPurchased={load}
-            focusExtraDevices={plansFocusDevices}
-          />
+          <PlansTab catalog={catalog} user={user} onPurchased={load} />
         )}
-        {tab === "support" && <SupportTab catalog={catalog} />}
         {tab === "profile" && (
-          <ProfileTab
-            user={user}
-            catalog={catalog}
-            fallbackPhoto={tgPhoto}
-            onGoBuyDevices={() => {
-              setPlansFocusDevices(true);
-              setTab("plans");
-            }}
-            onUserUpdated={load}
-          />
+          <ProfileTab user={user} fallbackPhoto={tgPhoto} />
         )}
       </main>
-      <TabBar
-        active={tab}
-        onChange={(t) => {
-          if (t !== "plans") setPlansFocusDevices(false);
-          setTab(t);
-        }}
-      />
+      <TabBar active={tab} onChange={setTab} />
     </div>
   );
 }

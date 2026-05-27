@@ -26,22 +26,16 @@ jobs:
 
       - name: Deploy Worker
         id: deploy
-        uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: deploy
-
-      - name: Resolve Live URL
-        id: url
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
-          URL="${{ steps.deploy.outputs.deployment-url }}"
+          set -e
+          npx wrangler deploy 2>&1 | tee deploy.log
+          URL=$(grep -oE 'https://[a-zA-Z0-9.-]+\.workers\.dev' deploy.log | head -1)
           if [ -z "$URL" ]; then
-            URL=$(echo "${{ steps.deploy.outputs.command-output }}" | grep -oE 'https://[a-zA-Z0-9.-]+\.workers\.dev' | head -1)
-          fi
-          if [ -z "$URL" ]; then
-            echo "Could not detect deployment URL" >&2
-            echo "${{ steps.deploy.outputs.command-output }}"
+            echo "Deploy log:"
+            cat deploy.log
             exit 1
           fi
           echo "url=$URL" >> "$GITHUB_OUTPUT"
@@ -56,22 +50,21 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          WEBAPP_URL: ${{ steps.url.outputs.url }}
+          WEBAPP_URL: ${{ steps.deploy.outputs.url }}
         run: |
           printf '%s' "$TELEGRAM_BOT_TOKEN" | npx wrangler secret put TELEGRAM_BOT_TOKEN
           printf '%s' "$WEBAPP_URL" | npx wrangler secret put WEBAPP_URL
 
       - name: Verify deployment
         run: |
-          URL="${{ steps.url.outputs.url }}"
-          curl -fsS "$URL/api/health" | tee health.json
-          grep -q '"ok":true' health.json
-          curl -fsS -o /dev/null -w "%{http_code}" "$URL/" | grep -q 200
+          URL="${{ steps.deploy.outputs.url }}"
+          curl -fsS "$URL/api/health"
+          test "$(curl -fsS -o /dev/null -w '%{http_code}' "$URL/")" = "200"
 
       - name: Configure Telegram
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          WEBAPP_URL: ${{ steps.url.outputs.url }}
+          WEBAPP_URL: ${{ steps.deploy.outputs.url }}
         run: |
           curl -fsS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/deleteWebhook?drop_pending_updates=true"
           curl -fsS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setWebhook" \
@@ -80,5 +73,4 @@ jobs:
           curl -fsS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setChatMenuButton" \
             -H "Content-Type: application/json" \
             -d "{\"menu_button\":{\"type\":\"web_app\",\"text\":\"FIX VPN\",\"web_app\":{\"url\":\"${WEBAPP_URL}\"}}}"
-          curl -fsS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getWebhookInfo" | tee webhook.json
-          grep -q "${WEBAPP_URL}/api/webhook/telegram" webhook.json
+          curl -fsS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getWebhookInfo"

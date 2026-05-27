@@ -12,7 +12,7 @@
 |------|--------|
 | `CLOUDFLARE_API_TOKEN` | токен из шага 1 |
 | `CLOUDFLARE_ACCOUNT_ID` | `abd3a9f30b070ba7b27946ecb6b82945` |
-| `TELEGRAM_BOT_TOKEN` | токен от [@BotFather](https://t.me/BotFather) |
+| `TELEGRAM_BOT_TOKEN` | [@BotFather](https://t.me/BotFather) → бот → **API Token** (без него деплой падает) |
 
 ## 3. Запуск деплоя
 

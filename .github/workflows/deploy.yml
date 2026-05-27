@@ -36,7 +36,6 @@ jobs:
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: deploy
           secrets: |
             TELEGRAM_BOT_TOKEN
@@ -67,7 +66,6 @@ jobs:
       - name: Set WEBAPP_URL secret
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           WEBAPP_URL: ${{ steps.url.outputs.url }}
         run: echo -n "$WEBAPP_URL" | npx wrangler secret put WEBAPP_URL
 

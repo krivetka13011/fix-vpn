@@ -3,12 +3,16 @@ export interface SupabaseEnv {
   SUPABASE_SERVICE_ROLE_KEY: string;
 }
 
+export function normalizeSupabaseUrl(url: string): string {
+  return url.trim().replace(/\/$/, "").replace(/\/rest\/v1\/?$/i, "");
+}
+
 export async function sbRequest(
   env: SupabaseEnv,
   path: string,
   init: RequestInit = {}
 ): Promise<Response> {
-  const base = env.SUPABASE_URL.replace(/\/$/, "");
+  const base = normalizeSupabaseUrl(env.SUPABASE_URL);
   const headers = new Headers(init.headers);
   headers.set("apikey", env.SUPABASE_SERVICE_ROLE_KEY);
   headers.set("Authorization", `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`);

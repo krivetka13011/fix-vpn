@@ -27,7 +27,9 @@ jobs:
           test -n "$TELEGRAM_BOT_TOKEN" || (echo "Нет TELEGRAM_BOT_TOKEN" >&2; exit 1)
           test -n "$SUPABASE_URL" || (echo "Нет SUPABASE_URL" >&2; exit 1)
           test -n "$SUPABASE_SERVICE_ROLE_KEY" || (echo "Нет SUPABASE_SERVICE_ROLE_KEY" >&2; exit 1)
-          echo "$SUPABASE_URL" | grep -qE '^https://[a-z0-9-]+\.supabase\.co$' || (echo "SUPABASE_URL должен быть https://xxx.supabase.co без слэша" >&2; exit 1)
+          SUPABASE_URL="${SUPABASE_URL%/}"
+          SUPABASE_URL="${SUPABASE_URL%/rest/v1}"
+          echo "$SUPABASE_URL" | grep -qE '^https://[a-z0-9-]+\.supabase\.co$' || (echo "SUPABASE_URL: https://xxx.supabase.co (можно с /rest/v1 — обрежется)" >&2; exit 1)
           echo "$SUPABASE_SERVICE_ROLE_KEY" | grep -qE '^(eyJ|sb_secret_)' || (echo "Нужен Secret key (sb_secret_...), не Publishable" >&2; exit 1)
           echo "GitHub secrets OK"
 
@@ -36,6 +38,8 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: |
+          SUPABASE_URL="${SUPABASE_URL%/}"
+          SUPABASE_URL="${SUPABASE_URL%/rest/v1}"
           CODE=$(curl -sS -o /tmp/sb.json -w '%{http_code}' \
             "$SUPABASE_URL/rest/v1/users?select=id&limit=1" \
             -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" \

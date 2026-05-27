@@ -14,7 +14,13 @@
 
 `https://xxxxxxxx.supabase.co`
 
-Скопируйте целиком → GitHub Secret **`SUPABASE_URL`**.
+Можно скопировать и с хвостом `/rest/v1/` — приложение обрежет само.
+
+В GitHub Secret **`SUPABASE_URL`** вставьте:
+
+`https://dtxdbni*****dcryst.supabase.co`
+
+(без `/rest/v1/` — так надёжнее)
 
 Если в Data API пусто: **Settings** → **General** → вверху **Reference ID** / ссылка на API — или кнопка **Connect** вверху страницы проекта.
 

@@ -1,7 +1,8 @@
-import { handleApiRequest, type ApiEnv } from "./api-handler";
-
-export interface Env extends ApiEnv {
+export interface Env {
   ASSETS: Fetcher;
+  USERS_KV: KVNamespace;
+  TELEGRAM_BOT_TOKEN?: string;
+  WEBAPP_URL?: string;
 }
 
 export default {
@@ -9,20 +10,12 @@ export default {
     const url = new URL(request.url);
 
     if (url.pathname === "/api/health") {
-      return Response.json({
-        ok: true,
-        hasToken: Boolean(env.TELEGRAM_BOT_TOKEN),
-        hasWebAppUrl: Boolean(env.WEBAPP_URL),
-      });
+      return Response.json({ ok: true });
     }
 
     if (url.pathname.startsWith("/api/")) {
-      try {
-        return await handleApiRequest(request, env, url.pathname);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : "Unknown error";
-        return Response.json({ error: message }, { status: 500 });
-      }
+      const mod = await import("./api-handler");
+      return mod.handleApiRequest(request, env, url.pathname);
     }
 
     return env.ASSETS.fetch(request);

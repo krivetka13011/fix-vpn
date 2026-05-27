@@ -1,17 +1,48 @@
 import { useCallback, useEffect, useState } from "react";
-import { fetchMe, fetchPlans } from "./api/client";
+import { fetchCatalog, fetchMe } from "./api/client";
 import { TabBar } from "./components/TabBar";
-import { HomeTab } from "./components/HomeTab";
-import { SubscriptionsTab } from "./components/SubscriptionsTab";
+import { InstructionsTab } from "./components/InstructionsTab";
+import { PlansTab } from "./components/PlansTab";
+import { SupportTab } from "./components/SupportTab";
 import { ProfileTab } from "./components/ProfileTab";
-import type { Plan, TabId, UserProfile } from "./types";
+import type { Catalog, TabId, UserProfile } from "./types";
 
-const DEFAULT_PLANS: Plan[] = [
-  { months: 1, label: "1 месяц", priceRub: 199 },
-  { months: 3, label: "3 месяца", priceRub: 499, badge: "−15%" },
-  { months: 6, label: "6 месяцев", priceRub: 899, badge: "−25%" },
-  { months: 12, label: "1 год", priceRub: 1499, badge: "Лучшая цена" },
-];
+const DEFAULT_CATALOG: Catalog = {
+  tariffs: [
+    {
+      id: "basic",
+      name: "Базовый",
+      subtitle: "1 устройство в тарифе",
+      includedDevices: 1,
+      periods: { 1: 199, 3: 499, 6: 899, 12: 1499 },
+    },
+    {
+      id: "personal",
+      name: "Персональный сервер",
+      subtitle: "Высокая скорость · безлимит устройств",
+      includedDevices: null,
+      periods: { 1: 499, 3: 1299, 6: 2299, 12: 3999 },
+    },
+  ],
+  extraDevicePricePerMonth: 99,
+  supportTelegramId: 8312175683,
+  billingMonths: [1, 3, 6, 12],
+};
+
+function emptySubscription(): UserProfile["subscription"] {
+  return {
+    status: "none",
+    planType: null,
+    planLabel: null,
+    billingMonths: null,
+    startsAt: null,
+    endsAt: null,
+    purchasedAt: null,
+    vpnKey: null,
+    extraDevices: 0,
+    deviceTotal: null,
+  };
+}
 
 function devFallbackUser(): UserProfile | null {
   const tg = window.Telegram?.WebApp?.initDataUnsafe?.user;
@@ -19,24 +50,20 @@ function devFallbackUser(): UserProfile | null {
   const name = [tg.first_name, tg.last_name].filter(Boolean).join(" ");
   return {
     id: tg.id,
+    publicId: "local-preview",
     displayName: name || tg.username || "Пользователь",
     username: tg.username ?? null,
     photoUrl: tg.photo_url ?? null,
-    subscription: {
-      status: "none",
-      planMonths: null,
-      planLabel: null,
-      startsAt: null,
-      endsAt: null,
-      vpnKey: null,
-    },
+    subscription: emptySubscription(),
+    addons: [],
   };
 }
 
 export default function App() {
-  const [tab, setTab] = useState<TabId>("home");
+  const [tab, setTab] = useState<TabId>("instructions");
+  const [plansFocusDevices, setPlansFocusDevices] = useState(false);
   const [user, setUser] = useState<UserProfile | null>(() => devFallbackUser());
-  const [plans, setPlans] = useState<Plan[]>(DEFAULT_PLANS);
+  const [catalog, setCatalog] = useState<Catalog>(DEFAULT_CATALOG);
   const [syncing, setSyncing] = useState(false);
   const [apiError, setApiError] = useState<string | null>(null);
 
@@ -46,13 +73,13 @@ export default function App() {
     const fallback = devFallbackUser();
     if (fallback) setUser(fallback);
 
-    const [plansResult, meResult] = await Promise.allSettled([
-      fetchPlans(),
+    const [catalogResult, meResult] = await Promise.allSettled([
+      fetchCatalog(),
       fetchMe(),
     ]);
 
-    if (plansResult.status === "fulfilled") {
-      setPlans(plansResult.value.plans);
+    if (catalogResult.status === "fulfilled") {
+      setCatalog(catalogResult.value);
     }
 
     if (meResult.status === "fulfilled") {
@@ -112,28 +139,41 @@ export default function App() {
             Синхронизация…
           </div>
         )}
-        {user && (
-          <>
-            {tab === "home" && (
-              <HomeTab
-                user={user}
-                onGoSubscriptions={() => setTab("subscriptions")}
-              />
-            )}
-            {tab === "subscriptions" && (
-              <SubscriptionsTab
-                plans={plans}
-                user={user}
-                onPurchased={load}
-              />
-            )}
-            {tab === "profile" && (
-              <ProfileTab user={user} fallbackPhoto={tgPhoto} />
-            )}
-          </>
+        {tab === "instructions" && (
+          <InstructionsTab
+            user={user}
+            onGoPlans={() => setTab("plans")}
+          />
+        )}
+        {tab === "plans" && (
+          <PlansTab
+            catalog={catalog}
+            user={user}
+            onPurchased={load}
+            focusExtraDevices={plansFocusDevices}
+          />
+        )}
+        {tab === "support" && <SupportTab catalog={catalog} />}
+        {tab === "profile" && (
+          <ProfileTab
+            user={user}
+            catalog={catalog}
+            fallbackPhoto={tgPhoto}
+            onGoBuyDevices={() => {
+              setPlansFocusDevices(true);
+              setTab("plans");
+            }}
+            onUserUpdated={load}
+          />
         )}
       </main>
-      <TabBar active={tab} onChange={setTab} />
+      <TabBar
+        active={tab}
+        onChange={(t) => {
+          if (t !== "plans") setPlansFocusDevices(false);
+          setTab(t);
+        }}
+      />
     </div>
   );
 }

@@ -1,19 +1,26 @@
 import {
+  TARIFFS,
+  EXTRA_DEVICE_PRICE_PER_MONTH,
+  SUPPORT_TELEGRAM_ID,
+  calcTotalRub,
+  type BillingMonths,
+  type PlanType,
+} from "./catalog";
+import {
+  bundleToApiUser,
+  ensureUser,
+  getBundle,
+  purchaseExtraDevices,
+  purchaseSubscription,
+} from "./db";
+import { sbRequest, type SupabaseEnv } from "./supabase";
+import {
   displayName,
   validateInitData,
   type TelegramUser,
 } from "./telegram";
-import { applySubscriptionExpiry } from "./subscription";
-import {
-  PLANS,
-  defaultUser,
-  type PlanMonths,
-  type Subscription,
-  type UserRecord,
-} from "./types";
 
-export interface ApiEnv {
-  USERS_KV: KVNamespace;
+export interface ApiEnv extends SupabaseEnv {
   TELEGRAM_BOT_TOKEN?: string;
   WEBAPP_URL?: string;
 }
@@ -48,55 +55,6 @@ async function getAuthUser(
   } catch {
     return null;
   }
-}
-
-async function readUser(env: ApiEnv, key: string): Promise<UserRecord | null> {
-  try {
-    const raw = await env.USERS_KV.get(key);
-    if (!raw) return null;
-    return JSON.parse(raw) as UserRecord;
-  } catch {
-    return null;
-  }
-}
-
-async function getOrCreateUser(
-  env: ApiEnv,
-  tgUser: TelegramUser
-): Promise<UserRecord> {
-  const key = `user:${tgUser.id}`;
-  const existing = await readUser(env, key);
-  if (existing) {
-    const merged: UserRecord = {
-      ...existing,
-      displayName: displayName(tgUser),
-      username: tgUser.username ?? null,
-      photoUrl: tgUser.photo_url ?? existing.photoUrl,
-      subscription: applySubscriptionExpiry(existing.subscription),
-      updatedAt: new Date().toISOString(),
-    };
-    await env.USERS_KV.put(key, JSON.stringify(merged));
-    return merged;
-  }
-
-  const user = defaultUser(
-    tgUser.id,
-    displayName(tgUser),
-    tgUser.username ?? null,
-    tgUser.photo_url ?? null
-  );
-  await env.USERS_KV.put(key, JSON.stringify(user));
-  return user;
-}
-
-function addMonths(date: Date, months: number): Date {
-  const d = new Date(date);
-  d.setMonth(d.getMonth() + months);
-  return d;
-}
-
-function formatDate(d: Date): string {
-  return d.toISOString().slice(0, 10);
 }
 
 function isStartCommand(text: string | undefined): boolean {
@@ -174,6 +132,7 @@ export async function handleApiRequest(
   if (path === "/api/health" && request.method === "GET") {
     let botOk = false;
     let webhookUrl: string | null = null;
+    let supabaseOk = false;
     if (env.TELEGRAM_BOT_TOKEN) {
       try {
         const me = await fetch(
@@ -190,6 +149,14 @@ export async function handleApiRequest(
         botOk = false;
       }
     }
+    if (env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY) {
+      try {
+        const sb = await sbRequest(env, "users?select=id&limit=1");
+        supabaseOk = sb.ok;
+      } catch {
+        supabaseOk = false;
+      }
+    }
     const expectedWebhook = env.WEBAPP_URL
       ? `${env.WEBAPP_URL.replace(/\/$/, "")}/api/webhook/telegram`
       : null;
@@ -198,6 +165,7 @@ export async function handleApiRequest(
       hasToken: Boolean(env.TELEGRAM_BOT_TOKEN),
       hasWebAppUrl: Boolean(env.WEBAPP_URL),
       botOk,
+      supabaseOk,
       webAppUrl: env.WEBAPP_URL?.replace(/\/$/, "") ?? null,
       webhookUrl,
       webhookOk: Boolean(
@@ -210,12 +178,12 @@ export async function handleApiRequest(
     return handleTelegramWebhook(request, env);
   }
 
-  if (path === "/api/plans" && request.method === "GET") {
+  if (path === "/api/catalog" && request.method === "GET") {
     return json({
-      plans: Object.entries(PLANS).map(([months, p]) => ({
-        months: Number(months),
-        ...p,
-      })),
+      tariffs: Object.values(TARIFFS),
+      extraDevicePricePerMonth: EXTRA_DEVICE_PRICE_PER_MONTH,
+      supportTelegramId: SUPPORT_TELEGRAM_ID,
+      billingMonths: [1, 3, 6, 12],
     });
   }
 
@@ -225,61 +193,78 @@ export async function handleApiRequest(
     return json({ error: "Unauthorized: open via Telegram Mini App" }, 401);
   }
 
+  if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
+    return json({ error: "Database not configured" }, 503);
+  }
+
   if (path === "/api/me" && request.method === "GET") {
-    const user = await getOrCreateUser(env, tgUser);
-    const subscription = applySubscriptionExpiry(user.subscription);
-    return json({
-      user: {
-        id: user.telegramId,
-        displayName: user.displayName,
-        username: user.username,
-        photoUrl: user.photoUrl,
-        subscription,
-      },
-    });
+    try {
+      const bundle = await ensureUser(env, tgUser);
+      return json({ user: bundleToApiUser(bundle) });
+    } catch (e) {
+      return json(
+        { error: e instanceof Error ? e.message : "Database error" },
+        500
+      );
+    }
   }
 
   if (path === "/api/purchase" && request.method === "POST") {
-    const body = (await request.json()) as { planMonths?: number };
-    const planMonths = body.planMonths as PlanMonths | undefined;
-    if (!planMonths || !(planMonths in PLANS)) {
-      return json({ error: "Invalid plan" }, 400);
+    try {
+      const body = (await request.json()) as {
+        planType?: PlanType;
+        billingMonths?: number;
+        extraDevices?: number;
+      };
+      const planType = body.planType;
+      const months = body.billingMonths as BillingMonths | undefined;
+      if (
+        !planType ||
+        !(planType in TARIFFS) ||
+        !months ||
+        !(months in TARIFFS[planType].periods)
+      ) {
+        return json({ error: "Invalid plan" }, 400);
+      }
+      const extraDevices = body.extraDevices ?? 0;
+      const bundle = await purchaseSubscription(
+        env,
+        tgUser,
+        planType,
+        months,
+        extraDevices
+      );
+      const total = calcTotalRub(planType, months, planType === "basic" ? extraDevices : 0);
+      return json({
+        ok: true,
+        message: `Демо-оплата: ${total} ₽ · подписка активирована`,
+        user: bundleToApiUser(bundle),
+      });
+    } catch (e) {
+      return json(
+        { error: e instanceof Error ? e.message : "Purchase failed" },
+        500
+      );
     }
+  }
 
-    const user = await getOrCreateUser(env, tgUser);
-    const now = new Date();
-    const plan = PLANS[planMonths];
-    const prev = user.subscription;
-    const extendFrom =
-      prev.status === "active" && prev.endsAt
-        ? new Date(`${prev.endsAt}T12:00:00`) > now
-          ? new Date(`${prev.endsAt}T12:00:00`)
-          : now
-        : now;
-    const subscription: Subscription = {
-      status: "active",
-      planMonths,
-      planLabel: plan.label,
-      startsAt:
-        prev.status === "active" && prev.startsAt
-          ? prev.startsAt
-          : formatDate(now),
-      endsAt: formatDate(addMonths(extendFrom, planMonths)),
-      vpnKey: prev.vpnKey ?? `FIX-${tgUser.id}-${planMonths}M-DEMO`,
-    };
-
-    const updated: UserRecord = {
-      ...user,
-      subscription,
-      updatedAt: new Date().toISOString(),
-    };
-    await env.USERS_KV.put(`user:${tgUser.id}`, JSON.stringify(updated));
-
-    return json({
-      ok: true,
-      message: "Демо-оплата: ключ создан (реальная оплата подключится позже)",
-      subscription,
-    });
+  if (path === "/api/purchase-devices" && request.method === "POST") {
+    try {
+      const body = (await request.json()) as { extraDevices?: number };
+      const add = body.extraDevices ?? 0;
+      if (add < 1) return json({ error: "Invalid device count" }, 400);
+      const bundle = await purchaseExtraDevices(env, tgUser, add);
+      return json({
+        ok: true,
+        message: "Дополнительные устройства добавлены",
+        user: bundleToApiUser(bundle),
+      });
+    } catch (e) {
+      return json(
+        { error: e instanceof Error ? e.message : "Purchase failed" },
+        400
+      );
+    }
   }
 
   return json({ error: "Not found" }, 404);

@@ -1,16 +1,26 @@
-# Один раз: секреты
+# Секреты и Supabase
 
-[Секреты GitHub](https://github.com/krivetka13011/fix-vpn/settings/secrets/actions)
+## 1. Supabase
+
+[Supabase Dashboard](https://supabase.com/dashboard) → проект → **SQL Editor** → выполнить файл `supabase/schema.sql`.
+
+**Settings → API:** скопировать **Project URL** и **service_role** key (не anon).
+
+## 2. GitHub Secrets
+
+[Секреты](https://github.com/krivetka13011/fix-vpn/settings/secrets/actions)
 
 | Name | Value |
 |------|--------|
-| `CLOUDFLARE_API_TOKEN` | [Token: Edit Cloudflare Workers](https://dash.cloudflare.com/profile/api-tokens?template=editCloudflareWorkers) |
-| `TELEGRAM_BOT_TOKEN` | [@BotFather](https://t.me/BotFather) → API Token |
+| `CLOUDFLARE_API_TOKEN` | [Cloudflare Workers token](https://dash.cloudflare.com/profile/api-tokens?template=editCloudflareWorkers) |
+| `TELEGRAM_BOT_TOKEN` | [@BotFather](https://t.me/BotFather) → @FIXVPNfast_bot |
+| `SUPABASE_URL` | `https://xxxx.supabase.co` |
+| `SUPABASE_SERVICE_ROLE_KEY` | service_role из Supabase |
 
-`WEBAPP_URL` обновляется автоматически после каждого деплоя.
+## 3. Деплой
 
-[Запустить деплой](https://github.com/krivetka13011/fix-vpn/actions/workflows/deploy.yml) → **Run workflow**
+[Actions → Deploy FIX VPN → Run workflow](https://github.com/krivetka13011/fix-vpn/actions/workflows/deploy.yml)
 
-**Live URL** (после зелёного run, в Summary): обычно **https://fix-vpn.krivetkagames.workers.dev**
+Live URL: **https://fix-vpn.krivetkagames.workers.dev**
 
-BotFather → **Configure Mini App** → тот же URL из Summary (не подставляйте URL вручную).
+BotFather → Mini App → тот же URL.

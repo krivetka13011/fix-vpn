@@ -2,21 +2,30 @@ import type { TabId } from "../types";
 
 const TABS: { id: TabId; label: string; icon: JSX.Element }[] = [
   {
-    id: "home",
-    label: "Главная",
+    id: "instructions",
+    label: "Инструкция",
     icon: (
       <svg className="tab-icon" viewBox="0 0 24 24">
-        <path d="M3 10.5L12 3l9 7.5V20a1 1 0 01-1 1h-5v-6H9v6H4a1 1 0 01-1-1v-9.5z" />
+        <path d="M12 6v12M8 10h8M6 4h12a2 2 0 012 2v12a2 2 0 01-2 2H6a2 2 0 01-2-2V6a2 2 0 012-2z" />
       </svg>
     ),
   },
   {
-    id: "subscriptions",
-    label: "Подписки",
+    id: "plans",
+    label: "Тарифы",
     icon: (
       <svg className="tab-icon" viewBox="0 0 24 24">
         <path d="M4 6h16v2H4V6zm0 5h16v2H4v-2zm0 5h10v2H4v-2z" />
         <circle cx="18" cy="17" r="3" />
+      </svg>
+    ),
+  },
+  {
+    id: "support",
+    label: "Поддержка",
+    icon: (
+      <svg className="tab-icon" viewBox="0 0 24 24">
+        <path d="M12 2a7 7 0 00-7 7c0 2.5 1.2 4.7 3 6v3l3-2h1a7 7 0 000-14zm0 4a2 2 0 110 4 2 2 0 010-4z" />
       </svg>
     ),
   },

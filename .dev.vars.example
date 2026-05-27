@@ -1,2 +1,4 @@
 TELEGRAM_BOT_TOKEN=your_bot_token_here
-WEBAPP_URL=http://localhost:8787
+WEBAPP_URL=https://fix-vpn.krivetkagames.workers.dev
+SUPABASE_URL=https://xxxx.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=your_service_role_key_here

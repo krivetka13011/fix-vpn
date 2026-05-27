@@ -1,13 +1,27 @@
 import { useState } from "react";
-import type { UserProfile } from "../types";
+import type { Catalog, UserProfile } from "../types";
+import { purchaseDevices } from "../api/client";
+import { copyText, formatRuDate } from "../utils/copy";
 
 interface Props {
   user: UserProfile;
+  catalog: Catalog;
   fallbackPhoto?: string;
+  onGoBuyDevices: () => void;
+  onUserUpdated: () => void;
 }
 
-export function ProfileTab({ user, fallbackPhoto }: Props) {
-  const [expanded, setExpanded] = useState(false);
+export function ProfileTab({
+  user,
+  catalog,
+  fallbackPhoto,
+  onGoBuyDevices,
+  onUserUpdated,
+}: Props) {
+  const [expanded, setExpanded] = useState(true);
+  const [deviceAdd, setDeviceAdd] = useState(1);
+  const [loading, setLoading] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
   const sub = user.subscription;
   const photo = user.photoUrl ?? fallbackPhoto;
 
@@ -16,7 +30,7 @@ export function ProfileTab({ user, fallbackPhoto }: Props) {
       ? "Активна"
       : sub.status === "expired"
         ? "Истекла"
-        : "Нет подписки";
+        : "Неактивна";
 
   const statusClass =
     sub.status === "active"
@@ -24,6 +38,23 @@ export function ProfileTab({ user, fallbackPhoto }: Props) {
       : sub.status === "expired"
         ? "badge-expired"
         : "badge-none";
+
+  const canBuyDevices =
+    sub.status === "active" && sub.planType === "basic";
+
+  async function handleBuyDevices() {
+    setLoading(true);
+    setMsg(null);
+    try {
+      const res = await purchaseDevices(deviceAdd);
+      setMsg(res.message);
+      onUserUpdated();
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : "Ошибка");
+    } finally {
+      setLoading(false);
+    }
+  }
 
   return (
     <>
@@ -42,6 +73,21 @@ export function ProfileTab({ user, fallbackPhoto }: Props) {
       </div>
 
       <div className="card card-glass">
+        <div className="detail-row">
+          <span>ID в системе</span>
+          <span className="mono-id">{user.publicId}</span>
+        </div>
+        <button
+          type="button"
+          className="btn-ghost"
+          style={{ width: "100%", marginTop: 8 }}
+          onClick={() => copyText(user.publicId)}
+        >
+          Скопировать ID
+        </button>
+      </div>
+
+      <div className="card card-glass">
         <button
           type="button"
           className="subscription-row"
@@ -49,7 +95,7 @@ export function ProfileTab({ user, fallbackPhoto }: Props) {
           aria-expanded={expanded}
         >
           <span>
-            Статус подписки
+            Подписка
             <span className={`badge ${statusClass}`} style={{ marginLeft: 10 }}>
               {statusLabel}
             </span>
@@ -74,20 +120,22 @@ export function ProfileTab({ user, fallbackPhoto }: Props) {
               <span>{sub.planLabel ?? "—"}</span>
             </div>
             <div className="detail-row">
-              <span>Срок</span>
-              <span>
-                {sub.planMonths
-                  ? `${sub.planMonths} мес.`
-                  : "—"}
-              </span>
-            </div>
-            <div className="detail-row">
-              <span>Начало</span>
-              <span>{formatRuDate(sub.startsAt)}</span>
+              <span>Дата покупки</span>
+              <span>{formatRuDate(sub.purchasedAt)}</span>
             </div>
             <div className="detail-row">
               <span>Окончание</span>
               <span>{formatRuDate(sub.endsAt)}</span>
+            </div>
+            <div className="detail-row">
+              <span>Устройства</span>
+              <span>
+                {sub.planType === "personal"
+                  ? "Безлимит"
+                  : sub.deviceTotal != null
+                    ? `${sub.deviceTotal} шт.`
+                    : "—"}
+              </span>
             </div>
             {sub.vpnKey && (
               <>
@@ -99,7 +147,7 @@ export function ProfileTab({ user, fallbackPhoto }: Props) {
                   type="button"
                   className="btn-ghost"
                   style={{ width: "100%", marginTop: 10 }}
-                  onClick={() => copyKey(sub.vpnKey!)}
+                  onClick={() => copyText(sub.vpnKey!)}
                 >
                   Скопировать ключ
                 </button>
@@ -109,33 +157,74 @@ export function ProfileTab({ user, fallbackPhoto }: Props) {
         )}
       </div>
 
+      {user.addons.length > 0 && (
+        <div className="card">
+          <h3 className="section-title-sm">Доп. услуги</h3>
+          <ul className="addon-list">
+            {user.addons.map((a) => (
+              <li key={a.id}>
+                <span>{a.label}</span>
+                <span className="addon-meta">
+                  {a.quantity} · {a.priceRub} ₽ · {formatRuDate(a.purchasedAt)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {canBuyDevices && (
+        <div className="card">
+          <h3 className="section-title-sm">Докупить устройства</h3>
+          <p className="hint-text">
+            +{catalog.extraDevicePricePerMonth} ₽ / устройство / мес
+          </p>
+          <div className="device-stepper">
+            <button
+              type="button"
+              className="stepper-btn"
+              disabled={deviceAdd <= 1}
+              onClick={() => setDeviceAdd((n) => Math.max(1, n - 1))}
+            >
+              −
+            </button>
+            <span className="stepper-value">+{deviceAdd}</span>
+            <button
+              type="button"
+              className="stepper-btn"
+              disabled={deviceAdd >= 10}
+              onClick={() => setDeviceAdd((n) => Math.min(10, n + 1))}
+            >
+              +
+            </button>
+          </div>
+          <button
+            type="button"
+            className="btn-primary"
+            style={{ marginTop: 12 }}
+            disabled={loading}
+            onClick={handleBuyDevices}
+          >
+            {loading ? "Оформление…" : "Докупить устройства"}
+          </button>
+          <button
+            type="button"
+            className="btn-ghost"
+            style={{ width: "100%", marginTop: 8 }}
+            onClick={onGoBuyDevices}
+          >
+            Все тарифы
+          </button>
+          {msg && <p className="message-text">{msg}</p>}
+        </div>
+      )}
+
       <div className="card">
         <div className="detail-row">
           <span>Telegram ID</span>
           <span>{user.id}</span>
         </div>
-        <div className="detail-row" style={{ borderTop: "1px solid var(--border)", paddingTop: 12 }}>
-          <span>Клиенты</span>
-          <span style={{ textAlign: "right", maxWidth: "55%" }}>
-            Hiddify, v2rayTun, v2rayNG
-          </span>
-        </div>
       </div>
     </>
   );
-}
-
-function formatRuDate(iso: string | null): string {
-  if (!iso) return "—";
-  return new Date(iso).toLocaleDateString("ru-RU", {
-    day: "numeric",
-    month: "long",
-    year: "numeric",
-  });
-}
-
-function copyKey(key: string) {
-  navigator.clipboard?.writeText(key).then(() => {
-    window.Telegram?.WebApp?.HapticFeedback?.impactOccurred("light");
-  });
 }

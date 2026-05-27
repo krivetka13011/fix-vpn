@@ -1,4 +1,5 @@
-import type { Plan, UserProfile } from "../types";
+import type { Catalog, UserProfile } from "../types";
+import type { BillingMonths, PlanType } from "../types";
 
 const API_TIMEOUT_MS = 8000;
 
@@ -29,21 +30,32 @@ async function api<T>(path: string, options?: RequestInit): Promise<T> {
   }
 }
 
+export function fetchCatalog(): Promise<Catalog> {
+  return api("/api/catalog");
+}
+
 export function fetchMe(): Promise<{ user: UserProfile }> {
   return api("/api/me");
 }
 
-export function fetchPlans(): Promise<{ plans: Plan[] }> {
-  return api("/api/plans");
-}
-
-export function purchasePlan(planMonths: number): Promise<{
-  ok: boolean;
-  message: string;
-  subscription: UserProfile["subscription"];
-}> {
+export function purchasePlan(payload: {
+  planType: PlanType;
+  billingMonths: BillingMonths;
+  extraDevices: number;
+}): Promise<{ ok: boolean; message: string; user: UserProfile }> {
   return api("/api/purchase", {
     method: "POST",
-    body: JSON.stringify({ planMonths }),
+    body: JSON.stringify(payload),
+  });
+}
+
+export function purchaseDevices(extraDevices: number): Promise<{
+  ok: boolean;
+  message: string;
+  user: UserProfile;
+}> {
+  return api("/api/purchase-devices", {
+    method: "POST",
+    body: JSON.stringify({ extraDevices }),
   });
 }

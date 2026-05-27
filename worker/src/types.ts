@@ -1,58 +1,44 @@
-export type PlanMonths = 1 | 3 | 6 | 12;
+import type { BillingMonths, PlanType } from "./catalog";
 
 export type SubscriptionStatus = "none" | "active" | "expired";
 
-export interface Subscription {
-  status: SubscriptionStatus;
-  planMonths: PlanMonths | null;
-  planLabel: string | null;
-  startsAt: string | null;
-  endsAt: string | null;
-  vpnKey: string | null;
-}
-
-export interface UserRecord {
-  telegramId: number;
+export interface DbUser {
+  id: string;
+  telegram_id: number;
   username: string | null;
-  displayName: string;
-  photoUrl: string | null;
-  subscription: Subscription;
-  updatedAt: string;
+  display_name: string;
+  photo_url: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
-export const PLANS: Record<
-  PlanMonths,
-  { label: string; priceRub: number; badge?: string }
-> = {
-  1: { label: "1 месяц", priceRub: 199 },
-  3: { label: "3 месяца", priceRub: 499, badge: "−15%" },
-  6: { label: "6 месяцев", priceRub: 899, badge: "−25%" },
-  12: { label: "1 год", priceRub: 1499, badge: "Лучшая цена" },
-};
-
-export function emptySubscription(): Subscription {
-  return {
-    status: "none",
-    planMonths: null,
-    planLabel: null,
-    startsAt: null,
-    endsAt: null,
-    vpnKey: null,
-  };
+export interface DbSubscription {
+  id: string;
+  user_id: string;
+  plan_type: PlanType | "none";
+  status: SubscriptionStatus;
+  plan_label: string | null;
+  billing_months: number | null;
+  starts_at: string | null;
+  ends_at: string | null;
+  vpn_key: string | null;
+  extra_devices: number;
+  purchased_at: string | null;
+  updated_at: string;
 }
 
-export function defaultUser(
-  telegramId: number,
-  displayName: string,
-  username: string | null,
-  photoUrl: string | null
-): UserRecord {
-  return {
-    telegramId,
-    username,
-    displayName,
-    photoUrl,
-    subscription: emptySubscription(),
-    updatedAt: new Date().toISOString(),
-  };
+export interface DbAddon {
+  id: string;
+  user_id: string;
+  addon_type: string;
+  label: string;
+  quantity: number;
+  price_rub: number;
+  purchased_at: string;
+}
+
+export interface UserBundle {
+  user: DbUser;
+  subscription: DbSubscription;
+  addons: DbAddon[];
 }

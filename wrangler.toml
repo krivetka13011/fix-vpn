@@ -1,4 +1,4 @@
-name = "fix-vpn"
+name = "fix-vpn-app"
 main = "worker/src/index.ts"
 compatibility_date = "2025-05-27"
 account_id = "abd3a9f30b070ba7b27946ecb6b82945"

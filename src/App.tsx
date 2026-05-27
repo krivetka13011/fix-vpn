@@ -38,7 +38,7 @@ const DEFAULT_CATALOG: Catalog = {
     },
   ],
   extraDevicePricePerMonth: 75,
-  supportTelegramId: 8312175683,
+  supportTelegramUsername: "Fixvpnmng",
   telegramChannelUrl: "https://t.me/FIXVPNfast",
   billingMonths: [1, 2, 3, 6, 12],
 };
@@ -113,8 +113,8 @@ export default function App() {
     const tg = window.Telegram?.WebApp;
     tg?.ready();
     tg?.expand();
-    tg?.setHeaderColor?.("#080c12");
-    tg?.setBackgroundColor?.("#080c12");
+    tg?.setHeaderColor?.("#000000");
+    tg?.setBackgroundColor?.("#000000");
     load();
   }, [load]);
 
@@ -138,7 +138,6 @@ export default function App() {
 
   return (
     <div className="app">
-      <div className="app-glow" aria-hidden />
       <main className="content">
         {syncing && <div className="sync-line" aria-hidden />}
         {tab === "help" && <HelpTab catalog={catalog} user={user} />}

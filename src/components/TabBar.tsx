@@ -47,7 +47,6 @@ export function TabBar({ active, onChange }: Props) {
             key={tab.id}
             type="button"
             className={`tab-item ${active === tab.id ? "active" : ""}`}
-            data-tab={tab.id}
             onClick={() => onChange(tab.id)}
             aria-current={active === tab.id ? "page" : undefined}
           >

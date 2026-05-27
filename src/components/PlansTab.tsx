@@ -73,7 +73,7 @@ export function PlansTab({ catalog, onPurchased }: Props) {
           return (
             <article
               key={tariff.id}
-              className={`surface tariff tariff-${tariff.id === "personal" ? "pro" : "basic"} ${selected ? "selected" : ""}`}
+              className={`surface tariff ${selected ? "selected" : ""}`}
               onClick={() => {
                 setPlanType(tariff.id);
                 if (tariff.id === "personal") setExtraDevices(0);
@@ -90,7 +90,7 @@ export function PlansTab({ catalog, onPurchased }: Props) {
             >
               <div className="tariff-inner">
                 {tariff.id === "personal" && (
-                  <span className="tariff-badge">Premium</span>
+                  <span className="tariff-badge">Про</span>
                 )}
                 <div className="tariff-top">
                   <div className="tariff-radio" aria-hidden>

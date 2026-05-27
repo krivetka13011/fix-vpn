@@ -12,8 +12,9 @@ export function formatRuDate(iso: string | null | undefined): string {
   });
 }
 
-export function openSupportChat(telegramId: number) {
-  openTelegramLink(`https://t.me/user?id=${telegramId}`);
+export function openSupportChat(username: string) {
+  const handle = username.replace(/^@/, "");
+  openTelegramLink(`https://t.me/${handle}`);
 }
 
 export function openTelegramLink(url: string) {

@@ -49,7 +49,7 @@ export interface Tariff {
 export interface Catalog {
   tariffs: Tariff[];
   extraDevicePricePerMonth: number;
-  supportTelegramId: number;
+  supportTelegramUsername: string;
   telegramChannelUrl: string;
   billingMonths: BillingMonths[];
 }

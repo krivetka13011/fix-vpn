@@ -2,7 +2,7 @@ import {
   TARIFFS,
   BILLING_MONTHS,
   EXTRA_DEVICE_PRICE_PER_MONTH,
-  SUPPORT_TELEGRAM_ID,
+  SUPPORT_TELEGRAM_USERNAME,
   TELEGRAM_CHANNEL_URL,
   calcTotalRub,
   type BillingMonths,
@@ -189,7 +189,7 @@ export async function handleApiRequest(
     return json({
       tariffs: Object.values(TARIFFS),
       extraDevicePricePerMonth: EXTRA_DEVICE_PRICE_PER_MONTH,
-      supportTelegramId: SUPPORT_TELEGRAM_ID,
+      supportTelegramUsername: SUPPORT_TELEGRAM_USERNAME,
       telegramChannelUrl: TELEGRAM_CHANNEL_URL,
       billingMonths: BILLING_MONTHS,
     });

@@ -50,9 +50,9 @@ export function HelpTab({ catalog, user }: Props) {
           <button
             type="button"
             className="action-card support"
-            onClick={() => openSupportChat(catalog.supportTelegramId)}
+            onClick={() => openSupportChat(catalog.supportTelegramUsername)}
           >
-            <span className="action-icon">💬</span>
+            <span className="action-icon">SP</span>
             <span className="action-label">Поддержка</span>
           </button>
           <button
@@ -60,12 +60,12 @@ export function HelpTab({ catalog, user }: Props) {
             className="action-card channel"
             onClick={() => openTelegramLink(catalog.telegramChannelUrl)}
           >
-            <span className="action-icon">📢</span>
+            <span className="action-icon">TG</span>
             <span className="action-label">Канал</span>
           </button>
         </div>
 
-        <div className="surface surface-tint">
+        <div className="surface">
           <p className="section-label">Устройство</p>
           <div className="chip-row">
             {PLATFORMS.map((p) => (
@@ -81,7 +81,7 @@ export function HelpTab({ catalog, user }: Props) {
           </div>
         </div>
 
-        <div className="surface surface-tint">
+        <div className="surface">
           <p className="section-label">Клиент</p>
           <div className="chip-row">
             {CLIENTS.map((c) => (

@@ -70,21 +70,21 @@ export function ProfileTab({ user, fallbackPhoto }: Props) {
       </div>
 
       <div className="stat-grid">
-        <div className="stat-cell stat-tariff">
+        <div className="stat-cell">
           <span className="stat-label">Тариф</span>
           <span className="stat-value">{tariffName}</span>
         </div>
-        <div className="stat-cell stat-status">
+        <div className="stat-cell">
           <span className="stat-label">Статус</span>
           <span className="stat-value">
             <span className={`badge ${statusClass}`}>{statusLabel}</span>
           </span>
         </div>
-        <div className="stat-cell stat-devices">
+        <div className="stat-cell">
           <span className="stat-label">Устройства</span>
           <span className="stat-value">{devicesLabel}</span>
         </div>
-        <div className="stat-cell stat-period wide">
+        <div className="stat-cell wide">
           <span className="stat-label">Подписка</span>
           <span className="stat-value">{actionLabel}</span>
         </div>

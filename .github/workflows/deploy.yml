@@ -23,56 +23,62 @@ jobs:
           npm ci && npm run build
           test -f dist/index.html
           test -f dist/logo.png
-          test -f dist/_redirects
 
-      - name: Deploy to Cloudflare Pages
+      - name: Deploy Worker
         id: deploy
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy dist --project-name=fix-vpn --branch=main
-        env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          command: deploy
 
-      - name: Resolve deployment URL
+      - name: Resolve Live URL
         id: url
         run: |
           URL="${{ steps.deploy.outputs.deployment-url }}"
           if [ -z "$URL" ]; then
-            URL=$(echo "${{ steps.deploy.outputs.command-output }}" | grep -oE 'https://[a-zA-Z0-9.-]+\.(pages\.dev|workers\.dev)' | head -1)
+            URL=$(echo "${{ steps.deploy.outputs.command-output }}" | grep -oE 'https://[a-zA-Z0-9.-]+\.workers\.dev' | head -1)
           fi
           if [ -z "$URL" ]; then
-            URL="https://fix-vpn.pages.dev"
+            echo "Could not detect deployment URL" >&2
+            echo "${{ steps.deploy.outputs.command-output }}"
+            exit 1
           fi
           echo "url=$URL" >> "$GITHUB_OUTPUT"
           echo "Live URL: $URL"
           {
             echo "## FIX VPN — Live URL"
-            echo ""
             echo "**$URL**"
-            echo ""
-            echo "BotFather → Configure Mini App → этот URL"
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Set Pages secrets
+      - name: Set Worker secrets
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           WEBAPP_URL: ${{ steps.url.outputs.url }}
         run: |
-          printf '%s' "$TELEGRAM_BOT_TOKEN" | npx wrangler pages secret put TELEGRAM_BOT_TOKEN --project-name=fix-vpn
-          printf '%s' "$WEBAPP_URL" | npx wrangler pages secret put WEBAPP_URL --project-name=fix-vpn
+          printf '%s' "$TELEGRAM_BOT_TOKEN" | npx wrangler secret put TELEGRAM_BOT_TOKEN
+          printf '%s' "$WEBAPP_URL" | npx wrangler secret put WEBAPP_URL
 
-      - name: Configure Telegram webhook and menu
+      - name: Verify deployment
+        run: |
+          URL="${{ steps.url.outputs.url }}"
+          curl -fsS "$URL/api/health" | tee health.json
+          grep -q '"ok":true' health.json
+          curl -fsS -o /dev/null -w "%{http_code}" "$URL/" | grep -q 200
+
+      - name: Configure Telegram
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           WEBAPP_URL: ${{ steps.url.outputs.url }}
         run: |
           curl -fsS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/deleteWebhook?drop_pending_updates=true"
-          curl -fsS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setWebhook?url=${WEBAPP_URL}/api/webhook/telegram"
+          curl -fsS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setWebhook" \
+            -H "Content-Type: application/json" \
+            -d "{\"url\":\"${WEBAPP_URL}/api/webhook/telegram\",\"allowed_updates\":[\"message\"]}"
           curl -fsS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setChatMenuButton" \
             -H "Content-Type: application/json" \
             -d "{\"menu_button\":{\"type\":\"web_app\",\"text\":\"FIX VPN\",\"web_app\":{\"url\":\"${WEBAPP_URL}\"}}}"
-          curl -fsS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getWebhookInfo"
+          curl -fsS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getWebhookInfo" | tee webhook.json
+          grep -q "${WEBAPP_URL}/api/webhook/telegram" webhook.json

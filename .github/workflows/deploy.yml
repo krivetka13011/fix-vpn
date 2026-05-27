@@ -28,29 +28,29 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
-          TOKEN="$(printf '%s' "$CLOUDFLARE_API_TOKEN" | tr -d '\r\n')"
-          curl -fsS -H "Authorization: Bearer $TOKEN" \
+          curl -fsS -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
             "https://api.cloudflare.com/client/v4/user/tokens/verify" | grep -q '"status":"active"'
-          curl -fsS -H "Authorization: Bearer $TOKEN" \
-            "https://api.cloudflare.com/client/v4/accounts/abd3a9f30b070ba7b27946ecb6b82945/workers/scripts" | grep -q '"success":true'
 
       - name: Deploy to Cloudflare Workers
-        id: deploy
-        uses: cloudflare/wrangler-action@v3
+        id: wrangler
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: npx wrangler@4.69.0 deploy --verbose 2>&1 | tee deploy.log
+
+      - name: Upload deploy log on failure
+        if: failure() && steps.wrangler.outcome == 'failure'
+        uses: actions/upload-artifact@v4
         with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          wranglerVersion: "4.69.0"
-          command: deploy
+          name: deploy-log
+          path: deploy.log
 
       - name: Resolve deployment URL
         id: url
+        if: steps.wrangler.outcome == 'success'
         run: |
-          URL="${{ steps.deploy.outputs.deployment-url }}"
+          URL=$(grep -oE 'https://[a-zA-Z0-9.-]+\.workers\.dev' deploy.log | head -1)
           if [ -z "$URL" ]; then
-            URL=$(echo "${{ steps.deploy.outputs.command-output }}" | grep -oE 'https://[a-zA-Z0-9.-]+\.workers\.dev' | head -1)
-          fi
-          if [ -z "$URL" ]; then
-            echo "${{ steps.deploy.outputs.command-output }}"
+            cat deploy.log
             exit 1
           fi
           echo "url=$URL" >> "$GITHUB_OUTPUT"
@@ -58,6 +58,7 @@ jobs:
           echo "**$URL**" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Set secrets
+        if: steps.wrangler.outcome == 'success'
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -67,12 +68,14 @@ jobs:
           printf '%s' "$WEBAPP_URL" | npx wrangler@4.69.0 secret put WEBAPP_URL
 
       - name: Verify deployment
+        if: steps.wrangler.outcome == 'success'
         run: |
           URL="${{ steps.url.outputs.url }}"
           curl -fsS "$URL/api/health" | grep -q '"ok":true'
           test "$(curl -fsS -o /dev/null -w '%{http_code}' "$URL/")" = "200"
 
       - name: Configure Telegram
+        if: steps.wrangler.outcome == 'success'
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           WEBAPP_URL: ${{ steps.url.outputs.url }}

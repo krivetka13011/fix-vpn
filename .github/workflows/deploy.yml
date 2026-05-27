@@ -22,7 +22,7 @@ jobs:
         run: |
           npm ci && npm run build
           test -f dist/index.html
-          test -f dist/logo.png || true
+          test -f dist/logo.png
 
       - name: Validate Cloudflare token
         env:

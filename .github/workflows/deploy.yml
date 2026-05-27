@@ -24,6 +24,13 @@ jobs:
           test -f dist/index.html
           test -f dist/logo.png
 
+      - name: Validate Cloudflare token
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          curl -fsS -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "https://api.cloudflare.com/client/v4/user/tokens/verify" | grep -q '"status":"active"'
+
       - name: Deploy to Cloudflare Workers
         id: deploy
         uses: cloudflare/wrangler-action@v3
@@ -31,6 +38,10 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: deploy
+          secrets: |
+            TELEGRAM_BOT_TOKEN
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
 
       - name: Resolve deployment URL
         id: url
@@ -40,13 +51,18 @@ jobs:
             URL=$(echo "${{ steps.deploy.outputs.command-output }}" | grep -oE 'https://[a-zA-Z0-9.-]+\.workers\.dev' | head -1)
           fi
           if [ -z "$URL" ]; then
-            echo "${{ steps.deploy.outputs.command-output }}"
+            echo "Could not detect workers.dev URL" >&2
             exit 1
           fi
           echo "url=$URL" >> "$GITHUB_OUTPUT"
           echo "Live URL: $URL"
-          echo "## FIX VPN — Live URL" >> "$GITHUB_STEP_SUMMARY"
-          echo "**$URL**" >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "## FIX VPN — Live URL"
+            echo ""
+            echo "**$URL**"
+            echo ""
+            echo "Скопируйте в [@BotFather](https://t.me/BotFather) → ваш бот → **Configure Mini App**"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Set WEBAPP_URL secret
         env:
@@ -55,20 +71,13 @@ jobs:
           WEBAPP_URL: ${{ steps.url.outputs.url }}
         run: echo -n "$WEBAPP_URL" | npx wrangler secret put WEBAPP_URL
 
-      - name: Set TELEGRAM_BOT_TOKEN secret
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-        run: echo -n "$TELEGRAM_BOT_TOKEN" | npx wrangler secret put TELEGRAM_BOT_TOKEN
-
       - name: Verify deployment
         run: |
           URL="${{ steps.url.outputs.url }}"
           curl -fsS "$URL/api/health" | grep -q '"ok":true'
           test "$(curl -fsS -o /dev/null -w '%{http_code}' "$URL/")" = "200"
 
-      - name: Configure Telegram
+      - name: Configure Telegram webhook and menu
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           WEBAPP_URL: ${{ steps.url.outputs.url }}

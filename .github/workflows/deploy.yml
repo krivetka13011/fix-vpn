@@ -24,47 +24,54 @@ jobs:
           test -f dist/index.html
           test -f dist/logo.png
 
-      - name: Deploy Worker
+      - name: Deploy to Cloudflare Workers
         id: deploy
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: deploy
+
+      - name: Resolve deployment URL
+        id: url
         run: |
-          set -e
-          npx wrangler deploy 2>&1 | tee deploy.log
-          URL=$(grep -oE 'https://[a-zA-Z0-9.-]+\.workers\.dev' deploy.log | head -1)
+          URL="${{ steps.deploy.outputs.deployment-url }}"
           if [ -z "$URL" ]; then
-            echo "Deploy log:"
-            cat deploy.log
+            URL=$(echo "${{ steps.deploy.outputs.command-output }}" | grep -oE 'https://[a-zA-Z0-9.-]+\.workers\.dev' | head -1)
+          fi
+          if [ -z "$URL" ]; then
+            echo "${{ steps.deploy.outputs.command-output }}"
             exit 1
           fi
           echo "url=$URL" >> "$GITHUB_OUTPUT"
           echo "Live URL: $URL"
-          {
-            echo "## FIX VPN — Live URL"
-            echo "**$URL**"
-          } >> "$GITHUB_STEP_SUMMARY"
+          echo "## FIX VPN — Live URL" >> "$GITHUB_STEP_SUMMARY"
+          echo "**$URL**" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Set Worker secrets
+      - name: Set WEBAPP_URL secret
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          WEBAPP_URL: ${{ steps.url.outputs.url }}
+        run: echo -n "$WEBAPP_URL" | npx wrangler secret put WEBAPP_URL
+
+      - name: Set TELEGRAM_BOT_TOKEN secret
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          WEBAPP_URL: ${{ steps.deploy.outputs.url }}
-        run: |
-          printf '%s' "$TELEGRAM_BOT_TOKEN" | npx wrangler secret put TELEGRAM_BOT_TOKEN
-          printf '%s' "$WEBAPP_URL" | npx wrangler secret put WEBAPP_URL
+        run: echo -n "$TELEGRAM_BOT_TOKEN" | npx wrangler secret put TELEGRAM_BOT_TOKEN
 
       - name: Verify deployment
         run: |
-          URL="${{ steps.deploy.outputs.url }}"
-          curl -fsS "$URL/api/health"
+          URL="${{ steps.url.outputs.url }}"
+          curl -fsS "$URL/api/health" | grep -q '"ok":true'
           test "$(curl -fsS -o /dev/null -w '%{http_code}' "$URL/")" = "200"
 
       - name: Configure Telegram
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          WEBAPP_URL: ${{ steps.deploy.outputs.url }}
+          WEBAPP_URL: ${{ steps.url.outputs.url }}
         run: |
           curl -fsS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/deleteWebhook?drop_pending_updates=true"
           curl -fsS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setWebhook" \
@@ -73,4 +80,4 @@ jobs:
           curl -fsS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setChatMenuButton" \
             -H "Content-Type: application/json" \
             -d "{\"menu_button\":{\"type\":\"web_app\",\"text\":\"FIX VPN\",\"web_app\":{\"url\":\"${WEBAPP_URL}\"}}}"
-          curl -fsS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getWebhookInfo"
+          curl -fsS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getWebhookInfo" | grep -q webhook

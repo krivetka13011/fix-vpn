@@ -1,15 +1,27 @@
-# Один раз: секреты для автодеплоя
+# FIX VPN — 3 шага (≈3 мин)
 
-Откройте: **https://github.com/krivetka13011/fix-vpn/settings/secrets/actions**
+## 1. Токен Cloudflare
 
-Добавьте 3 секрета:
+[Создать API Token (шаблон Workers)](https://dash.cloudflare.com/profile/api-tokens?template=editCloudflareWorkers) → **Create Token** → скопировать токен.
 
-| Имя | Значение |
-|-----|----------|
-| `CLOUDFLARE_API_TOKEN` | Cloudflare → My Profile → API Tokens → Create Token → шаблон **Edit Cloudflare Workers** |
+## 2. Секреты GitHub
+
+[Секреты репозитория fix-vpn](https://github.com/krivetka13011/fix-vpn/settings/secrets/actions) → **New repository secret** × 3:
+
+| Name | Value |
+|------|--------|
+| `CLOUDFLARE_API_TOKEN` | токен из шага 1 |
 | `CLOUDFLARE_ACCOUNT_ID` | `abd3a9f30b070ba7b27946ecb6b82945` |
 | `TELEGRAM_BOT_TOKEN` | токен от [@BotFather](https://t.me/BotFather) |
 
-После сохранения: **Actions** → **Deploy FIX VPN** → **Run workflow** (или любой `git push`).
+## 3. Запуск деплоя
 
-В [@BotFather](https://t.me/BotFather) → ваш бот → **Configure Mini App** → URL Worker (появится в логе деплоя, обычно `https://fix-vpn.<ваш-subdomain>.workers.dev`).
+[Actions → Deploy FIX VPN → Run workflow](https://github.com/krivetka13011/fix-vpn/actions/workflows/deploy.yml) → **Run workflow**.
+
+В логе job будет **Live URL** (`https://fix-vpn….workers.dev`).
+
+## 4. Mini App в BotFather
+
+[@BotFather](https://t.me/BotFather) → ваш бот → **Configure Mini App** → вставить **Live URL** из лога.
+
+Готово. Проверка: бот → кнопка **FIX VPN**.

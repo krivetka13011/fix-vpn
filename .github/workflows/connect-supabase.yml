@@ -1,0 +1,44 @@
+name: Connect Supabase to Worker
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  connect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check GitHub secrets exist
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$SUPABASE_URL"
+          test -n "$SUPABASE_SERVICE_ROLE_KEY"
+          echo "GitHub secrets OK"
+
+      - name: Set Worker secrets
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          URL="https://fix-vpn.krivetkagames.workers.dev"
+          printf '%s' "$TELEGRAM_BOT_TOKEN" | npx wrangler@4.69.0 secret put TELEGRAM_BOT_TOKEN
+          printf '%s' "$URL" | npx wrangler@4.69.0 secret put WEBAPP_URL
+          printf '%s' "$SUPABASE_URL" | npx wrangler@4.69.0 secret put SUPABASE_URL
+          printf '%s' "$SUPABASE_SERVICE_ROLE_KEY" | npx wrangler@4.69.0 secret put SUPABASE_SERVICE_ROLE_KEY
+
+      - name: Verify Supabase on live Worker
+        run: |
+          curl -fsS "https://fix-vpn.krivetkagames.workers.dev/api/health" | tee /tmp/health.json
+          grep -q '"supabaseOk":true' /tmp/health.json
+          echo "## Supabase connected" >> "$GITHUB_STEP_SUMMARY"
+          echo "supabaseOk: true" >> "$GITHUB_STEP_SUMMARY"

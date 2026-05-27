@@ -57,6 +57,8 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: |
+          test -n "$SUPABASE_URL" || (echo "Missing GitHub secret SUPABASE_URL" >&2; exit 1)
+          test -n "$SUPABASE_SERVICE_ROLE_KEY" || (echo "Missing GitHub secret SUPABASE_SERVICE_ROLE_KEY" >&2; exit 1)
           printf '%s' "$TELEGRAM_BOT_TOKEN" | npx wrangler@4.69.0 secret put TELEGRAM_BOT_TOKEN
           printf '%s' "$WEBAPP_URL" | npx wrangler@4.69.0 secret put WEBAPP_URL
           printf '%s' "$SUPABASE_URL" | npx wrangler@4.69.0 secret put SUPABASE_URL

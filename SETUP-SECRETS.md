@@ -1,96 +1,62 @@
 # Подключение Supabase к FIX VPN
 
-Я не могу войти в ваш Supabase — вы создаёте проект за ~5 минут, дальше всё подключается автоматически при деплое.
+Привязка Supabase к GitHub **не подключает** Cloudflare Worker сама. Нужны ещё 2 секрета в GitHub и один запуск workflow.
+
+Текущий статус можно проверить:  
+https://fix-vpn.krivetkagames.workers.dev/api/health  
+Нужно: `"supabaseOk":true`
 
 ---
 
-## Шаг 1. Создать проект Supabase
+## Шаг 1. Таблицы в Supabase
 
-1. Откройте [https://supabase.com/dashboard](https://supabase.com/dashboard) и войдите (Google / GitHub).
-2. **New project**
-3. Имя: `fix-vpn` (любое)
-4. Пароль базы — придумайте и **сохраните** (для входа в SQL, Worker его не использует)
-5. Регион — ближайший к вам (например Frankfurt)
-6. **Create new project** — подождите 1–2 минуты, пока статус станет зелёным
+**Вариант A** — привязка репозитория (у вас уже есть):  
+Supabase Dashboard → проект → **Database** → **Migrations** — должна примениться миграция из `supabase/migrations/`.
 
----
+**Вариант B** — вручную: **SQL Editor** → вставить `supabase/schema.sql` → **Run**.
 
-## Шаг 2. Создать таблицы (база данных)
-
-1. В проекте слева: **SQL Editor** → **New query**
-2. Откройте в репозитории файл `supabase/schema.sql`, скопируйте **весь** текст
-3. Вставьте в редактор Supabase → **Run** (или Ctrl+Enter)
-4. Должно быть **Success** — созданы таблицы `users`, `subscriptions`, `addon_purchases`
-
-Проверка: **Table Editor** — видны три таблицы.
+Проверка: **Table Editor** → `users`, `subscriptions`, `addon_purchases`.
 
 ---
 
-## Шаг 3. Скопировать ключи API
-
-1. Слева: **Project Settings** (шестерёнка) → **API**
-2. Скопируйте и сохраните у себя (не в чат с ботом):
-
-| Поле в Supabase | Секрет в GitHub |
-|-----------------|-----------------|
-| **Project URL** | `SUPABASE_URL` |
-| **service_role** (Reveal → copy) | `SUPABASE_SERVICE_ROLE_KEY` |
-
-Важно: берите **service_role**, не `anon` / `publishable`.  
-service_role даёт полный доступ — храните только в GitHub Secrets и `.dev.vars`, никому не отправляйте.
-
----
-
-## Шаг 4. Добавить секреты в GitHub
+## Шаг 2. Ключи в GitHub Secrets
 
 [github.com/krivetka13011/fix-vpn/settings/secrets/actions](https://github.com/krivetka13011/fix-vpn/settings/secrets/actions)
 
-**New repository secret** для каждого:
+Supabase → **Project Settings** → **API**:
 
-| Name | Value |
-|------|--------|
-| `SUPABASE_URL` | `https://xxxxxxxx.supabase.co` |
-| `SUPABASE_SERVICE_ROLE_KEY` | длинный JWT из service_role |
-| `CLOUDFLARE_API_TOKEN` | уже есть |
-| `TELEGRAM_BOT_TOKEN` | токен @FIXVPNfast_bot |
+| GitHub Secret | Откуда в Supabase |
+|---------------|-------------------|
+| `SUPABASE_URL` | Project URL (`https://xxxxx.supabase.co`) |
+| `SUPABASE_SERVICE_ROLE_KEY` | **service_role** (кнопка Reveal) |
 
----
+Также должны быть: `CLOUDFLARE_API_TOKEN`, `TELEGRAM_BOT_TOKEN`.
 
-## Шаг 5. Деплой (подключение к Worker)
-
-[Actions → Deploy FIX VPN → Run workflow](https://github.com/krivetka13011/fix-vpn/actions/workflows/deploy.yml)
-
-Workflow сам запишет секреты в Cloudflare Worker и проверит:
-
-- `supabaseOk: true` в `/api/health`
-- каталог тарифов и webhook
-
-**Live URL:** https://fix-vpn.krivetkagames.workers.dev/api/health  
-В ответе должно быть: `"supabaseOk":true`
+Имена секретов **точно** как в таблице (не `SUPABASE_KEY` и не anon-ключ).
 
 ---
 
-## Локальная разработка (по желанию)
+## Шаг 3. Подключить Worker (без полного деплоя)
 
-Скопируйте `.dev.vars.example` → `.dev.vars` и вставьте те же `SUPABASE_URL` и `SUPABASE_SERVICE_ROLE_KEY`.
+[Actions → Connect Supabase to Worker → Run workflow](https://github.com/krivetka13011/fix-vpn/actions/workflows/connect-supabase.yml)
 
-```powershell
-cd "c:\Users\User\Downloads\FIX Vnp"
-copy .dev.vars.example .dev.vars
-npx wrangler dev
-```
+Или полный деплой: [Deploy FIX VPN → Run workflow](https://github.com/krivetka13011/fix-vpn/actions/workflows/deploy.yml)
+
+После успеха снова откройте `/api/health` — `supabaseOk: true`.
 
 ---
 
-## Если деплой падает на supabaseOk
+## Частые ошибки
 
-- SQL из `schema.sql` выполнен без ошибок
-- В GitHub секреты без пробелов в начале/конце
-- `SUPABASE_URL` без слэша в конце
-- Использован именно **service_role**, не anon
+| Симптом | Решение |
+|---------|---------|
+| `supabaseOk: false` | Нет секретов в GitHub или не запущен Connect Supabase |
+| Деплой красный на Verify | Добавьте `SUPABASE_*` в GitHub, запустите **Connect Supabase** |
+| 503 Database not configured | То же — секреты не попали в Worker |
+| Таблиц нет | Выполните SQL или дождитесь миграции из `supabase/migrations/` |
 
 ---
 
 ## BotFather
 
-Mini App URL: **https://fix-vpn.krivetkagames.workers.dev**
+Mini App: **https://fix-vpn.krivetkagames.workers.dev**

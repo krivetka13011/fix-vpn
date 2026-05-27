@@ -12,8 +12,7 @@ import {
   type UserRecord,
 } from "./types";
 
-export interface Env {
-  ASSETS: Fetcher;
+export interface ApiEnv {
   USERS_KV: KVNamespace;
   TELEGRAM_BOT_TOKEN?: string;
   WEBAPP_URL?: string;
@@ -34,7 +33,7 @@ function json(data: unknown, status = 200): Response {
 
 async function getAuthUser(
   request: Request,
-  env: Env
+  env: ApiEnv
 ): Promise<TelegramUser | null> {
   const initData =
     request.headers.get("X-Telegram-Init-Data") ??
@@ -51,7 +50,7 @@ async function getAuthUser(
   }
 }
 
-async function readUser(env: Env, key: string): Promise<UserRecord | null> {
+async function readUser(env: ApiEnv, key: string): Promise<UserRecord | null> {
   try {
     const raw = await env.USERS_KV.get(key);
     if (!raw) return null;
@@ -62,7 +61,7 @@ async function readUser(env: Env, key: string): Promise<UserRecord | null> {
 }
 
 async function getOrCreateUser(
-  env: Env,
+  env: ApiEnv,
   tgUser: TelegramUser
 ): Promise<UserRecord> {
   const key = `user:${tgUser.id}`;
@@ -100,9 +99,58 @@ function formatDate(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
 
-async function handleApi(
+async function handleTelegramWebhook(
   request: Request,
-  env: Env,
+  env: ApiEnv
+): Promise<Response> {
+  if (!env.TELEGRAM_BOT_TOKEN) {
+    return new Response("Bot token not configured", { status: 500 });
+  }
+
+  const webAppUrl = env.WEBAPP_URL;
+  if (!webAppUrl) {
+    return new Response("WEBAPP_URL not configured", { status: 500 });
+  }
+
+  const update = (await request.json()) as {
+    message?: {
+      chat: { id: number };
+      text?: string;
+    };
+  };
+
+  const chatId = update.message?.chat.id;
+  const text = update.message?.text?.trim();
+
+  if (!chatId) return new Response("ok");
+
+  if (text === "/start" || text?.startsWith("/start ")) {
+    await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: chatId,
+        text: "FIX VPN — защищённый доступ через Hiddify, v2rayTun и другие клиенты.\n\nОткройте мини-приложение для покупки подписки и управления аккаунтом:",
+        reply_markup: {
+          inline_keyboard: [
+            [
+              {
+                text: "Открыть FIX VPN",
+                web_app: { url: webAppUrl },
+              },
+            ],
+          ],
+        },
+      }),
+    });
+  }
+
+  return new Response("ok");
+}
+
+export async function handleApiRequest(
+  request: Request,
+  env: ApiEnv,
   path: string
 ): Promise<Response> {
   if (request.method === "OPTIONS") {
@@ -172,8 +220,7 @@ async function handleApi(
           ? prev.startsAt
           : formatDate(now),
       endsAt: formatDate(addMonths(extendFrom, planMonths)),
-      vpnKey:
-        prev.vpnKey ?? `FIX-${tgUser.id}-${planMonths}M-DEMO`,
+      vpnKey: prev.vpnKey ?? `FIX-${tgUser.id}-${planMonths}M-DEMO`,
     };
 
     const updated: UserRecord = {
@@ -196,80 +243,3 @@ async function handleApi(
 
   return json({ error: "Not found" }, 404);
 }
-
-async function handleTelegramWebhook(
-  request: Request,
-  env: Env
-): Promise<Response> {
-  if (!env.TELEGRAM_BOT_TOKEN) {
-    return new Response("Bot token not configured", { status: 500 });
-  }
-
-  const webAppUrl = env.WEBAPP_URL;
-  if (!webAppUrl) {
-    return new Response("WEBAPP_URL not configured", { status: 500 });
-  }
-
-  const update = (await request.json()) as {
-    message?: {
-      chat: { id: number };
-      text?: string;
-    };
-  };
-
-  const chatId = update.message?.chat.id;
-  const text = update.message?.text?.trim();
-
-  if (!chatId) return new Response("ok");
-
-  if (text === "/start" || text?.startsWith("/start ")) {
-    await sendTelegram(env.TELEGRAM_BOT_TOKEN, {
-      chat_id: chatId,
-      text: "FIX VPN — защищённый доступ через Hiddify, v2rayTun и другие клиенты.\n\nОткройте мини-приложение для покупки подписки и управления аккаунтом:",
-      reply_markup: {
-        inline_keyboard: [
-          [
-            {
-              text: "Открыть FIX VPN",
-              web_app: { url: webAppUrl },
-            },
-          ],
-        ],
-      },
-    });
-  }
-
-  return new Response("ok");
-}
-
-async function sendTelegram(
-  token: string,
-  body: Record<string, unknown>
-): Promise<void> {
-  await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-}
-
-export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
-    const url = new URL(request.url);
-
-    try {
-      if (url.pathname.startsWith("/api/")) {
-        return await handleApi(request, env, url.pathname);
-      }
-
-      return env.ASSETS.fetch(request);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Unknown error";
-      console.error("Worker error:", message);
-      return new Response(`FIX VPN error: ${message}`, {
-        status: 500,
-        headers: { "Content-Type": "text/plain; charset=utf-8" },
-      });
-    }
-  },
-};

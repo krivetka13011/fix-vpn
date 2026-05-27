@@ -1,15 +1,8 @@
 name = "fix-vpn"
-main = "worker/src/index.ts"
 compatibility_date = "2025-05-27"
 account_id = "abd3a9f30b070ba7b27946ecb6b82945"
-
-[assets]
-directory = "./dist"
-binding = "ASSETS"
-not_found_handling = "single-page-application"
-run_worker_first = ["/api/*"]
+pages_build_output_dir = "dist"
 
 [[kv_namespaces]]
 binding = "USERS_KV"
 id = "e520e4356dc24cbca90dfd32f962b34e"
-preview_id = "e520e4356dc24cbca90dfd32f962b34e"

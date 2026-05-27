@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "deploy": "npm run build && wrangler deploy",
+    "deploy": "npm run build && wrangler pages deploy dist --project-name=fix-vpn --branch=main",
     "cf:dev": "wrangler dev",
     "bot:menu": "node scripts/set-menu-button.mjs"
   },

@@ -11,4 +11,3 @@ not_found_handling = "single-page-application"
 [[kv_namespaces]]
 binding = "USERS_KV"
 id = "e520e4356dc24cbca90dfd32f962b34e"
-preview_id = "e520e4356dc24cbca90dfd32f962b34e"

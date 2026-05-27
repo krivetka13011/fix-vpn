@@ -19,7 +19,10 @@ jobs:
           cache: npm
 
       - name: Install and build
-        run: npm ci && npm run build
+        run: |
+          npm ci && npm run build
+          test -f dist/index.html
+          test -f dist/logo.png
 
       - name: Deploy to Cloudflare Workers
         id: deploy

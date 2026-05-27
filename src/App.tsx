@@ -37,9 +37,16 @@ export default function App() {
     setLoading(true);
     setError(null);
     try {
-      const [meRes, plansRes] = await Promise.all([fetchMe(), fetchPlans()]);
-      setUser(meRes.user);
+      const plansRes = await fetchPlans();
       setPlans(plansRes.plans);
+      try {
+        const meRes = await fetchMe();
+        setUser(meRes.user);
+      } catch {
+        const fallback = devFallbackUser();
+        if (fallback) setUser(fallback);
+        else throw new Error("Откройте приложение через Telegram");
+      }
     } catch (e) {
       const fallback = devFallbackUser();
       if (fallback) {

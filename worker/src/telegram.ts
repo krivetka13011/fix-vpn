@@ -67,8 +67,12 @@ export async function validateInitData(
   const userRaw = params.get("user");
   if (!userRaw) return null;
 
-  const user = JSON.parse(userRaw) as TelegramUser;
-  return { user, auth_date: authDate, hash };
+  try {
+    const user = JSON.parse(userRaw) as TelegramUser;
+    return { user, auth_date: authDate, hash };
+  } catch {
+    return null;
+  }
 }
 
 export function displayName(user: TelegramUser): string {

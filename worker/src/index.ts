@@ -6,7 +6,6 @@ import {
 import {
   PLANS,
   defaultUser,
-  emptySubscription,
   type PlanMonths,
   type Subscription,
   type UserRecord,
@@ -15,8 +14,8 @@ import {
 export interface Env {
   ASSETS: Fetcher;
   USERS_KV: KVNamespace;
-  TELEGRAM_BOT_TOKEN: string;
-  WEBAPP_URL: string;
+  TELEGRAM_BOT_TOKEN?: string;
+  WEBAPP_URL?: string;
 }
 
 const CORS = {
@@ -42,8 +41,13 @@ async function getAuthUser(
     "";
 
   if (!initData || !env.TELEGRAM_BOT_TOKEN) return null;
-  const parsed = await validateInitData(initData, env.TELEGRAM_BOT_TOKEN);
-  return parsed?.user ?? null;
+
+  try {
+    const parsed = await validateInitData(initData, env.TELEGRAM_BOT_TOKEN);
+    return parsed?.user ?? null;
+  } catch {
+    return null;
+  }
 }
 
 async function getOrCreateUser(
@@ -91,6 +95,14 @@ async function handleApi(
 ): Promise<Response> {
   if (request.method === "OPTIONS") {
     return new Response(null, { headers: CORS });
+  }
+
+  if (path === "/api/health" && request.method === "GET") {
+    return json({
+      ok: true,
+      hasToken: Boolean(env.TELEGRAM_BOT_TOKEN),
+      hasWebAppUrl: Boolean(env.WEBAPP_URL),
+    });
   }
 
   const tgUser = await getAuthUser(request, env);
@@ -169,6 +181,11 @@ async function handleTelegramWebhook(
     return new Response("Bot token not configured", { status: 500 });
   }
 
+  const webAppUrl = env.WEBAPP_URL;
+  if (!webAppUrl) {
+    return new Response("WEBAPP_URL not configured", { status: 500 });
+  }
+
   const update = (await request.json()) as {
     message?: {
       chat: { id: number };
@@ -180,8 +197,6 @@ async function handleTelegramWebhook(
   const text = update.message?.text?.trim();
 
   if (!chatId) return new Response("ok");
-
-  const webAppUrl = env.WEBAPP_URL;
 
   if (text === "/start" || text?.startsWith("/start ")) {
     await sendTelegram(env.TELEGRAM_BOT_TOKEN, {
@@ -218,10 +233,19 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
 
-    if (url.pathname.startsWith("/api/")) {
-      return handleApi(request, env, url.pathname);
-    }
+    try {
+      if (url.pathname.startsWith("/api/")) {
+        return await handleApi(request, env, url.pathname);
+      }
 
-    return env.ASSETS.fetch(request);
+      return env.ASSETS.fetch(request);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unknown error";
+      console.error("Worker error:", message);
+      return new Response(`FIX VPN error: ${message}`, {
+        status: 500,
+        headers: { "Content-Type": "text/plain; charset=utf-8" },
+      });
+    }
   },
 };

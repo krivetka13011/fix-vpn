@@ -18,7 +18,7 @@
 
 [Actions → Deploy FIX VPN → Run workflow](https://github.com/krivetka13011/fix-vpn/actions/workflows/deploy.yml) → **Run workflow**.
 
-**Live URL:** https://fix-vpn.pages.dev (также в [логе деплоя](https://github.com/krivetka13011/fix-vpn/actions)).
+**Live URL:** https://fix-vpn.krivetka13011.workers.dev (в [логе деплоя](https://github.com/krivetka13011/fix-vpn/actions) после зелёного run).
 
 ## 4. Mini App в BotFather
 

@@ -7,7 +7,6 @@ on:
 
 permissions:
   contents: read
-  secrets: write
 
 jobs:
   deploy:
@@ -66,13 +65,6 @@ jobs:
         run: |
           printf '%s' "$TELEGRAM_BOT_TOKEN" | npx wrangler@4.69.0 secret put TELEGRAM_BOT_TOKEN
           printf '%s' "$WEBAPP_URL" | npx wrangler@4.69.0 secret put WEBAPP_URL
-
-      - name: Save WEBAPP_URL to GitHub
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          WEBAPP_URL: ${{ steps.url.outputs.url }}
-        run: |
-          echo "$WEBAPP_URL" | gh secret set WEBAPP_URL --repo "${{ github.repository }}"
 
       - name: Configure Telegram
         env:

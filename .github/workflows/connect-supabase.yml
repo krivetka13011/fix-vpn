@@ -12,16 +12,37 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Check GitHub secrets exist
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Check GitHub secrets
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         run: |
-          test -n "$CLOUDFLARE_API_TOKEN"
-          test -n "$SUPABASE_URL"
-          test -n "$SUPABASE_SERVICE_ROLE_KEY"
+          test -n "$CLOUDFLARE_API_TOKEN" || (echo "Нет CLOUDFLARE_API_TOKEN" >&2; exit 1)
+          test -n "$TELEGRAM_BOT_TOKEN" || (echo "Нет TELEGRAM_BOT_TOKEN" >&2; exit 1)
+          test -n "$SUPABASE_URL" || (echo "Нет SUPABASE_URL" >&2; exit 1)
+          test -n "$SUPABASE_SERVICE_ROLE_KEY" || (echo "Нет SUPABASE_SERVICE_ROLE_KEY" >&2; exit 1)
+          echo "$SUPABASE_URL" | grep -qE '^https://[a-z0-9-]+\.supabase\.co$' || (echo "SUPABASE_URL должен быть https://xxx.supabase.co без слэша" >&2; exit 1)
+          echo "$SUPABASE_SERVICE_ROLE_KEY" | grep -qE '^(eyJ|sb_secret_)' || (echo "Нужен Secret key (sb_secret_...), не Publishable" >&2; exit 1)
           echo "GitHub secrets OK"
+
+      - name: Test Supabase API directly
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          CODE=$(curl -sS -o /tmp/sb.json -w '%{http_code}' \
+            "$SUPABASE_URL/rest/v1/users?select=id&limit=1" \
+            -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" \
+            -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY")
+          echo "Supabase HTTP $CODE"
+          cat /tmp/sb.json
+          test "$CODE" = "200" || (echo "Таблица users недоступна. Выполните supabase/schema.sql в SQL Editor" >&2; exit 1)
 
       - name: Set Worker secrets
         env:
@@ -36,9 +57,16 @@ jobs:
           printf '%s' "$SUPABASE_URL" | npx wrangler@4.69.0 secret put SUPABASE_URL
           printf '%s' "$SUPABASE_SERVICE_ROLE_KEY" | npx wrangler@4.69.0 secret put SUPABASE_SERVICE_ROLE_KEY
 
-      - name: Verify Supabase on live Worker
+      - name: Verify Worker health
         run: |
-          curl -fsS "https://fix-vpn.krivetkagames.workers.dev/api/health" | tee /tmp/health.json
-          grep -q '"supabaseOk":true' /tmp/health.json
-          echo "## Supabase connected" >> "$GITHUB_STEP_SUMMARY"
-          echo "supabaseOk: true" >> "$GITHUB_STEP_SUMMARY"
+          for i in 1 2 3 4 5 6; do
+            curl -fsS "https://fix-vpn.krivetkagames.workers.dev/api/health" | tee /tmp/health.json
+            if grep -q '"supabaseOk":true' /tmp/health.json; then
+              echo "## Supabase connected" >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "Worker health:" >&2
+          cat /tmp/health.json >&2
+          exit 1

@@ -135,6 +135,7 @@ export async function handleApiRequest(
     let botOk = false;
     let webhookUrl: string | null = null;
     let supabaseOk = false;
+    let supabaseStatus: number | null = null;
     if (env.TELEGRAM_BOT_TOKEN) {
       try {
         const me = await fetch(
@@ -154,6 +155,7 @@ export async function handleApiRequest(
     if (env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY) {
       try {
         const sb = await sbRequest(env, "users?select=id&limit=1");
+        supabaseStatus = sb.status;
         supabaseOk = sb.ok;
       } catch {
         supabaseOk = false;
@@ -168,6 +170,7 @@ export async function handleApiRequest(
       hasWebAppUrl: Boolean(env.WEBAPP_URL),
       botOk,
       supabaseOk,
+      supabaseStatus,
       webAppUrl: env.WEBAPP_URL?.replace(/\/$/, "") ?? null,
       webhookUrl,
       webhookOk: Boolean(

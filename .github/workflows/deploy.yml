@@ -5,11 +5,13 @@ on:
     branches: [main, master]
   workflow_dispatch:
 
+permissions:
+  contents: read
+  secrets: write
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
     steps:
       - uses: actions/checkout@v4
 
@@ -37,48 +39,47 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
           npx wrangler@4.69.0 deploy 2>&1 | tee deploy.log
-          npx wrangler@4.69.0 deployments list 2>&1 | tee -a deploy.log
 
-      - name: Verify and get Live URL
-        id: verify
-        if: steps.wrangler.outcome == 'success'
+      - name: Resolve and verify Live URL
+        id: url
         run: |
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-          cat deploy.log >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          URL=$(grep -oE 'https://[a-zA-Z0-9.-]+\.workers\.dev' deploy.log | head -1)
+          if [ -z "$URL" ]; then
+            echo "No workers.dev URL in deploy.log:" >&2
+            cat deploy.log >&2
+            exit 1
+          fi
+          curl -fsS "$URL/api/health" | grep -q '"ok":true'
+          curl -fsS "$URL/api/plans" | grep -q '"plans"'
+          HOME=$(curl -sS -o /dev/null -w '%{http_code}' "$URL/")
+          test "$HOME" = "200"
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "## FIX VPN — Live URL" >> "$GITHUB_STEP_SUMMARY"
+          echo "**$URL**" >> "$GITHUB_STEP_SUMMARY"
+          echo "BotFather → Configure Mini App → этот URL" >> "$GITHUB_STEP_SUMMARY"
 
-          URLS=$(grep -oE 'https://[a-zA-Z0-9.-]+\.workers\.dev' deploy.log | sort -u)
-          URLS="$URLS https://fix-vpn.krivetka13011.workers.dev"
-          for URL in $URLS; do
-            echo "Testing $URL ..."
-            CODE=$(curl -sS -o /tmp/health.json -w '%{http_code}' "$URL/api/health" || echo "000")
-            if [ "$CODE" = "200" ] && grep -q '"ok":true' /tmp/health.json 2>/dev/null; then
-              echo "url=$URL" >> "$GITHUB_OUTPUT"
-              echo "## FIX VPN — Live URL" >> "$GITHUB_STEP_SUMMARY"
-              echo "**$URL**" >> "$GITHUB_STEP_SUMMARY"
-              curl -fsS -o /dev/null -w "home HTTP %{http_code}\n" "$URL/"
-              exit 0
-            fi
-          done
-          echo "No working URL. Tried: $URLS" >&2
-          exit 1
-
-      - name: Set secrets
-        if: steps.verify.outcome == 'success'
+      - name: Set Worker secrets
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          WEBAPP_URL: ${{ steps.verify.outputs.url }}
+          WEBAPP_URL: ${{ steps.url.outputs.url }}
         run: |
           printf '%s' "$TELEGRAM_BOT_TOKEN" | npx wrangler@4.69.0 secret put TELEGRAM_BOT_TOKEN
           printf '%s' "$WEBAPP_URL" | npx wrangler@4.69.0 secret put WEBAPP_URL
 
+      - name: Save WEBAPP_URL to GitHub
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          WEBAPP_URL: ${{ steps.url.outputs.url }}
+        run: |
+          echo "$WEBAPP_URL" | gh secret set WEBAPP_URL --repo "${{ github.repository }}"
+
       - name: Configure Telegram
-        if: steps.verify.outcome == 'success'
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          WEBAPP_URL: ${{ steps.verify.outputs.url }}
+          WEBAPP_URL: ${{ steps.url.outputs.url }}
         run: |
+          curl -fsS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getMe" | grep -q '"ok":true'
           curl -fsS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/deleteWebhook?drop_pending_updates=true"
           curl -fsS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setWebhook" \
             -H "Content-Type: application/json" \
@@ -86,4 +87,5 @@ jobs:
           curl -fsS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setChatMenuButton" \
             -H "Content-Type: application/json" \
             -d "{\"menu_button\":{\"type\":\"web_app\",\"text\":\"FIX VPN\",\"web_app\":{\"url\":\"${WEBAPP_URL}\"}}}"
-          curl -fsS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getWebhookInfo" | grep -q webhook
+          curl -fsS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getWebhookInfo" \
+            | grep -q "${WEBAPP_URL}/api/webhook/telegram"

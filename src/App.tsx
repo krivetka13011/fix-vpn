@@ -6,6 +6,13 @@ import { SubscriptionsTab } from "./components/SubscriptionsTab";
 import { ProfileTab } from "./components/ProfileTab";
 import type { Plan, TabId, UserProfile } from "./types";
 
+const DEFAULT_PLANS: Plan[] = [
+  { months: 1, label: "1 месяц", priceRub: 199 },
+  { months: 3, label: "3 месяца", priceRub: 499, badge: "−15%" },
+  { months: 6, label: "6 месяцев", priceRub: 899, badge: "−25%" },
+  { months: 12, label: "1 год", priceRub: 1499, badge: "Лучшая цена" },
+];
+
 function devFallbackUser(): UserProfile | null {
   const tg = window.Telegram?.WebApp?.initDataUnsafe?.user;
   if (!tg) return null;
@@ -28,38 +35,30 @@ function devFallbackUser(): UserProfile | null {
 
 export default function App() {
   const [tab, setTab] = useState<TabId>("home");
-  const [user, setUser] = useState<UserProfile | null>(null);
-  const [plans, setPlans] = useState<Plan[]>([]);
+  const [user, setUser] = useState<UserProfile | null>(() => devFallbackUser());
+  const [plans, setPlans] = useState<Plan[]>(DEFAULT_PLANS);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [apiError, setApiError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
-    setError(null);
+    setApiError(null);
+    const fallback = devFallbackUser();
+    if (fallback) setUser(fallback);
+
     try {
       const plansRes = await fetchPlans();
       setPlans(plansRes.plans);
-      try {
-        const meRes = await fetchMe();
-        setUser(meRes.user);
-      } catch {
-        const fallback = devFallbackUser();
-        if (fallback) setUser(fallback);
-        else throw new Error("Откройте приложение через Telegram");
-      }
+    } catch {
+      setPlans(DEFAULT_PLANS);
+    }
+
+    try {
+      const meRes = await fetchMe();
+      setUser(meRes.user);
     } catch (e) {
-      const fallback = devFallbackUser();
-      if (fallback) {
-        setUser(fallback);
-        setPlans([
-          { months: 1, label: "1 месяц", priceRub: 199 },
-          { months: 3, label: "3 месяца", priceRub: 499, badge: "−15%" },
-          { months: 6, label: "6 месяцев", priceRub: 899, badge: "−25%" },
-          { months: 12, label: "1 год", priceRub: 1499, badge: "Лучшая цена" },
-        ]);
-        setError(null);
-      } else {
-        setError(
+      if (!fallback) {
+        setApiError(
           e instanceof Error
             ? e.message
             : "Откройте приложение через Telegram"
@@ -76,7 +75,6 @@ export default function App() {
     tg?.expand();
     tg?.setHeaderColor?.("#121212");
     tg?.setBackgroundColor?.("#121212");
-    tg?.enableClosingConfirmation?.();
     document.documentElement.style.setProperty(
       "--bg",
       tg?.themeParams?.bg_color ?? "#121212"
@@ -86,24 +84,32 @@ export default function App() {
 
   const tgPhoto = window.Telegram?.WebApp?.initDataUnsafe?.user?.photo_url;
 
-  return (
-    <div className="app">
-      <main className="content">
-        {loading && <div className="loading">Загрузка…</div>}
-        {error && !loading && (
+  if (apiError && !user) {
+    return (
+      <div className="app">
+        <main className="content">
           <div className="error-state">
             <img
               src="/logo.png"
               alt=""
               style={{ width: 72, marginBottom: 16, borderRadius: 12 }}
             />
-            <p>{error}</p>
-            <p style={{ fontSize: "0.85rem" }}>
-              Запустите бота и нажмите «Открыть FIX VPN»
-            </p>
+            <p>{apiError}</p>
+          </div>
+        </main>
+      </div>
+    );
+  }
+
+  return (
+    <div className="app">
+      <main className="content">
+        {loading && (
+          <div className="loading" style={{ marginBottom: 8 }}>
+            Синхронизация…
           </div>
         )}
-        {!loading && !error && user && (
+        {user && (
           <>
             {tab === "home" && (
               <HomeTab
@@ -124,7 +130,7 @@ export default function App() {
           </>
         )}
       </main>
-      {!error && <TabBar active={tab} onChange={setTab} />}
+      <TabBar active={tab} onChange={setTab} />
     </div>
   );
 }

@@ -46,25 +46,26 @@ export function HelpTab({ catalog, user }: Props) {
       </header>
 
       <div className="stack">
-        <div className="surface">
+        <div className="action-row">
           <button
             type="button"
-            className="btn btn-fill"
+            className="action-card support"
             onClick={() => openSupportChat(catalog.supportTelegramId)}
           >
-            Написать в поддержку
+            <span className="action-icon">💬</span>
+            <span className="action-label">Поддержка</span>
           </button>
           <button
             type="button"
-            className="btn btn-ghost"
-            style={{ marginTop: 10 }}
+            className="action-card channel"
             onClick={() => openTelegramLink(catalog.telegramChannelUrl)}
           >
-            Telegram-канал
+            <span className="action-icon">📢</span>
+            <span className="action-label">Канал</span>
           </button>
         </div>
 
-        <div className="surface">
+        <div className="surface surface-tint">
           <p className="section-label">Устройство</p>
           <div className="chip-row">
             {PLATFORMS.map((p) => (
@@ -80,7 +81,7 @@ export function HelpTab({ catalog, user }: Props) {
           </div>
         </div>
 
-        <div className="surface">
+        <div className="surface surface-tint">
           <p className="section-label">Клиент</p>
           <div className="chip-row">
             {CLIENTS.map((c) => (
@@ -99,7 +100,7 @@ export function HelpTab({ catalog, user }: Props) {
         <button type="button" className="btn btn-fill" onClick={handleInstall}>
           Установить клиент
         </button>
-        <button type="button" className="btn btn-ghost" onClick={handleConnect}>
+        <button type="button" className="btn btn-outline" onClick={handleConnect}>
           Подключиться
         </button>
 
@@ -111,7 +112,7 @@ export function HelpTab({ catalog, user }: Props) {
             <div className="key-box">{key}</div>
             <button
               type="button"
-              className="btn btn-ghost btn-sm"
+              className="btn btn-outline btn-sm"
               style={{ marginTop: 12 }}
               onClick={() => copyText(key)}
             >

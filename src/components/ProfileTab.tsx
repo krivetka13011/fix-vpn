@@ -54,13 +54,15 @@ export function ProfileTab({ user, fallbackPhoto }: Props) {
       </header>
 
       <div className="profile-block">
-        {photo ? (
-          <img src={photo} alt="" className="profile-avatar" />
-        ) : (
-          <div className="profile-avatar placeholder">
-            {user.displayName.charAt(0).toUpperCase()}
-          </div>
-        )}
+        <div className="avatar-ring">
+          {photo ? (
+            <img src={photo} alt="" className="profile-avatar" />
+          ) : (
+            <div className="profile-avatar placeholder">
+              {user.displayName.charAt(0).toUpperCase()}
+            </div>
+          )}
+        </div>
         <h2 className="profile-name">{user.displayName}</h2>
         {user.username && (
           <p className="profile-handle">@{user.username}</p>
@@ -68,21 +70,21 @@ export function ProfileTab({ user, fallbackPhoto }: Props) {
       </div>
 
       <div className="stat-grid">
-        <div className="stat-cell">
+        <div className="stat-cell stat-tariff">
           <span className="stat-label">Тариф</span>
           <span className="stat-value">{tariffName}</span>
         </div>
-        <div className="stat-cell">
+        <div className="stat-cell stat-status">
           <span className="stat-label">Статус</span>
           <span className="stat-value">
             <span className={`badge ${statusClass}`}>{statusLabel}</span>
           </span>
         </div>
-        <div className="stat-cell">
+        <div className="stat-cell stat-devices">
           <span className="stat-label">Устройства</span>
           <span className="stat-value">{devicesLabel}</span>
         </div>
-        <div className="stat-cell wide">
+        <div className="stat-cell stat-period wide">
           <span className="stat-label">Подписка</span>
           <span className="stat-value">{actionLabel}</span>
         </div>

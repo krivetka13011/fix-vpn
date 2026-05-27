@@ -150,7 +150,7 @@ export default function App() {
         )}
         {tab === "help" && <HelpTab catalog={catalog} user={user} />}
         {tab === "plans" && (
-          <PlansTab catalog={catalog} user={user} onPurchased={load} />
+          <PlansTab catalog={catalog} onPurchased={load} />
         )}
         {tab === "profile" && (
           <ProfileTab user={user} fallbackPhoto={tgPhoto} />

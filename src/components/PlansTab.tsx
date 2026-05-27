@@ -5,7 +5,6 @@ import { useTelegramMainButton } from "../hooks/useTelegramMainButton";
 
 interface Props {
   catalog: Catalog;
-  user: UserProfile;
   onPurchased: () => void;
 }
 
@@ -17,7 +16,7 @@ const PERIOD_LABELS: Record<BillingMonths, string> = {
   12: "1 год",
 };
 
-export function PlansTab({ catalog, user, onPurchased }: Props) {
+export function PlansTab({ catalog, onPurchased }: Props) {
   const [planType, setPlanType] = useState<PlanType | null>(null);
   const [months, setMonths] = useState<BillingMonths | null>(null);
   const [extraDevices, setExtraDevices] = useState(0);

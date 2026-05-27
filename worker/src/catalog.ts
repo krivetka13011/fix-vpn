@@ -3,7 +3,7 @@ export type BillingMonths = 1 | 2 | 3 | 6 | 12;
 
 export const EXTRA_DEVICE_PRICE_PER_MONTH = 75;
 export const SUPPORT_TELEGRAM_ID = 8312175683;
-export const TELEGRAM_CHANNEL_URL = "https://t.me/fixvpn";
+export const TELEGRAM_CHANNEL_URL = "https://t.me/FIXVPNfast";
 
 export const TARIFFS: Record<
   PlanType,

@@ -39,7 +39,7 @@ const DEFAULT_CATALOG: Catalog = {
   ],
   extraDevicePricePerMonth: 75,
   supportTelegramId: 8312175683,
-  telegramChannelUrl: "https://t.me/fixvpn",
+  telegramChannelUrl: "https://t.me/FIXVPNfast",
   billingMonths: [1, 2, 3, 6, 12],
 };
 

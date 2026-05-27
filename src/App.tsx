@@ -37,36 +37,36 @@ export default function App() {
   const [tab, setTab] = useState<TabId>("home");
   const [user, setUser] = useState<UserProfile | null>(() => devFallbackUser());
   const [plans, setPlans] = useState<Plan[]>(DEFAULT_PLANS);
-  const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
   const [apiError, setApiError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    setLoading(true);
+    setSyncing(true);
     setApiError(null);
     const fallback = devFallbackUser();
     if (fallback) setUser(fallback);
 
-    try {
-      const plansRes = await fetchPlans();
-      setPlans(plansRes.plans);
-    } catch {
-      setPlans(DEFAULT_PLANS);
+    const [plansResult, meResult] = await Promise.allSettled([
+      fetchPlans(),
+      fetchMe(),
+    ]);
+
+    if (plansResult.status === "fulfilled") {
+      setPlans(plansResult.value.plans);
     }
 
-    try {
-      const meRes = await fetchMe();
-      setUser(meRes.user);
-    } catch (e) {
-      if (!fallback) {
-        setApiError(
-          e instanceof Error
-            ? e.message
-            : "Откройте приложение через Telegram"
-        );
-      }
-    } finally {
-      setLoading(false);
+    if (meResult.status === "fulfilled") {
+      setUser(meResult.value.user);
+    } else if (!fallback) {
+      const reason = meResult.reason;
+      setApiError(
+        reason instanceof Error
+          ? reason.message
+          : "Откройте приложение через Telegram"
+      );
     }
+
+    setSyncing(false);
   }, []);
 
   useEffect(() => {
@@ -84,7 +84,7 @@ export default function App() {
 
   const tgPhoto = window.Telegram?.WebApp?.initDataUnsafe?.user?.photo_url;
 
-  if (!user && !loading) {
+  if (!user) {
     return (
       <div className="app">
         <main className="content">
@@ -107,8 +107,8 @@ export default function App() {
   return (
     <div className="app">
       <main className="content">
-        {loading && (
-          <div className="loading" style={{ marginBottom: 8 }}>
+        {syncing && (
+          <div className="loading" style={{ marginBottom: 8, opacity: 0.7 }}>
             Синхронизация…
           </div>
         )}

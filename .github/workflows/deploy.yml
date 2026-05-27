@@ -53,6 +53,10 @@ jobs:
           curl -fsS "$URL/api/plans" | grep -q '"plans"'
           HOME=$(curl -sS -o /dev/null -w '%{http_code}' "$URL/")
           test "$HOME" = "200"
+          WH_CODE=$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$URL/api/webhook/telegram" \
+            -H "Content-Type: application/json" \
+            -d '{"message":{"chat":{"id":0},"text":"/start"}}')
+          test "$WH_CODE" = "200"
           echo "url=$URL" >> "$GITHUB_OUTPUT"
           echo "## FIX VPN — Live URL" >> "$GITHUB_STEP_SUMMARY"
           echo "**$URL**" >> "$GITHUB_STEP_SUMMARY"
@@ -80,5 +84,8 @@ jobs:
           curl -fsS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setChatMenuButton" \
             -H "Content-Type: application/json" \
             -d "{\"menu_button\":{\"type\":\"web_app\",\"text\":\"FIX VPN\",\"web_app\":{\"url\":\"${WEBAPP_URL}\"}}}"
-          curl -fsS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getWebhookInfo" \
-            | grep -q "${WEBAPP_URL}/api/webhook/telegram"
+          WH=$(curl -fsS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getWebhookInfo")
+          echo "$WH" | grep -q "${WEBAPP_URL}/api/webhook/telegram"
+          curl -fsS -X POST "${WEBAPP_URL}/api/webhook/telegram" \
+            -H "Content-Type: application/json" \
+            -d '{"message":{"chat":{"id":0},"text":"/start"}}' | grep -q '^ok'

@@ -99,6 +99,12 @@ function formatDate(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
 
+function isStartCommand(text: string | undefined): boolean {
+  if (!text) return false;
+  const cmd = text.trim().split(/\s+/)[0]?.toLowerCase() ?? "";
+  return cmd === "/start" || cmd.startsWith("/start@");
+}
+
 async function handleTelegramWebhook(
   request: Request,
   env: ApiEnv
@@ -124,7 +130,7 @@ async function handleTelegramWebhook(
 
   if (!chatId) return new Response("ok");
 
-  if (text === "/start" || text?.startsWith("/start ")) {
+  if (isStartCommand(text)) {
     const appUrl = webAppUrl.replace(/\/$/, "");
     const tgRes = await fetch(
       `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`,
@@ -167,6 +173,7 @@ export async function handleApiRequest(
 
   if (path === "/api/health" && request.method === "GET") {
     let botOk = false;
+    let webhookUrl: string | null = null;
     if (env.TELEGRAM_BOT_TOKEN) {
       try {
         const me = await fetch(
@@ -174,20 +181,34 @@ export async function handleApiRequest(
         );
         const data = (await me.json()) as { ok?: boolean };
         botOk = Boolean(data.ok);
+        const wh = await fetch(
+          `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/getWebhookInfo`
+        );
+        const whData = (await wh.json()) as { result?: { url?: string } };
+        webhookUrl = whData.result?.url ?? null;
       } catch {
         botOk = false;
       }
     }
+    const expectedWebhook = env.WEBAPP_URL
+      ? `${env.WEBAPP_URL.replace(/\/$/, "")}/api/webhook/telegram`
+      : null;
     return json({
       ok: true,
       hasToken: Boolean(env.TELEGRAM_BOT_TOKEN),
       hasWebAppUrl: Boolean(env.WEBAPP_URL),
       botOk,
       webAppUrl: env.WEBAPP_URL?.replace(/\/$/, "") ?? null,
+      webhookUrl,
+      webhookOk: Boolean(
+        expectedWebhook && webhookUrl && webhookUrl === expectedWebhook
+      ),
     });
   }
 
-  const tgUser = await getAuthUser(request, env);
+  if (path === "/api/webhook/telegram" && request.method === "POST") {
+    return handleTelegramWebhook(request, env);
+  }
 
   if (path === "/api/plans" && request.method === "GET") {
     return json({
@@ -197,6 +218,8 @@ export async function handleApiRequest(
       })),
     });
   }
+
+  const tgUser = await getAuthUser(request, env);
 
   if (!tgUser) {
     return json({ error: "Unauthorized: open via Telegram Mini App" }, 401);
@@ -257,10 +280,6 @@ export async function handleApiRequest(
       message: "Демо-оплата: ключ создан (реальная оплата подключится позже)",
       subscription,
     });
-  }
-
-  if (path === "/api/webhook/telegram" && request.method === "POST") {
-    return handleTelegramWebhook(request, env);
   }
 
   return json({ error: "Not found" }, 404);

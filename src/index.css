@@ -215,6 +215,12 @@ body {
   color: var(--text-muted);
 }
 
+.badge-expired {
+  background: rgba(180, 80, 80, 0.15);
+  color: #e8a0a0;
+  border: 1px solid rgba(232, 160, 160, 0.25);
+}
+
 .badge-plan {
   background: rgba(224, 224, 224, 0.1);
   color: var(--silver);

@@ -74,6 +74,9 @@ export default function App() {
     const tg = window.Telegram?.WebApp;
     tg?.ready();
     tg?.expand();
+    tg?.setHeaderColor?.("#121212");
+    tg?.setBackgroundColor?.("#121212");
+    tg?.enableClosingConfirmation?.();
     document.documentElement.style.setProperty(
       "--bg",
       tg?.themeParams?.bg_color ?? "#121212"

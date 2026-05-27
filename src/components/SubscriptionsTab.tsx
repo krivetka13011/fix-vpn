@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import type { Plan, UserProfile } from "../types";
 import { purchasePlan } from "../api/client";
+import { useTelegramMainButton } from "../hooks/useTelegramMainButton";
 
 interface Props {
   plans: Plan[];
@@ -13,7 +14,7 @@ export function SubscriptionsTab({ plans, user, onPurchased }: Props) {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
-  async function handleBuy() {
+  const handleBuy = useCallback(async () => {
     if (selected == null) return;
     setLoading(true);
     setMessage(null);
@@ -27,7 +28,14 @@ export function SubscriptionsTab({ plans, user, onPurchased }: Props) {
     } finally {
       setLoading(false);
     }
-  }
+  }, [selected, onPurchased]);
+
+  useTelegramMainButton(
+    "Оформить подписку",
+    selected != null,
+    handleBuy,
+    loading
+  );
 
   const sorted = [...plans].sort((a, b) => a.months - b.months);
 

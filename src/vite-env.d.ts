@@ -32,6 +32,9 @@ interface TelegramWebApp {
   HapticFeedback: {
     impactOccurred: (style: "light" | "medium" | "heavy") => void;
   };
+  setHeaderColor?: (color: string) => void;
+  setBackgroundColor?: (color: string) => void;
+  enableClosingConfirmation?: () => void;
 }
 
 interface Window {

@@ -19,7 +19,11 @@ export function ProfileTab({ user, fallbackPhoto }: Props) {
         : "Нет подписки";
 
   const statusClass =
-    sub.status === "active" ? "badge-active" : "badge-none";
+    sub.status === "active"
+      ? "badge-active"
+      : sub.status === "expired"
+        ? "badge-expired"
+        : "badge-none";
 
   return (
     <>

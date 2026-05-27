@@ -8,6 +8,7 @@ interface Props {
 export function HomeTab({ user, onGoSubscriptions }: Props) {
   const sub = user?.subscription;
   const isActive = sub?.status === "active";
+  const isExpired = sub?.status === "expired";
 
   return (
     <>
@@ -21,16 +22,32 @@ export function HomeTab({ user, onGoSubscriptions }: Props) {
 
       <div className="card card-glass">
         <h2 style={{ margin: "0 0 8px", fontSize: "1.1rem" }}>
-          {isActive ? "Подписка активна" : "Подключите VPN"}
+          {isActive
+            ? "Подписка активна"
+            : isExpired
+              ? "Подписка истекла"
+              : "Подключите VPN"}
         </h2>
         <p style={{ margin: "0 0 16px", color: "var(--text-muted)", fontSize: "0.9rem" }}>
           {isActive
             ? `Тариф «${sub?.planLabel}» до ${formatRuDate(sub?.endsAt)}`
-            : "Выберите тариф и получите ключ для VPN-клиента"}
+            : isExpired
+              ? `Срок закончился ${formatRuDate(sub?.endsAt)} — продлите доступ`
+              : "Выберите тариф и получите ключ для VPN-клиента"}
         </p>
         <button type="button" className="btn-primary" onClick={onGoSubscriptions}>
           {isActive ? "Продлить подписку" : "Купить подписку"}
         </button>
+        {isActive && sub?.vpnKey && (
+          <button
+            type="button"
+            className="btn-ghost"
+            style={{ width: "100%", marginTop: 10 }}
+            onClick={() => copyKey(sub.vpnKey!)}
+          >
+            Скопировать VPN-ключ
+          </button>
+        )}
       </div>
 
       <div className="card">
@@ -53,6 +70,11 @@ export function HomeTab({ user, onGoSubscriptions }: Props) {
       </div>
     </>
   );
+}
+
+function copyKey(key: string) {
+  navigator.clipboard?.writeText(key);
+  window.Telegram?.WebApp?.HapticFeedback?.impactOccurred("light");
 }
 
 function formatRuDate(iso: string | null | undefined): string {

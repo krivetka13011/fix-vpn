@@ -3,6 +3,7 @@ import {
   validateInitData,
   type TelegramUser,
 } from "./telegram";
+import { applySubscriptionExpiry } from "./subscription";
 import {
   PLANS,
   defaultUser,
@@ -50,18 +51,29 @@ async function getAuthUser(
   }
 }
 
+async function readUser(env: Env, key: string): Promise<UserRecord | null> {
+  try {
+    const raw = await env.USERS_KV.get(key);
+    if (!raw) return null;
+    return JSON.parse(raw) as UserRecord;
+  } catch {
+    return null;
+  }
+}
+
 async function getOrCreateUser(
   env: Env,
   tgUser: TelegramUser
 ): Promise<UserRecord> {
   const key = `user:${tgUser.id}`;
-  const existing = await env.USERS_KV.get<UserRecord>(key, "json");
+  const existing = await readUser(env, key);
   if (existing) {
     const merged: UserRecord = {
       ...existing,
       displayName: displayName(tgUser),
       username: tgUser.username ?? null,
       photoUrl: tgUser.photo_url ?? existing.photoUrl,
+      subscription: applySubscriptionExpiry(existing.subscription),
       updatedAt: new Date().toISOString(),
     };
     await env.USERS_KV.put(key, JSON.stringify(merged));
@@ -122,13 +134,14 @@ async function handleApi(
 
   if (path === "/api/me" && request.method === "GET") {
     const user = await getOrCreateUser(env, tgUser);
+    const subscription = applySubscriptionExpiry(user.subscription);
     return json({
       user: {
         id: user.telegramId,
         displayName: user.displayName,
         username: user.username,
         photoUrl: user.photoUrl,
-        subscription: user.subscription,
+        subscription,
       },
     });
   }
@@ -143,13 +156,24 @@ async function handleApi(
     const user = await getOrCreateUser(env, tgUser);
     const now = new Date();
     const plan = PLANS[planMonths];
+    const prev = user.subscription;
+    const extendFrom =
+      prev.status === "active" && prev.endsAt
+        ? new Date(`${prev.endsAt}T12:00:00`) > now
+          ? new Date(`${prev.endsAt}T12:00:00`)
+          : now
+        : now;
     const subscription: Subscription = {
       status: "active",
       planMonths,
       planLabel: plan.label,
-      startsAt: formatDate(now),
-      endsAt: formatDate(addMonths(now, planMonths)),
-      vpnKey: `FIX-${tgUser.id}-${planMonths}M-DEMO`,
+      startsAt:
+        prev.status === "active" && prev.startsAt
+          ? prev.startsAt
+          : formatDate(now),
+      endsAt: formatDate(addMonths(extendFrom, planMonths)),
+      vpnKey:
+        prev.vpnKey ?? `FIX-${tgUser.id}-${planMonths}M-DEMO`,
     };
 
     const updated: UserRecord = {

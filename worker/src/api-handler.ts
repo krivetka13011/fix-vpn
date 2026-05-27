@@ -125,24 +125,32 @@ async function handleTelegramWebhook(
   if (!chatId) return new Response("ok");
 
   if (text === "/start" || text?.startsWith("/start ")) {
-    await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        chat_id: chatId,
-        text: "FIX VPN — защищённый доступ через Hiddify, v2rayTun и другие клиенты.\n\nОткройте мини-приложение для покупки подписки и управления аккаунтом:",
-        reply_markup: {
-          inline_keyboard: [
-            [
-              {
-                text: "Открыть FIX VPN",
-                web_app: { url: webAppUrl },
-              },
+    const appUrl = webAppUrl.replace(/\/$/, "");
+    const tgRes = await fetch(
+      `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chat_id: chatId,
+          text: "FIX VPN — защищённый доступ через Hiddify, v2rayTun и другие клиенты.\n\nОткройте мини-приложение для покупки подписки и управления аккаунтом:",
+          reply_markup: {
+            inline_keyboard: [
+              [
+                {
+                  text: "Открыть FIX VPN",
+                  web_app: { url: appUrl },
+                },
+              ],
             ],
-          ],
-        },
-      }),
-    });
+          },
+        }),
+      }
+    );
+    const tgJson = (await tgRes.json()) as { ok?: boolean; description?: string };
+    if (!tgJson.ok) {
+      console.error("Telegram sendMessage:", tgJson.description ?? tgRes.status);
+    }
   }
 
   return new Response("ok");
@@ -158,10 +166,24 @@ export async function handleApiRequest(
   }
 
   if (path === "/api/health" && request.method === "GET") {
+    let botOk = false;
+    if (env.TELEGRAM_BOT_TOKEN) {
+      try {
+        const me = await fetch(
+          `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/getMe`
+        );
+        const data = (await me.json()) as { ok?: boolean };
+        botOk = Boolean(data.ok);
+      } catch {
+        botOk = false;
+      }
+    }
     return json({
       ok: true,
       hasToken: Boolean(env.TELEGRAM_BOT_TOKEN),
       hasWebAppUrl: Boolean(env.WEBAPP_URL),
+      botOk,
+      webAppUrl: env.WEBAPP_URL?.replace(/\/$/, "") ?? null,
     });
   }
 

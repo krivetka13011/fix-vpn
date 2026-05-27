@@ -84,7 +84,7 @@ export default function App() {
 
   const tgPhoto = window.Telegram?.WebApp?.initDataUnsafe?.user?.photo_url;
 
-  if (apiError && !user) {
+  if (!user && !loading) {
     return (
       <div className="app">
         <main className="content">
@@ -94,7 +94,10 @@ export default function App() {
               alt=""
               style={{ width: 72, marginBottom: 16, borderRadius: 12 }}
             />
-            <p>{apiError}</p>
+            <p>
+              {apiError ??
+                "Откройте приложение в Telegram: @FIXVPNfast_bot"}
+            </p>
           </div>
         </main>
       </div>

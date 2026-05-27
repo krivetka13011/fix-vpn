@@ -48,7 +48,8 @@ jobs:
             cat deploy.log >&2
             exit 1
           fi
-          curl -fsS "$URL/api/health" | grep -q '"ok":true'
+          curl -fsS "$URL/api/health" | tee /tmp/health.json | grep -q '"ok":true'
+          grep -q '"botOk":true' /tmp/health.json
           curl -fsS "$URL/api/plans" | grep -q '"plans"'
           HOME=$(curl -sS -o /dev/null -w '%{http_code}' "$URL/")
           test "$HOME" = "200"

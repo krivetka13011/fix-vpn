@@ -35,7 +35,12 @@ jobs:
         id: wrangler
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-        run: npx wrangler@4.69.0 deploy --verbose 2>&1 | tee deploy.log
+        run: |
+          npx wrangler@4.69.0 deploy --verbose 2>&1 | tee deploy.log
+          npx wrangler@4.69.0 deployments list 2>&1 | tee -a deploy.log
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          tail -30 deploy.log >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload deploy log on failure
         if: failure() && steps.wrangler.outcome == 'failure'

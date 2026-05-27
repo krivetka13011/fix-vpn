@@ -8,17 +8,23 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
 
-    try {
-      if (url.pathname.startsWith("/api/")) {
-        return await handleApiRequest(request, env, url.pathname);
-      }
-      return env.ASSETS.fetch(request);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Unknown error";
-      return new Response(JSON.stringify({ error: message }), {
-        status: 500,
-        headers: { "Content-Type": "application/json" },
+    if (url.pathname === "/api/health") {
+      return Response.json({
+        ok: true,
+        hasToken: Boolean(env.TELEGRAM_BOT_TOKEN),
+        hasWebAppUrl: Boolean(env.WEBAPP_URL),
       });
     }
+
+    if (url.pathname.startsWith("/api/")) {
+      try {
+        return await handleApiRequest(request, env, url.pathname);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Unknown error";
+        return Response.json({ error: message }, { status: 500 });
+      }
+    }
+
+    return env.ASSETS.fetch(request);
   },
 };

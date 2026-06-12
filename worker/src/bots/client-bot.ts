@@ -199,15 +199,45 @@ function buildSubscriptionUrl(env: BotEnv, subId: string): string {
   return `${base}${path}/${subId}`;
 }
 
+async function syncSubscriptionFromPanel(
+  env: BotEnv,
+  userId: string,
+  tg: TelegramUser
+): Promise<string | null> {
+  try {
+    const xui = new XuiApi(env);
+    const sub = await getSubscription(env, userId);
+    const panelClient = await xui.resolveExistingClient(tg.id, sub);
+    if (!panelClient?.subId?.trim()) return null;
+
+    const subscriptionUrl = buildSubscriptionUrl(env, panelClient.subId);
+    const patch: Record<string, string> = {
+      client_email: panelClient.email,
+      xray_sub_id: panelClient.subId,
+      xray_uuid: panelClient.primaryUuid,
+      subscription_url: subscriptionUrl,
+    };
+    const changed =
+      sub?.client_email !== patch.client_email ||
+      sub?.xray_sub_id !== patch.xray_sub_id ||
+      sub?.xray_uuid !== patch.xray_uuid ||
+      sub?.subscription_url !== patch.subscription_url;
+    if (changed) {
+      await patchSubscription(env, userId, patch);
+    }
+    return subscriptionUrl;
+  } catch (error) {
+    console.error("syncSubscriptionFromPanel:", error);
+    return null;
+  }
+}
+
 async function ensureVpnClientOnStart(
   env: BotEnv,
   user: Awaited<ReturnType<typeof upsertTelegramUser>>,
   tg: TelegramUser
 ): Promise<void> {
   let sub = await getSubscription(env, user.id);
-  if (sub?.client_email && sub.subscription_url && sub.xray_sub_id && sub.xray_uuid) {
-    return;
-  }
 
   try {
     const xui = new XuiApi(env);
@@ -231,6 +261,13 @@ async function ensureVpnClientOnStart(
     return;
   } catch (error) {
     console.error("ensureVpnClientOnStart panel:", error);
+  }
+
+  const syncedUrl = await syncSubscriptionFromPanel(env, user.id, tg);
+  if (syncedUrl) return;
+
+  if (sub?.client_email && sub.subscription_url && sub.xray_sub_id && sub.xray_uuid) {
+    return;
   }
 
   const email = String(tg.id);
@@ -309,6 +346,8 @@ async function activateTrial(env: BotEnv, tg: TelegramUser, chatId: number): Pro
       await ensureVpnClientOnStart(env, claimed, tg);
       sub = await getSubscription(env, claimed.id);
     }
+    await syncSubscriptionFromPanel(env, claimed.id, tg);
+    sub = await getSubscription(env, claimed.id);
     if (!sub?.client_email || !sub.xray_sub_id || !sub.xray_uuid) {
       throw new Error("клиент не подготовлен — нажмите /start");
     }
@@ -607,6 +646,7 @@ export async function handleClientBotUpdate(
     }
     if (data === "c:connect") {
       const user = await upsertTelegramUser(env, tg);
+      await syncSubscriptionFromPanel(env, user.id, tg);
       const sub = await getSubscription(env, user.id);
       if (!sub?.subscription_url || sub.status !== "active") {
         await editMessage(
@@ -625,8 +665,9 @@ export async function handleClientBotUpdate(
     if (data.startsWith("c:os:")) {
       const os = data.split(":")[2];
       const user = await upsertTelegramUser(env, tg);
+      const syncedUrl = await syncSubscriptionFromPanel(env, user.id, tg);
       const sub = await getSubscription(env, user.id);
-      const subscriptionUrl = sub?.subscription_url || "";
+      const subscriptionUrl = syncedUrl || sub?.subscription_url || "";
       if (!subscriptionUrl || sub?.status !== "active") {
         await answerCallback(token, cq.id, "Сначала активируйте подписку");
         return;

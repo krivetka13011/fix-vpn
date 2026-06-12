@@ -4,6 +4,9 @@ dist/
 .dev.vars
 .env
 .env.local
+.env.3xui
+project_config.env
+__pycache__/
 *.log
 .DS_Store
 tsconfig.tsbuildinfo

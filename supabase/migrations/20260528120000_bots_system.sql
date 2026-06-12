@@ -1,47 +1,16 @@
 create extension if not exists "pgcrypto";
 
-create table if not exists users (
-  id uuid primary key default gen_random_uuid(),
-  telegram_id bigint unique not null,
-  username text,
-  display_name text not null,
-  photo_url text,
-  has_used_trial boolean not null default false,
-  ref_by_partner_id bigint,
-  first_payment_done boolean not null default false,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
-);
+alter table users
+  add column if not exists has_used_trial boolean not null default false,
+  add column if not exists ref_by_partner_id bigint,
+  add column if not exists first_payment_done boolean not null default false;
 
-create table if not exists subscriptions (
-  id uuid primary key default gen_random_uuid(),
-  user_id uuid not null unique references users(id) on delete cascade,
-  plan_type text not null check (plan_type in ('basic', 'personal')),
-  status text not null default 'none' check (status in ('none', 'active', 'expired')),
-  plan_label text,
-  billing_months int,
-  starts_at date,
-  ends_at date,
-  vpn_key text,
-  xray_uuid text,
-  xray_sub_id text,
-  subscription_url text,
-  client_email text,
-  is_trial boolean not null default false,
-  extra_devices int not null default 0,
-  purchased_at timestamptz,
-  updated_at timestamptz not null default now()
-);
-
-create table if not exists addon_purchases (
-  id uuid primary key default gen_random_uuid(),
-  user_id uuid not null references users(id) on delete cascade,
-  addon_type text not null,
-  label text not null,
-  quantity int not null default 1,
-  price_rub int not null default 0,
-  purchased_at timestamptz not null default now()
-);
+alter table subscriptions
+  add column if not exists xray_uuid text,
+  add column if not exists xray_sub_id text,
+  add column if not exists subscription_url text,
+  add column if not exists client_email text,
+  add column if not exists is_trial boolean not null default false;
 
 create table if not exists partners (
   id bigint primary key,
@@ -130,18 +99,13 @@ create table if not exists bot_sessions (
   unique (telegram_id, bot_kind)
 );
 
-create index if not exists idx_users_telegram_id on users(telegram_id);
 create index if not exists idx_users_ref_partner on users(ref_by_partner_id);
-create index if not exists idx_addon_purchases_user_id on addon_purchases(user_id);
 create index if not exists idx_transactions_user_id on transactions(user_id);
 create index if not exists idx_transactions_status on transactions(status);
 create index if not exists idx_withdrawals_partner_id on withdrawals(partner_id);
 create index if not exists idx_partner_requisites_partner_id on partner_requisites(partner_id);
 create index if not exists idx_xui_client_inbounds_user_id on xui_client_inbounds(user_id);
 
-alter table users enable row level security;
-alter table subscriptions enable row level security;
-alter table addon_purchases enable row level security;
 alter table partners enable row level security;
 alter table partner_requisites enable row level security;
 alter table promo_codes enable row level security;

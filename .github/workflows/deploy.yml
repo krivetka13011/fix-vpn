@@ -19,6 +19,21 @@ jobs:
           node-version: "22"
           cache: npm
 
+      - name: Apply Supabase migration
+        env:
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: |
+          if [ -z "$SUPABASE_DB_PASSWORD" ]; then
+            echo "::warning::SUPABASE_DB_PASSWORD not set — skip SQL migration"
+            exit 0
+          fi
+          sudo apt-get update -qq
+          sudo apt-get install -y postgresql-client
+          PGPASSWORD="$SUPABASE_DB_PASSWORD" psql \
+            "host=db.dtxdbniicbmmendcryst.supabase.co port=5432 dbname=postgres user=postgres sslmode=require" \
+            -v ON_ERROR_STOP=1 \
+            -f supabase/migrations/20260528120000_bots_system.sql
+
       - name: Install and build
         run: |
           npm ci && npm run build
@@ -53,24 +68,46 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          CLIENT_BOT_TOKEN: ${{ secrets.CLIENT_BOT_TOKEN }}
+          PARTNER_BOT_TOKEN: ${{ secrets.PARTNER_BOT_TOKEN }}
           WEBAPP_URL: ${{ steps.url.outputs.url }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          XUI_BASE_URL: ${{ secrets.XUI_BASE_URL }}
+          XUI_API_TOKEN: ${{ secrets.XUI_API_TOKEN }}
+          MANAGER_NOTIFICATION_CHAT_ID: ${{ secrets.MANAGER_NOTIFICATION_CHAT_ID }}
+          MANAGER_TELEGRAM_IDS: ${{ secrets.MANAGER_TELEGRAM_IDS }}
         run: |
           test -n "$SUPABASE_URL" || (echo "Missing GitHub secret SUPABASE_URL" >&2; exit 1)
           test -n "$SUPABASE_SERVICE_ROLE_KEY" || (echo "Missing GitHub secret SUPABASE_SERVICE_ROLE_KEY" >&2; exit 1)
-          printf '%s' "$TELEGRAM_BOT_TOKEN" | npx wrangler@4.69.0 secret put TELEGRAM_BOT_TOKEN
-          printf '%s' "$WEBAPP_URL" | npx wrangler@4.69.0 secret put WEBAPP_URL
+          CLIENT_TOKEN="${CLIENT_BOT_TOKEN:-$TELEGRAM_BOT_TOKEN}"
+          test -n "$CLIENT_TOKEN" || (echo "Missing CLIENT_BOT_TOKEN or TELEGRAM_BOT_TOKEN" >&2; exit 1)
+          put_secret() { local name="$1"; local value="$2"; if [ -n "$value" ]; then printf '%s' "$value" | npx wrangler@4.69.0 secret put "$name"; fi; }
+          put_secret TELEGRAM_BOT_TOKEN "$CLIENT_TOKEN"
+          put_secret CLIENT_BOT_TOKEN "$CLIENT_TOKEN"
+          put_secret PARTNER_BOT_TOKEN "$PARTNER_BOT_TOKEN"
+          put_secret WEBAPP_URL "$WEBAPP_URL"
           SUPABASE_URL="${SUPABASE_URL%/}"
           SUPABASE_URL="${SUPABASE_URL%/rest/v1}"
-          printf '%s' "$SUPABASE_URL" | npx wrangler@4.69.0 secret put SUPABASE_URL
-          printf '%s' "$SUPABASE_SERVICE_ROLE_KEY" | npx wrangler@4.69.0 secret put SUPABASE_SERVICE_ROLE_KEY
+          put_secret SUPABASE_URL "$SUPABASE_URL"
+          put_secret SUPABASE_SERVICE_ROLE_KEY "$SUPABASE_SERVICE_ROLE_KEY"
+          put_secret XUI_BASE_URL "$XUI_BASE_URL"
+          put_secret XUI_API_TOKEN "$XUI_API_TOKEN"
+          put_secret XUI_INSECURE_SSL "1"
+          put_secret XUI_INBOUND_IDS "19,20,21,24"
+          put_secret SUBSCRIPTION_BASE_URL "${{ secrets.SUBSCRIPTION_BASE_URL }}"
+          put_secret SUBSCRIPTION_PATH "/sub"
+          put_secret MANAGER_NOTIFICATION_CHAT_ID "$MANAGER_NOTIFICATION_CHAT_ID"
+          put_secret MANAGER_TELEGRAM_IDS "$MANAGER_TELEGRAM_IDS"
+          put_secret CLIENT_BOT_USERNAME "FIXVPNfast_bot"
+          put_secret PARTNER_BOT_USERNAME "FIX_Partner_bot"
+          put_secret PARTNER_DEFAULT_COMMISSION_PERCENT "50"
 
       - name: Verify deployment
         run: |
           URL="${{ steps.url.outputs.url }}"
           curl -fsS "$URL/api/health" | tee /tmp/health.json | grep -q '"ok":true'
-          grep -q '"botOk":true' /tmp/health.json
+          grep -q '"clientBotOk":true' /tmp/health.json
           grep -q '"hasSupabaseUrl":true' /tmp/health.json
           grep -q '"hasSupabaseKey":true' /tmp/health.json
           if ! grep -q '"supabaseOk":true' /tmp/health.json; then
@@ -78,7 +115,7 @@ jobs:
             cat /tmp/health.json
           fi
           curl -fsS "$URL/api/catalog" | grep -q '"tariffs"'
-          WH_CODE=$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$URL/api/webhook/telegram" \
+          WH_CODE=$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$URL/api/webhook/client" \
             -H "Content-Type: application/json" \
             -d '{"message":{"chat":{"id":0},"text":"/start"}}')
           test "$WH_CODE" = "200"
@@ -89,13 +126,23 @@ jobs:
       - name: Configure Telegram
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          CLIENT_BOT_TOKEN: ${{ secrets.CLIENT_BOT_TOKEN }}
+          PARTNER_BOT_TOKEN: ${{ secrets.PARTNER_BOT_TOKEN }}
           WEBAPP_URL: ${{ steps.url.outputs.url }}
         run: |
-          curl -fsS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getMe" | grep -q '"ok":true'
-          curl -fsS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/deleteWebhook?drop_pending_updates=true"
-          curl -fsS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setWebhook" \
+          CLIENT_TOKEN="${CLIENT_BOT_TOKEN:-$TELEGRAM_BOT_TOKEN}"
+          curl -fsS "https://api.telegram.org/bot${CLIENT_TOKEN}/getMe" | grep -q '"ok":true'
+          curl -fsS "https://api.telegram.org/bot${CLIENT_TOKEN}/deleteWebhook?drop_pending_updates=true"
+          curl -fsS -X POST "https://api.telegram.org/bot${CLIENT_TOKEN}/setWebhook" \
             -H "Content-Type: application/json" \
-            -d "{\"url\":\"${WEBAPP_URL}/api/webhook/telegram\",\"allowed_updates\":[\"message\"]}"
-          curl -fsS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setChatMenuButton" \
+            -d "{\"url\":\"${WEBAPP_URL}/api/webhook/client\",\"allowed_updates\":[\"message\",\"callback_query\"]}"
+          curl -fsS -X POST "https://api.telegram.org/bot${CLIENT_TOKEN}/setChatMenuButton" \
             -H "Content-Type: application/json" \
             -d "{\"menu_button\":{\"type\":\"web_app\",\"text\":\"FIX VPN\",\"web_app\":{\"url\":\"${WEBAPP_URL}\"}}}"
+          if [ -n "$PARTNER_BOT_TOKEN" ]; then
+            curl -fsS "https://api.telegram.org/bot${PARTNER_BOT_TOKEN}/getMe" | grep -q '"ok":true'
+            curl -fsS "https://api.telegram.org/bot${PARTNER_BOT_TOKEN}/deleteWebhook?drop_pending_updates=true"
+            curl -fsS -X POST "https://api.telegram.org/bot${PARTNER_BOT_TOKEN}/setWebhook" \
+              -H "Content-Type: application/json" \
+              -d "{\"url\":\"${WEBAPP_URL}/api/webhook/partner\",\"allowed_updates\":[\"message\",\"callback_query\"]}"
+          fi

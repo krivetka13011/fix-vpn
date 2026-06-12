@@ -15,14 +15,14 @@ import {
   purchaseExtraDevices,
   purchaseSubscription,
 } from "./db";
-import { sbRequest, type SupabaseEnv } from "./supabase";
-import {
-  displayName,
-  validateInitData,
-  type TelegramUser,
-} from "./telegram";
+import { sbRequest } from "./supabase";
+import { validateInitData, type TelegramUser } from "./telegram";
+import type { BotEnv } from "./env";
+import { clientBotToken, partnerBotToken } from "./env";
+import { handleClientBotUpdate } from "./bots/client-bot";
+import { handlePartnerBotUpdate } from "./bots/partner-bot";
 
-export interface ApiEnv extends SupabaseEnv {
+export interface ApiEnv extends BotEnv {
   TELEGRAM_BOT_TOKEN?: string;
   WEBAPP_URL?: string;
 }
@@ -49,76 +49,27 @@ async function getAuthUser(
     new URL(request.url).searchParams.get("initData") ??
     "";
 
-  if (!initData || !env.TELEGRAM_BOT_TOKEN) return null;
+  const token = clientBotToken(env);
+  if (!initData || !token) return null;
 
   try {
-    const parsed = await validateInitData(initData, env.TELEGRAM_BOT_TOKEN);
+    const parsed = await validateInitData(initData, token);
     return parsed?.user ?? null;
   } catch {
     return null;
   }
 }
 
-function isStartCommand(text: string | undefined): boolean {
-  if (!text) return false;
-  const cmd = text.trim().split(/\s+/)[0]?.toLowerCase() ?? "";
-  return cmd === "/start" || cmd.startsWith("/start@");
-}
-
-async function handleTelegramWebhook(
+async function handleLegacyTelegramWebhook(
   request: Request,
   env: ApiEnv
 ): Promise<Response> {
-  if (!env.TELEGRAM_BOT_TOKEN) {
-    return new Response("Bot token not configured", { status: 500 });
+  try {
+    const update = await request.json();
+    await handleClientBotUpdate(env, update);
+  } catch (error) {
+    console.error("client webhook:", error);
   }
-
-  const webAppUrl = env.WEBAPP_URL;
-  if (!webAppUrl) {
-    return new Response("WEBAPP_URL not configured", { status: 500 });
-  }
-
-  const update = (await request.json()) as {
-    message?: {
-      chat: { id: number };
-      text?: string;
-    };
-  };
-
-  const chatId = update.message?.chat.id;
-  const text = update.message?.text?.trim();
-
-  if (!chatId) return new Response("ok");
-
-  if (isStartCommand(text)) {
-    const appUrl = webAppUrl.replace(/\/$/, "");
-    const tgRes = await fetch(
-      `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          chat_id: chatId,
-          text: "FIX VPN — защищённый доступ через Hiddify, v2rayTun и другие клиенты.\n\nОткройте мини-приложение для покупки подписки и управления аккаунтом:",
-          reply_markup: {
-            inline_keyboard: [
-              [
-                {
-                  text: "Открыть FIX VPN",
-                  web_app: { url: appUrl },
-                },
-              ],
-            ],
-          },
-        }),
-      }
-    );
-    const tgJson = (await tgRes.json()) as { ok?: boolean; description?: string };
-    if (!tgJson.ok) {
-      console.error("Telegram sendMessage:", tgJson.description ?? tgRes.status);
-    }
-  }
-
   return new Response("ok");
 }
 
@@ -132,24 +83,34 @@ export async function handleApiRequest(
   }
 
   if (path === "/api/health" && request.method === "GET") {
-    let botOk = false;
-    let webhookUrl: string | null = null;
+    let clientBotOk = false;
+    let partnerBotOk = false;
+    let clientWebhookUrl: string | null = null;
     let supabaseOk = false;
     let supabaseStatus: number | null = null;
-    if (env.TELEGRAM_BOT_TOKEN) {
+    const clientToken = clientBotToken(env);
+    const partnerToken = partnerBotToken(env);
+    if (clientToken) {
       try {
-        const me = await fetch(
-          `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/getMe`
-        );
+        const me = await fetch(`https://api.telegram.org/bot${clientToken}/getMe`);
         const data = (await me.json()) as { ok?: boolean };
-        botOk = Boolean(data.ok);
+        clientBotOk = Boolean(data.ok);
         const wh = await fetch(
-          `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/getWebhookInfo`
+          `https://api.telegram.org/bot${clientToken}/getWebhookInfo`
         );
         const whData = (await wh.json()) as { result?: { url?: string } };
-        webhookUrl = whData.result?.url ?? null;
+        clientWebhookUrl = whData.result?.url ?? null;
       } catch {
-        botOk = false;
+        clientBotOk = false;
+      }
+    }
+    if (partnerToken) {
+      try {
+        const me = await fetch(`https://api.telegram.org/bot${partnerToken}/getMe`);
+        const data = (await me.json()) as { ok?: boolean };
+        partnerBotOk = Boolean(data.ok);
+      } catch {
+        partnerBotOk = false;
       }
     }
     if (env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY) {
@@ -161,36 +122,53 @@ export async function handleApiRequest(
         supabaseOk = false;
       }
     }
-    const expectedWebhook = env.WEBAPP_URL
-      ? `${env.WEBAPP_URL.replace(/\/$/, "")}/api/webhook/telegram`
-      : null;
+    const base = env.WEBAPP_URL?.replace(/\/$/, "") ?? null;
+    const expectedClientWebhook = base ? `${base}/api/webhook/client` : null;
     return json({
       ok: true,
-      hasToken: Boolean(env.TELEGRAM_BOT_TOKEN),
+      hasClientToken: Boolean(clientToken),
+      hasPartnerToken: Boolean(partnerToken),
       hasWebAppUrl: Boolean(env.WEBAPP_URL),
       hasSupabaseUrl: Boolean(env.SUPABASE_URL),
       hasSupabaseKey: Boolean(env.SUPABASE_SERVICE_ROLE_KEY),
-      botOk,
+      clientBotOk,
+      partnerBotOk,
       supabaseOk,
       supabaseStatus,
-      webAppUrl: env.WEBAPP_URL?.replace(/\/$/, "") ?? null,
-      webhookUrl,
-      webhookOk: Boolean(
-        expectedWebhook && webhookUrl && webhookUrl === expectedWebhook
+      webAppUrl: base,
+      clientWebhookUrl,
+      clientWebhookOk: Boolean(
+        expectedClientWebhook &&
+          clientWebhookUrl &&
+          clientWebhookUrl === expectedClientWebhook
       ),
     });
   }
 
-  if (path === "/api/webhook/telegram" && request.method === "POST") {
-    return handleTelegramWebhook(request, env);
+  if (
+    (path === "/api/webhook/client" || path === "/api/webhook/telegram") &&
+    request.method === "POST"
+  ) {
+    return handleLegacyTelegramWebhook(request, env);
+  }
+
+  if (path === "/api/webhook/partner" && request.method === "POST") {
+    try {
+      const update = await request.json();
+      await handlePartnerBotUpdate(env, update);
+    } catch (error) {
+      console.error("partner webhook:", error);
+    }
+    return new Response("ok");
   }
 
   if (path === "/api/catalog" && request.method === "GET") {
     return json({
       tariffs: Object.values(TARIFFS),
       extraDevicePricePerMonth: EXTRA_DEVICE_PRICE_PER_MONTH,
-      supportTelegramUsername: SUPPORT_TELEGRAM_USERNAME,
-      telegramChannelUrl: TELEGRAM_CHANNEL_URL,
+      supportTelegramUsername:
+        env.SUPPORT_TELEGRAM_USERNAME || SUPPORT_TELEGRAM_USERNAME,
+      telegramChannelUrl: env.TELEGRAM_CHANNEL_URL || TELEGRAM_CHANNEL_URL,
       billingMonths: BILLING_MONTHS,
     });
   }
@@ -242,7 +220,11 @@ export async function handleApiRequest(
         months,
         extraDevices
       );
-      const total = calcTotalRub(planType, months, planType === "basic" ? extraDevices : 0);
+      const total = calcTotalRub(
+        planType,
+        months,
+        planType === "basic" ? extraDevices : 0
+      );
       return json({
         ok: true,
         message: `Демо-оплата: ${total} ₽ · подписка активирована`,

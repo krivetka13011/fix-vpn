@@ -1,7 +1,6 @@
 import type { BotEnv } from "./env";
 import { parseIdList, subscriptionBaseUrl, xuiBaseUrl } from "./env";
 import type { SupabaseEnv } from "./supabase";
-import { clearVpnUserData } from "./repository";
 
 export interface XuiClientRecord {
   id: string;
@@ -388,14 +387,7 @@ export class XuiApi {
     const dbEmail = db?.client_email?.trim();
     if (dbEmail) {
       const panelByEmail = await this.findClientByEmail(dbEmail);
-      if (!panelByEmail) {
-        await clearVpnUserData(env, userId);
-      }
-      return;
-    }
-
-    if (db?.xray_uuid || db?.xray_sub_id) {
-      await clearVpnUserData(env, userId);
+      if (panelByEmail) return;
     }
   }
 
@@ -481,7 +473,7 @@ export class XuiApi {
       params.dbSubscription
     );
 
-    const existing = await this.resolveExistingClient(
+    let existing = await this.resolveExistingClient(
       params.telegramId,
       params.dbSubscription
     );
@@ -489,22 +481,35 @@ export class XuiApi {
       existing?.email ||
       params.dbSubscription?.client_email?.trim() ||
       this.buildClientEmail(params.username, params.telegramId);
-    const subId =
-      existing?.subId?.trim() ||
-      params.dbSubscription?.xray_sub_id?.trim() ||
-      randomSubId();
-    const primaryUuid =
-      existing?.primaryUuid ||
-      params.dbSubscription?.xray_uuid ||
-      (await this.addClientIfMissing(
+
+    if (!existing) {
+      const seedSubId =
+        params.dbSubscription?.xray_sub_id?.trim() || randomSubId();
+      await this.addClientIfMissing(
         email,
-        subId,
+        seedSubId,
         params.telegramId,
         0,
         0
-      ));
+      );
+      this.invalidateScan();
+      existing =
+        (await this.resolveExistingClient(
+          params.telegramId,
+          params.dbSubscription
+        )) || (await this.findClientByEmail(email)) || undefined;
+    }
 
-    return this.toProvisionResult(env, email, subId, primaryUuid);
+    if (!existing?.subId?.trim() || !existing.primaryUuid) {
+      throw new Error("клиент в панели не найден");
+    }
+
+    return this.toProvisionResult(
+      env,
+      existing.email,
+      existing.subId,
+      existing.primaryUuid
+    );
   }
 
   async provisionUser(

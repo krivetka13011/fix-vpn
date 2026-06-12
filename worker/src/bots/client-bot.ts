@@ -307,7 +307,7 @@ function importInstructionsMessage(
     text: locked
       ? `<b>Импорт в Happ (${osLabel(os)})</b>\n\n` +
         `Нажмите кнопку ниже. Подписка защищена: ссылку и настройки серверов нельзя просмотреть или изменить.\n\n` +
-        `Если видите ошибку 404 — удалите старую подписку FIX VPN в Happ и импортируйте заново.`
+        `Если видите ошибку 404 — удалите подписку в Happ и нажмите «Подключить VPN» снова. Ссылка останется той же, что в панели.`
       : `<b>Импорт в ${clientLabel(vpnClient)} (${osLabel(os)})</b>\n\n` +
         `Нажмите кнопку ниже. Настройки серверов защищены от случайного редактирования.`,
     markup: {
@@ -358,11 +358,32 @@ async function syncSubscriptionFromPanel(
     if (changed) {
       await patchSubscription(env, userId, patch);
     }
-    return subscriptionUrl;
+    return panelClient.subId;
   } catch (error) {
     console.error("syncSubscriptionFromPanel:", error);
     return null;
   }
+}
+
+async function resolvePanelSubId(
+  env: BotEnv,
+  user: Awaited<ReturnType<typeof upsertTelegramUser>>,
+  tg: TelegramUser
+): Promise<string | null> {
+  let subId = await syncSubscriptionFromPanel(env, user.id, tg);
+  if (subId) return subId;
+
+  try {
+    await ensureVpnClientOnStart(env, user, tg);
+  } catch (error) {
+    console.error("resolvePanelSubId ensure:", error);
+  }
+
+  subId = await syncSubscriptionFromPanel(env, user.id, tg);
+  if (subId) return subId;
+
+  const sub = await getSubscription(env, user.id);
+  return sub?.xray_sub_id?.trim() || null;
 }
 
 async function ensureVpnClientOnStart(
@@ -456,13 +477,9 @@ async function activateTrial(env: BotEnv, tg: TelegramUser, chatId: number): Pro
 
   try {
     let sub = await getSubscription(env, claimed.id);
-    if (!sub?.client_email || !sub.xray_sub_id || !sub.xray_uuid) {
-      await ensureVpnClientOnStart(env, claimed, tg);
-      sub = await getSubscription(env, claimed.id);
-    }
-    await syncSubscriptionFromPanel(env, claimed.id, tg);
+    const panelSubId = await resolvePanelSubId(env, claimed, tg);
     sub = await getSubscription(env, claimed.id);
-    if (!sub?.client_email || !sub.xray_sub_id || !sub.xray_uuid) {
+    if (!panelSubId || !sub?.client_email || !sub.xray_sub_id || !sub.xray_uuid) {
       throw new Error("клиент не подготовлен — нажмите /start");
     }
 
@@ -579,6 +596,7 @@ async function resetDeviceBinding(
   const token = clientBotToken(env)!;
   const user = await getUserByTelegramId(env, tg.id);
   if (!user) return;
+  await resolvePanelSubId(env, user, tg);
   const sub = await getSubscription(env, user.id);
   if (!sub?.client_email) {
     await sendMessage(token, chatId, "Нет активного клиента в панели.");
@@ -591,7 +609,7 @@ async function resetDeviceBinding(
     const text = await buildDevicesText(env, user.id, sub.client_email);
     const notice =
       `<b>Привязки сброшены</b>\n\n` +
-      `IP-ограничения в панели очищены. Можно подключиться с нового устройства.\n\n` +
+      `IP-ограничения в панели очищены. Клиент и ссылка подписки в панели не удаляются — повторное подключение использует ту же ссылку.\n\n` +
       text;
     if (messageId) {
       await editMessage(token, chatId, messageId, notice, devicesKeyboard());
@@ -808,7 +826,7 @@ export async function handleClientBotUpdate(
     }
     if (data === "c:connect") {
       const user = await upsertTelegramUser(env, tg);
-      await syncSubscriptionFromPanel(env, user.id, tg);
+      await resolvePanelSubId(env, user, tg);
       const sub = await getSubscription(env, user.id);
       if (!sub?.subscription_url || sub.status !== "active") {
         await editMessage(
@@ -827,14 +845,18 @@ export async function handleClientBotUpdate(
     if (data.startsWith("c:os:")) {
       const os = data.split(":")[2];
       const user = await upsertTelegramUser(env, tg);
-      await syncSubscriptionFromPanel(env, user.id, tg);
       const sub = await getSubscription(env, user.id);
-      const subId = sub?.xray_sub_id?.trim() || "";
-      if (!subId || sub?.status !== "active") {
+      if (sub?.status !== "active") {
+        await answerCallback(token, cq.id, "Сначала активируйте подписку", { showAlert: true });
+        return;
+      }
+
+      const subId = await resolvePanelSubId(env, user, tg);
+      if (!subId) {
         await answerCallback(
           token,
           cq.id,
-          "Подписка не готова. Нажмите /start и повторите через минуту.",
+          "Не удалось получить ссылку из панели. Нажмите /start и повторите.",
           { showAlert: true }
         );
         return;

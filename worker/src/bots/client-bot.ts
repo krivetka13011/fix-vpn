@@ -12,6 +12,8 @@ import {
   getTransaction,
   claimTrialByTelegramId,
   clearVpnUserData,
+  clearVpnDeviceBindings,
+  listVpnDeviceBindings,
   patchSubscription,
   patchTransaction,
   patchUser,
@@ -20,8 +22,9 @@ import {
   saveXuiInboundClients,
   setSession,
   upsertTelegramUser,
+  upsertVpnDeviceBinding,
 } from "../repository";
-import { XuiApi } from "../xui";
+import { XuiApi, type PanelDeviceIp } from "../xui";
 import type { TelegramUser } from "../telegram";
 import {
   answerCallback,
@@ -37,6 +40,7 @@ import {
   clientLabel,
   clientsForOs,
   defaultClientForOs,
+  type VpnClientId,
 } from "../connect-links";
 
 type TgUpdate = {
@@ -149,6 +153,104 @@ function expiryMsFromDays(days: number): number {
 
 function formatDateFromMs(ms: number): string {
   return new Date(ms).toISOString().slice(0, 10);
+}
+
+function formatDateTime(isoOrMs: string | number): string {
+  const date =
+    typeof isoOrMs === "number" ? new Date(isoOrMs) : new Date(isoOrMs);
+  if (Number.isNaN(date.getTime())) return "—";
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${pad(date.getDate())}.${pad(date.getMonth() + 1)}.${date.getFullYear()} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function deviceLimitTotal(sub: { extra_devices?: number } | null | undefined): number {
+  return 1 + Number(sub?.extra_devices || 0);
+}
+
+async function recordDeviceConnect(
+  env: BotEnv,
+  userId: string,
+  os: string,
+  vpnClient: VpnClientId
+): Promise<void> {
+  const label = `${osLabel(os)} · ${clientLabel(vpnClient)}`;
+  await upsertVpnDeviceBinding(env, userId, os, vpnClient, label);
+}
+
+function formatPanelIpRows(ips: PanelDeviceIp[]): string {
+  if (ips.length === 0) return "Нет записанных IP в панели.";
+  return ips
+    .map((row, index) => {
+      const seen = row.seenAt ? ` · ${row.seenAt}` : "";
+      return `${index + 1}. <code>${row.ip}</code>${seen}`;
+    })
+    .join("\n");
+}
+
+async function buildDevicesText(
+  env: BotEnv,
+  userId: string,
+  clientEmail: string | null | undefined
+): Promise<string> {
+  const sub = await getSubscription(env, userId);
+  const bindings = await listVpnDeviceBindings(env, userId);
+  const limit = deviceLimitTotal(sub);
+  const usedCount = Math.max(bindings.length, 0);
+  let online = false;
+  let panelIps: PanelDeviceIp[] = [];
+  let lastOnlineMs = 0;
+
+  if (clientEmail) {
+    try {
+      const xui = new XuiApi(env);
+      const [ips, onlineEmails, lastOnlineMap] = await Promise.all([
+        xui.getClientIps(clientEmail),
+        xui.getOnlineClientEmails(),
+        xui.getLastOnlineByEmail(),
+      ]);
+      panelIps = ips;
+      online = onlineEmails.includes(clientEmail);
+      lastOnlineMs = lastOnlineMap[clientEmail] || 0;
+    } catch (error) {
+      console.error("buildDevicesText:", error);
+    }
+  }
+
+  const bindingLines =
+    bindings.length > 0
+      ? bindings
+          .map((row, index) => {
+            const status = online && index === 0 ? "в сети" : "не в сети";
+            return (
+              `${index + 1}. <b>${row.label}</b>\n` +
+              `   Последний вход из бота: ${formatDateTime(row.last_seen_at)}\n` +
+              `   Статус: ${status}`
+            );
+          })
+          .join("\n\n")
+      : "Пока нет устройств, подключённых через бота.\nВыберите «Подключить VPN» и укажите ОС — мы запомним её здесь.";
+
+  const lastOnlineLine =
+    lastOnlineMs > 0 ? `Последняя активность в панели: ${formatDateTime(lastOnlineMs)}\n` : "";
+
+  return (
+    `<b>Устройства</b>\n\n` +
+    `Слоты: ${usedCount} / ${limit}\n` +
+    `${lastOnlineLine}\n` +
+    `<b>Известные устройства</b>\n${bindingLines}\n\n` +
+    `<b>IP в панели</b>\n${formatPanelIpRows(panelIps)}\n\n` +
+    `Панель различает устройства по IP. ОС мы показываем, если вы подключались через бота.`
+  );
+}
+
+function devicesKeyboard(): Record<string, unknown> {
+  return {
+    inline_keyboard: [
+      [{ text: "Обновить список", callback_data: "c:devices" }],
+      [{ text: "Сбросить все привязки", callback_data: "c:resetip" }],
+      [{ text: "Назад в профиль", callback_data: "c:profile" }],
+    ],
+  };
 }
 
 async function persistProvision(
@@ -424,20 +526,34 @@ async function showProfile(
     `<b>Мой профиль</b>\n\n` +
     `Статус: ${status === "active" ? "активна" : status === "expired" ? "истекла" : "нет подписки"}\n` +
     `Подписка: ${sub?.plan_label || "—"} ${ends}\n` +
-    `Устройства: 1 / 1\n\n` +
+    `Устройства: ${deviceLimitTotal(sub)} слот(ов)\n\n` +
     `Ключи и UUID в чате не показываем.`;
   await editMessage(token, chatId, messageId, text, {
     inline_keyboard: [
-      [{ text: "Сбросить привязку устройств", callback_data: "c:resetip" }],
+      [{ text: "Мои устройства", callback_data: "c:devices" }],
       [{ text: "Назад", callback_data: "c:menu" }],
     ],
   });
 }
 
+async function showDevices(
+  env: BotEnv,
+  chatId: number,
+  tg: TelegramUser,
+  messageId: number
+): Promise<void> {
+  const token = clientBotToken(env)!;
+  const user = await upsertTelegramUser(env, tg);
+  const sub = await getSubscription(env, user.id);
+  const text = await buildDevicesText(env, user.id, sub?.client_email);
+  await editMessage(token, chatId, messageId, text, devicesKeyboard());
+}
+
 async function resetDeviceBinding(
   env: BotEnv,
   tg: TelegramUser,
-  chatId: number
+  chatId: number,
+  messageId?: number
 ): Promise<void> {
   const token = clientBotToken(env)!;
   const user = await getUserByTelegramId(env, tg.id);
@@ -447,9 +563,29 @@ async function resetDeviceBinding(
     await sendMessage(token, chatId, "Нет активного клиента в панели.");
     return;
   }
-  const xui = new XuiApi(env);
-  await xui.clearClientIps(sub.client_email);
-  await sendMessage(token, chatId, "Привязка устройств сброшена. Можно подключиться заново.");
+  try {
+    const xui = new XuiApi(env);
+    await xui.clearClientIps(sub.client_email);
+    await clearVpnDeviceBindings(env, user.id);
+    const text = await buildDevicesText(env, user.id, sub.client_email);
+    const notice =
+      `<b>Привязки сброшены</b>\n\n` +
+      `IP-ограничения в панели очищены. Можно подключиться с нового устройства.\n\n` +
+      text;
+    if (messageId) {
+      await editMessage(token, chatId, messageId, notice, devicesKeyboard());
+    } else {
+      await sendMessage(token, chatId, notice, devicesKeyboard());
+    }
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : "unknown";
+    console.error("resetDeviceBinding:", detail);
+    await sendMessage(
+      token,
+      chatId,
+      `Не удалось сбросить привязки: ${detail}\nПопробуйте позже.`
+    );
+  }
 }
 
 export async function handleManagerClientCallback(
@@ -639,9 +775,14 @@ export async function handleClientBotUpdate(
       await answerCallback(token, cq.id);
       return;
     }
+    if (data === "c:devices") {
+      await answerCallback(token, cq.id, "Обновляем список…");
+      await showDevices(env, chatId, tg, messageId);
+      return;
+    }
     if (data === "c:resetip") {
-      await resetDeviceBinding(env, tg, chatId);
-      await answerCallback(token, cq.id, "Сброшено");
+      await answerCallback(token, cq.id, "Сбрасываем привязки…");
+      await resetDeviceBinding(env, tg, chatId, messageId);
       return;
     }
     if (data === "c:connect") {
@@ -678,7 +819,10 @@ export async function handleClientBotUpdate(
       const text =
         `<b>Подключение VPN</b>\n\n` +
         `ОС: <b>${osLabel(os)}</b>\n` +
-        `Открываем <b>${clientLabel(defaultClient)}</b>.\n\n` +
+        (os === "android"
+          ? `На Android нажмите <b>${clientLabel(defaultClient)}</b> ниже.\n` +
+            `Если приложение не открылось — используйте ссылку из следующего сообщения.\n\n`
+          : `Открываем <b>${clientLabel(defaultClient)}</b>.\n\n`) +
         `Если приложение не открылось — выберите клиент ниже:`;
 
       try {
@@ -692,6 +836,27 @@ export async function handleClientBotUpdate(
       } catch (error) {
         console.error("connect os edit:", error);
         await sendMessage(token, chatId, text, connectClientKeyboard(env, os, subscriptionUrl));
+      }
+
+      await recordDeviceConnect(env, user.id, os, defaultClient);
+
+      if (os === "android") {
+        await answerCallback(token, cq.id, `Нажмите ${clientLabel(defaultClient)} ниже`);
+        await sendMessage(
+          token,
+          chatId,
+          `<b>Ссылка для ${clientLabel(defaultClient)} (Android)</b>\n\n` +
+            `Скопируйте и вставьте в приложение:\n` +
+            `«+» → «Импорт по ссылке»\n\n` +
+            `<code>${subscriptionUrl}</code>`,
+          {
+            inline_keyboard: [
+              [{ text: `Открыть ${clientLabel(defaultClient)}`, url: openUrl }],
+              [{ text: "Назад", callback_data: "c:connect" }],
+            ],
+          }
+        );
+        return;
       }
 
       await answerCallback(token, cq.id, `Открываем ${clientLabel(defaultClient)}…`, {

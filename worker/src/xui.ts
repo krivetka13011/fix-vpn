@@ -27,9 +27,24 @@ const ALLOWED_PREFIXES = [
   "/panel/api/clients/add",
   "/panel/api/clients/update/",
   "/panel/api/clients/clearIps/",
+  "/panel/api/clients/ips/",
+  "/panel/api/clients/onlines",
+  "/panel/api/clients/lastOnline",
   "/panel/api/clients/subLinks/",
   "/panel/api/inbounds/get/",
 ];
+
+export interface PanelDeviceIp {
+  ip: string;
+  seenAt: string | null;
+}
+
+function parseClientIpEntry(raw: string): PanelDeviceIp {
+  const trimmed = raw.trim();
+  const match = trimmed.match(/^(.+?)\s*\(([^)]+)\)\s*$/);
+  if (!match) return { ip: trimmed, seenAt: null };
+  return { ip: match[1].trim(), seenAt: match[2].trim() };
+}
 
 function assertAllowed(path: string): void {
   const allowed = ALLOWED_PREFIXES.some((prefix) => path.startsWith(prefix));
@@ -297,6 +312,64 @@ export class XuiApi {
       { method: "POST", body: "{}" }
     );
     await this.parseResponse(response, "clearClientIps");
+    this.invalidateScan();
+  }
+
+  async getClientIps(email: string): Promise<PanelDeviceIp[]> {
+    const response = await this.request(
+      `/panel/api/clients/ips/${encodeURIComponent(email)}`,
+      { method: "POST", body: "{}" }
+    );
+    const payload = await this.readJsonBody(response);
+    if (!response.ok || payload.success === false) {
+      throw new Error(String(payload.msg || "getClientIps failed"));
+    }
+    const obj = payload.obj;
+    if (!obj || obj === "No IP Record") return [];
+    if (Array.isArray(obj)) {
+      return obj.map((entry) => parseClientIpEntry(String(entry)));
+    }
+    if (typeof obj === "string") {
+      return obj
+        .split(/\r?\n/)
+        .map((entry) => entry.trim())
+        .filter(Boolean)
+        .map(parseClientIpEntry);
+    }
+    return [];
+  }
+
+  async getOnlineClientEmails(): Promise<string[]> {
+    const response = await this.request("/panel/api/clients/onlines", {
+      method: "POST",
+      body: "{}",
+    });
+    const payload = await this.readJsonBody(response);
+    if (!response.ok || payload.success === false) {
+      throw new Error(String(payload.msg || "getOnlineClientEmails failed"));
+    }
+    const obj = payload.obj;
+    if (!Array.isArray(obj)) return [];
+    return obj.map((entry) => String(entry));
+  }
+
+  async getLastOnlineByEmail(): Promise<Record<string, number>> {
+    const response = await this.request("/panel/api/clients/lastOnline", {
+      method: "POST",
+      body: "{}",
+    });
+    const payload = await this.readJsonBody(response);
+    if (!response.ok || payload.success === false) {
+      throw new Error(String(payload.msg || "getLastOnlineByEmail failed"));
+    }
+    const obj = payload.obj;
+    if (!obj || typeof obj !== "object") return {};
+    const out: Record<string, number> = {};
+    for (const [email, ts] of Object.entries(obj as Record<string, unknown>)) {
+      const value = Number(ts);
+      if (Number.isFinite(value)) out[email] = value;
+    }
+    return out;
   }
 
   async syncPanelWithDb(

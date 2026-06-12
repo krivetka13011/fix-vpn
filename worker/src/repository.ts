@@ -520,3 +520,75 @@ export async function getPromoByCode(
   );
   return rows[0] ?? null;
 }
+
+export interface VpnDeviceBinding {
+  id: string;
+  user_id: string;
+  os: string;
+  vpn_client: string;
+  label: string;
+  first_seen_at: string;
+  last_seen_at: string;
+}
+
+export async function listVpnDeviceBindings(
+  env: SupabaseEnv,
+  userId: string
+): Promise<VpnDeviceBinding[]> {
+  return sbJson<VpnDeviceBinding[]>(
+    await sbRequest(
+      env,
+      `vpn_device_bindings?user_id=eq.${userId}&select=*&order=last_seen_at.desc`
+    )
+  );
+}
+
+export async function upsertVpnDeviceBinding(
+  env: SupabaseEnv,
+  userId: string,
+  os: string,
+  vpnClient: string,
+  label: string
+): Promise<void> {
+  const now = new Date().toISOString();
+  const existing = await sbJson<VpnDeviceBinding[]>(
+    await sbRequest(
+      env,
+      `vpn_device_bindings?user_id=eq.${userId}&os=eq.${encodeURIComponent(os)}&vpn_client=eq.${encodeURIComponent(vpnClient)}&select=id&limit=1`
+    )
+  );
+  if (existing[0]) {
+    await sbRequest(
+      env,
+      `vpn_device_bindings?id=eq.${existing[0].id}`,
+      {
+        method: "PATCH",
+        headers: { Prefer: "return=minimal" },
+        body: JSON.stringify({ label, last_seen_at: now }),
+      }
+    );
+    return;
+  }
+  await sbRequest(env, "vpn_device_bindings", {
+    method: "POST",
+    headers: { Prefer: "return=minimal" },
+    body: JSON.stringify({
+      user_id: userId,
+      os,
+      vpn_client: vpnClient,
+      label,
+      first_seen_at: now,
+      last_seen_at: now,
+    }),
+  });
+}
+
+export async function clearVpnDeviceBindings(
+  env: SupabaseEnv,
+  userId: string
+): Promise<void> {
+  await sbRequest(env, `vpn_device_bindings?user_id=eq.${userId}`, {
+    method: "DELETE",
+    headers: { Prefer: "return=minimal" },
+  });
+}

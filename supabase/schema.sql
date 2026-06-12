@@ -131,6 +131,17 @@ create table if not exists bot_sessions (
   unique (telegram_id, bot_kind)
 );
 
+create table if not exists vpn_device_bindings (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references users(id) on delete cascade,
+  os text not null,
+  vpn_client text not null,
+  label text not null,
+  first_seen_at timestamptz not null default now(),
+  last_seen_at timestamptz not null default now(),
+  unique (user_id, os, vpn_client)
+);
+
 create index if not exists idx_users_telegram_id on users(telegram_id);
 create index if not exists idx_users_ref_partner on users(ref_by_partner_id);
 create index if not exists idx_addon_purchases_user_id on addon_purchases(user_id);
@@ -139,6 +150,7 @@ create index if not exists idx_transactions_status on transactions(status);
 create index if not exists idx_withdrawals_partner_id on withdrawals(partner_id);
 create index if not exists idx_partner_requisites_partner_id on partner_requisites(partner_id);
 create index if not exists idx_xui_client_inbounds_user_id on xui_client_inbounds(user_id);
+create index if not exists vpn_device_bindings_user_id_idx on vpn_device_bindings(user_id);
 
 alter table users enable row level security;
 alter table subscriptions enable row level security;
@@ -151,3 +163,4 @@ alter table withdrawals enable row level security;
 alter table promo_requests enable row level security;
 alter table xui_client_inbounds enable row level security;
 alter table bot_sessions enable row level security;
+alter table vpn_device_bindings enable row level security;

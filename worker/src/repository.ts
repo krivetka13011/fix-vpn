@@ -129,15 +129,50 @@ export async function patchUser(
   });
 }
 
+export async function claimTrialByTelegramId(
+  env: SupabaseEnv,
+  telegramId: number
+): Promise<DbUser | null> {
+  const rows = await sbJson<DbUser[]>(
+    await sbRequest(
+      env,
+      `users?telegram_id=eq.${telegramId}&has_used_trial=eq.false`,
+      {
+        method: "PATCH",
+        headers: { Prefer: "return=representation" },
+        body: JSON.stringify({
+          has_used_trial: true,
+          updated_at: new Date().toISOString(),
+        }),
+      }
+    )
+  );
+  return rows[0] ?? null;
+}
+
+export async function releaseTrialClaim(
+  env: SupabaseEnv,
+  telegramId: number
+): Promise<void> {
+  await sbRequest(env, `users?telegram_id=eq.${telegramId}`, {
+    method: "PATCH",
+    headers: { Prefer: "return=minimal" },
+    body: JSON.stringify({
+      has_used_trial: false,
+      updated_at: new Date().toISOString(),
+    }),
+  });
+}
+
 export async function saveXuiInboundClients(
   env: SupabaseEnv,
   userId: string,
   rows: Array<{ inboundId: number; clientUuid: string; clientEmail: string }>
 ): Promise<void> {
   for (const row of rows) {
-    await sbRequest(env, "xui_client_inbounds", {
+    await sbRequest(env, "xui_client_inbounds?on_conflict=user_id,inbound_id", {
       method: "POST",
-      headers: { Prefer: "resolution=merge-duplicates" },
+      headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
       body: JSON.stringify({
         user_id: userId,
         inbound_id: row.inboundId,

@@ -10,10 +10,11 @@ import {
   getSubscription,
   getTransaction,
   getUserByTelegramId,
-  getXuiInboundClients,
+  claimTrialByTelegramId,
   patchSubscription,
   patchTransaction,
   patchUser,
+  releaseTrialClaim,
   saveXuiInboundClients,
   setSession,
   upsertTelegramUser,
@@ -170,8 +171,10 @@ async function showMainMenu(
 
 async function activateTrial(env: BotEnv, tg: TelegramUser, chatId: number): Promise<void> {
   const token = clientBotToken(env)!;
-  const user = await upsertTelegramUser(env, tg);
-  if (user.has_used_trial) {
+  await upsertTelegramUser(env, tg);
+
+  const claimed = await claimTrialByTelegramId(env, tg.id);
+  if (!claimed) {
     await sendMessage(
       token,
       chatId,
@@ -180,53 +183,56 @@ async function activateTrial(env: BotEnv, tg: TelegramUser, chatId: number): Pro
     );
     return;
   }
+
   const trialDays = Number(env.TRIAL_DAYS || env.XUI_TRIAL_DAYS || "3");
   const xui = new XuiApi(env);
-  const existingClients = await getXuiInboundClients(env, user.id);
-  const subBefore = await getSubscription(env, user.id);
-  const existing =
-    existingClients.length && subBefore?.xray_sub_id
-      ? {
-          email: existingClients[0].client_email,
-          subId: subBefore.xray_sub_id,
-          primaryUuid: subBefore.xray_uuid || existingClients[0].client_uuid,
-        }
-      : undefined;
-  const provision = await xui.provisionUser(env, {
-    username: user.username,
-    telegramId: tg.id,
-    expiryMs: expiryMsFromDays(trialDays),
-    existing,
-  });
-  await saveXuiInboundClients(
-    env,
-    user.id,
-    provision.inbounds.map((row) => ({
-      inboundId: row.inboundId,
-      clientUuid: row.clientUuid,
-      clientEmail: provision.email,
-    }))
-  );
-  await patchSubscription(env, user.id, {
-    status: "active",
-    plan_type: "basic",
-    plan_label: `Пробный · ${trialDays} дн.`,
-    billing_months: 0,
-    starts_at: formatDateFromMs(Date.now()),
-    ends_at: formatDateFromMs(expiryMsFromDays(trialDays)),
-    is_trial: true,
-    xray_uuid: provision.primaryUuid,
-    xray_sub_id: provision.subId,
-    subscription_url: provision.subscriptionUrl,
-    client_email: provision.email,
-  });
-  await patchUser(env, user.id, { has_used_trial: true });
-  await sendMessage(
-    token,
-    chatId,
-    env.MSG_TRIAL_SUCCESS ||
-      "Пробный период активирован. Откройте «Подключить VPN» в меню."
-  );
+  const subBefore = await getSubscription(env, claimed.id);
+
+  try {
+    const existing = await xui.resolveExistingClient(tg.id, subBefore);
+    const provision = await xui.provisionUser(env, {
+      username: claimed.username,
+      telegramId: tg.id,
+      expiryMs: expiryMsFromDays(trialDays),
+      existing,
+    });
+    await saveXuiInboundClients(
+      env,
+      claimed.id,
+      provision.inbounds.map((row) => ({
+        inboundId: row.inboundId,
+        clientUuid: row.clientUuid,
+        clientEmail: provision.email,
+      }))
+    );
+    await patchSubscription(env, claimed.id, {
+      status: "active",
+      plan_type: "basic",
+      plan_label: `Пробный · ${trialDays} дн.`,
+      billing_months: 0,
+      starts_at: formatDateFromMs(Date.now()),
+      ends_at: formatDateFromMs(expiryMsFromDays(trialDays)),
+      is_trial: true,
+      xray_uuid: provision.primaryUuid,
+      xray_sub_id: provision.subId,
+      subscription_url: provision.subscriptionUrl,
+      client_email: provision.email,
+    });
+    await sendMessage(
+      token,
+      chatId,
+      env.MSG_TRIAL_SUCCESS ||
+        "Пробный период активирован. Откройте «Подключить VPN» в меню."
+    );
+  } catch (error) {
+    await releaseTrialClaim(env, tg.id);
+    console.error("activateTrial:", error);
+    await sendMessage(
+      token,
+      chatId,
+      "Не удалось активировать пробный период. Попробуйте позже или напишите в поддержку."
+    );
+  }
 }
 
 async function showProfile(
@@ -290,7 +296,6 @@ export async function handleManagerClientCallback(
     if (!user) return "Пользователь не найден";
     const months = txn.billing_months as BillingMonths;
     const xui = new XuiApi(env);
-    const existingClients = await getXuiInboundClients(env, user.id);
     const sub = await getSubscription(env, user.id);
     const extendDays = months * 30;
     const baseMs =
@@ -298,18 +303,12 @@ export async function handleManagerClientCallback(
         ? new Date(`${sub.ends_at}T23:59:59`).getTime()
         : Date.now();
     const expiryMs = Math.max(Date.now(), baseMs) + extendDays * 24 * 60 * 60 * 1000;
+    const existing = await xui.resolveExistingClient(user.telegram_id, sub);
     const provision = await xui.provisionUser(env, {
       username: user.username,
       telegramId: user.telegram_id,
       expiryMs,
-      existing:
-        existingClients.length && sub?.xray_sub_id
-          ? {
-              email: existingClients[0].client_email,
-              subId: sub.xray_sub_id,
-              primaryUuid: sub.xray_uuid || existingClients[0].client_uuid,
-            }
-          : undefined,
+      existing,
     });
     await saveXuiInboundClients(
       env,

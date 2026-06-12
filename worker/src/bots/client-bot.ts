@@ -37,7 +37,6 @@ import {
   clientLabel,
   clientsForOs,
   defaultClientForOs,
-  subscriptionIsReady,
 } from "../connect-links";
 
 type TgUpdate = {
@@ -206,13 +205,7 @@ async function ensureVpnClientOnStart(
   tg: TelegramUser
 ): Promise<void> {
   let sub = await getSubscription(env, user.id);
-  if (
-    sub?.client_email &&
-    sub.subscription_url &&
-    sub.xray_sub_id &&
-    sub.xray_uuid &&
-    (await subscriptionIsReady(sub.subscription_url))
-  ) {
+  if (sub?.client_email && sub.subscription_url && sub.xray_sub_id && sub.xray_uuid) {
     return;
   }
 
@@ -235,10 +228,7 @@ async function ensureVpnClientOnStart(
       ends_at: sub?.ends_at ?? null,
       is_trial: sub?.is_trial ?? false,
     });
-    sub = await getSubscription(env, user.id);
-    if (sub?.subscription_url && (await subscriptionIsReady(sub.subscription_url))) {
-      return;
-    }
+    return;
   } catch (error) {
     console.error("ensureVpnClientOnStart panel:", error);
   }
@@ -326,12 +316,6 @@ async function activateTrial(env: BotEnv, tg: TelegramUser, chatId: number): Pro
     const subscriptionUrl =
       sub.subscription_url || buildSubscriptionUrl(env, sub.xray_sub_id);
 
-    if (!(await subscriptionIsReady(subscriptionUrl))) {
-      throw new Error(
-        "серверы ещё синхронизируются с панелью — подождите 1 минуту и нажмите снова"
-      );
-    }
-
     await patchSubscription(env, claimed.id, {
       status: "active",
       plan_type: "basic",
@@ -382,7 +366,7 @@ async function handleTesterReset(
   await sendMessage(
     token,
     chatId,
-    "Тестовый сброс выполнен.\nКлючи пересозданы в БД. Можно снова нажать «Пробный период»."
+    "Тестовый сброс выполнен.\nПодождите ~1 мин (синхронизация с панелью), затем «Пробный период»."
   );
 }
 
@@ -630,14 +614,6 @@ export async function handleClientBotUpdate(
           chatId,
           messageId,
           "Сначала активируйте пробный период или оформите подписку.",
-          { inline_keyboard: [[{ text: "Назад", callback_data: "c:menu" }]] }
-        );
-      } else if (!(await subscriptionIsReady(sub.subscription_url))) {
-        await editMessage(
-          token,
-          chatId,
-          messageId,
-          "Серверы подключаются к панели. Подождите до 1 минуты и нажмите «Подключить VPN» снова.",
           { inline_keyboard: [[{ text: "Назад", callback_data: "c:menu" }]] }
         );
       } else {

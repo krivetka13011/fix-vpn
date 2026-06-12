@@ -110,11 +110,15 @@ export async function patchSubscription(
   userId: string,
   body: Record<string, unknown>
 ): Promise<void> {
-  await sbRequest(env, `subscriptions?user_id=eq.${userId}`, {
+  const response = await sbRequest(env, `subscriptions?user_id=eq.${userId}`, {
     method: "PATCH",
     headers: { Prefer: "return=minimal" },
     body: JSON.stringify({ ...body, updated_at: new Date().toISOString() }),
   });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `Supabase patch subscription ${response.status}`);
+  }
 }
 
 export async function patchUser(

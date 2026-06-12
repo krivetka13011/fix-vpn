@@ -18,9 +18,10 @@ import {
 import { sbRequest } from "./supabase";
 import { validateInitData, type TelegramUser } from "./telegram";
 import type { BotEnv } from "./env";
-import { clientBotToken, partnerBotToken } from "./env";
+import { clientBotToken, partnerBotToken, subscriptionBaseUrl, xuiBaseUrl } from "./env";
 import { handleClientBotUpdate } from "./bots/client-bot";
 import { handlePartnerBotUpdate } from "./bots/partner-bot";
+import { XuiApi } from "./xui";
 
 export interface ApiEnv extends BotEnv {
   TELEGRAM_BOT_TOKEN?: string;
@@ -88,6 +89,8 @@ export async function handleApiRequest(
     let clientWebhookUrl: string | null = null;
     let supabaseOk = false;
     let supabaseStatus: number | null = null;
+    let xuiOk = false;
+    let xuiBase: string | null = null;
     const clientToken = clientBotToken(env);
     const partnerToken = partnerBotToken(env);
     if (clientToken) {
@@ -122,6 +125,14 @@ export async function handleApiRequest(
         supabaseOk = false;
       }
     }
+    if (env.XUI_BASE_URL && env.XUI_API_TOKEN) {
+      try {
+        xuiBase = xuiBaseUrl(env);
+        xuiOk = await new XuiApi(env).ping();
+      } catch {
+        xuiOk = false;
+      }
+    }
     const base = env.WEBAPP_URL?.replace(/\/$/, "") ?? null;
     const expectedClientWebhook = base ? `${base}/api/webhook/client` : null;
     return json({
@@ -135,6 +146,9 @@ export async function handleApiRequest(
       partnerBotOk,
       supabaseOk,
       supabaseStatus,
+      xuiOk,
+      xuiBaseUrl: xuiBase,
+      subscriptionBaseUrl: subscriptionBaseUrl(env) || null,
       webAppUrl: base,
       clientWebhookUrl,
       clientWebhookOk: Boolean(

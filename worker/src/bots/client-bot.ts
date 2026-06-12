@@ -163,15 +163,17 @@ async function persistProvision(
   },
   subscription: Record<string, unknown>
 ): Promise<void> {
-  await saveXuiInboundClients(
-    env,
-    userId,
-    provision.inbounds.map((row) => ({
-      inboundId: row.inboundId,
-      clientUuid: row.clientUuid,
-      clientEmail: provision.email,
-    }))
-  );
+  if (provision.inbounds.length > 0) {
+    await saveXuiInboundClients(
+      env,
+      userId,
+      provision.inbounds.map((row) => ({
+        inboundId: row.inboundId,
+        clientUuid: row.clientUuid,
+        clientEmail: provision.email,
+      }))
+    );
+  }
   await patchSubscription(env, userId, {
     xray_uuid: provision.primaryUuid,
     xray_sub_id: provision.subId,

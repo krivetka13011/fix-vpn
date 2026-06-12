@@ -22,6 +22,7 @@ export interface BotEnv extends SupabaseEnv {
   XUI_TRIAL_DAYS?: string;
   SUBSCRIPTION_BASE_URL?: string;
   SUBSCRIPTION_PATH?: string;
+  VPN_SERVER_HOST?: string;
   PARTNER_DEFAULT_COMMISSION_PERCENT?: string;
   BASE_PRICE_RUB_PER_MONTH?: string;
   DISCOUNT_3_MONTHS_PERCENT?: string;
@@ -83,4 +84,27 @@ export function managerChatId(env: BotEnv): number | null {
   if (!raw) return null;
   const value = Number(raw);
   return Number.isFinite(value) ? value : null;
+}
+
+const LEGACY_PANEL_IP = "31.76.2.248";
+const DEFAULT_VPN_HOST = "fixvp.xyz";
+
+export function resolveVpnHost(env: BotEnv): string {
+  return env.VPN_SERVER_HOST?.trim() || DEFAULT_VPN_HOST;
+}
+
+export function normalizeWorkerFetchUrl(url: string, env: BotEnv): string {
+  return url.replaceAll(LEGACY_PANEL_IP, resolveVpnHost(env));
+}
+
+export function xuiBaseUrl(env: BotEnv): string {
+  const raw = env.XUI_BASE_URL?.trim();
+  if (!raw) throw new Error("XUI_BASE_URL missing");
+  return normalizeWorkerFetchUrl(raw.replace(/\/$/, ""), env);
+}
+
+export function subscriptionBaseUrl(env: BotEnv): string {
+  const raw = env.SUBSCRIPTION_BASE_URL?.trim();
+  if (!raw) return "";
+  return normalizeWorkerFetchUrl(raw.replace(/\/$/, ""), env);
 }

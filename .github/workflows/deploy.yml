@@ -92,11 +92,12 @@ jobs:
           SUPABASE_URL="${SUPABASE_URL%/rest/v1}"
           put_secret SUPABASE_URL "$SUPABASE_URL"
           put_secret SUPABASE_SERVICE_ROLE_KEY "$SUPABASE_SERVICE_ROLE_KEY"
-          put_secret XUI_BASE_URL "$XUI_BASE_URL"
+          put_secret XUI_BASE_URL "${{ secrets.XUI_BASE_URL || 'https://fixvp.xyz:54596/LXZo7cOhasXWon5uQu' }}"
           put_secret XUI_API_TOKEN "$XUI_API_TOKEN"
           put_secret XUI_INSECURE_SSL "1"
           put_secret XUI_INBOUND_IDS "19,20,21,24"
-          put_secret SUBSCRIPTION_BASE_URL "${{ secrets.SUBSCRIPTION_BASE_URL }}"
+          put_secret VPN_SERVER_HOST "${{ secrets.VPN_SERVER_HOST || 'fixvp.xyz' }}"
+          put_secret SUBSCRIPTION_BASE_URL "${{ secrets.SUBSCRIPTION_BASE_URL || 'https://fixvp.xyz:2096' }}"
           put_secret SUBSCRIPTION_PATH "/sub"
           put_secret MANAGER_NOTIFICATION_CHAT_ID "$MANAGER_NOTIFICATION_CHAT_ID"
           put_secret MANAGER_TELEGRAM_IDS "$MANAGER_TELEGRAM_IDS"
@@ -114,6 +115,10 @@ jobs:
           grep -q '"hasSupabaseKey":true' /tmp/health.json
           if ! grep -q '"supabaseOk":true' /tmp/health.json; then
             echo "::warning::supabaseOk=false — run schema.sql then Actions → Connect Supabase to Worker"
+            cat /tmp/health.json
+          fi
+          if ! grep -q '"xuiOk":true' /tmp/health.json; then
+            echo "::warning::xuiOk=false — Worker cannot reach 3X-UI panel (use fixvp.xyz hostname, not raw IP)"
             cat /tmp/health.json
           fi
           curl -fsS "$URL/api/catalog" | grep -q '"tariffs"'

@@ -1,5 +1,5 @@
 import type { BotEnv } from "./env";
-import { parseIdList } from "./env";
+import { parseIdList, subscriptionBaseUrl, xuiBaseUrl } from "./env";
 import type { SupabaseEnv } from "./supabase";
 import { clearVpnUserData } from "./repository";
 
@@ -63,10 +63,8 @@ export class XuiApi {
   private scanCache: ScannedClient[] | null = null;
 
   constructor(env: BotEnv) {
-    const base = env.XUI_BASE_URL?.replace(/\/$/, "");
-    if (!base) throw new Error("XUI_BASE_URL missing");
     if (!env.XUI_API_TOKEN) throw new Error("XUI_API_TOKEN missing");
-    this.baseUrl = base;
+    this.baseUrl = xuiBaseUrl(env);
     this.token = env.XUI_API_TOKEN;
     this.inboundIds = parseIdList(env.XUI_INBOUND_IDS);
     this.limitIp = Number(env.XUI_CLIENT_LIMIT_IP || "1");
@@ -88,15 +86,26 @@ export class XuiApi {
     });
   }
 
+  private async readJsonBody(response: Response): Promise<Record<string, unknown>> {
+    const text = await response.text();
+    try {
+      return JSON.parse(text) as Record<string, unknown>;
+    } catch {
+      throw new Error(
+        `XUI non-JSON (${response.status}): ${text.slice(0, 160).trim()}`
+      );
+    }
+  }
+
   private async parseResponse(
     response: Response,
     action: string
   ): Promise<{ success?: boolean; msg?: string }> {
-    const payload = (await response.json()) as { success?: boolean; msg?: string };
+    const payload = await this.readJsonBody(response);
     if (!response.ok || payload.success === false) {
-      throw new Error(payload.msg || `${action} failed`);
+      throw new Error(String(payload.msg || `${action} failed`));
     }
-    return payload;
+    return payload as { success?: boolean; msg?: string };
   }
 
   private invalidateScan(): void {
@@ -127,12 +136,10 @@ export class XuiApi {
     for (let i = 0; i < responses.length; i += 1) {
       const inboundId = this.inboundIds[i];
       const response = responses[i];
-      const payload = (await response.json()) as {
-        success?: boolean;
-        obj?: Record<string, unknown>;
-      };
-      if (!response.ok || payload.success === false || !payload.obj) continue;
-      for (const client of this.parseInboundClients(payload.obj)) {
+      const payload = await this.readJsonBody(response);
+      const obj = payload.obj as Record<string, unknown> | undefined;
+      if (!response.ok || payload.success === false || !obj) continue;
+      for (const client of this.parseInboundClients(obj)) {
         const email = String(client.email || "");
         const primaryUuid = String(client.id || "");
         if (!email || !primaryUuid) continue;
@@ -203,9 +210,17 @@ export class XuiApi {
   }
 
   buildSubscriptionUrl(env: BotEnv, subId: string): string {
-    const base = (env.SUBSCRIPTION_BASE_URL || "").replace(/\/$/, "");
+    const base = subscriptionBaseUrl(env);
     const path = (env.SUBSCRIPTION_PATH || "/sub").replace(/\/$/, "");
     return `${base}${path}/${subId}`;
+  }
+
+  async ping(): Promise<boolean> {
+    const inboundId = this.inboundIds[0];
+    if (!inboundId) return false;
+    const response = await this.request(`/panel/api/inbounds/get/${inboundId}`);
+    const payload = await this.readJsonBody(response);
+    return response.ok && payload.success !== false;
   }
 
   private buildClient(

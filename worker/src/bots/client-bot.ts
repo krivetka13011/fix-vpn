@@ -1,5 +1,5 @@
 import type { BotEnv } from "../env";
-import { clientBotToken } from "../env";
+import { clientBotToken, isTesterAccount } from "../env";
 import {
   addPartnerBalance,
   clearSession,
@@ -8,13 +8,16 @@ import {
   getPromoByCode,
   getSession,
   getSubscription,
+  getUserByTelegramId,
   getTransaction,
   getUserByTelegramId,
   claimTrialByTelegramId,
+  clearVpnUserData,
   patchSubscription,
   patchTransaction,
   patchUser,
   releaseTrialClaim,
+  resetTesterTrial,
   saveXuiInboundClients,
   setSession,
   upsertTelegramUser,
@@ -171,17 +174,24 @@ async function showMainMenu(
 
 async function activateTrial(env: BotEnv, tg: TelegramUser, chatId: number): Promise<void> {
   const token = clientBotToken(env)!;
-  await upsertTelegramUser(env, tg);
+  const user = await upsertTelegramUser(env, tg);
+  const tester = isTesterAccount(env, tg.id, user.is_tester);
 
-  const claimed = await claimTrialByTelegramId(env, tg.id);
-  if (!claimed) {
-    await sendMessage(
-      token,
-      chatId,
-      env.MSG_TRIAL_ALREADY_USED ||
-        "Пробный период уже использован на этом аккаунте Telegram."
-    );
-    return;
+  let claimed = user;
+  if (tester) {
+    claimed = (await resetTesterTrial(env, tg.id)) ?? user;
+  } else {
+    const trialClaim = await claimTrialByTelegramId(env, tg.id);
+    if (!trialClaim) {
+      await sendMessage(
+        token,
+        chatId,
+        env.MSG_TRIAL_ALREADY_USED ||
+          "Пробный период уже использован на этом аккаунте Telegram."
+      );
+      return;
+    }
+    claimed = trialClaim;
   }
 
   const trialDays = Number(env.TRIAL_DAYS || env.XUI_TRIAL_DAYS || "3");
@@ -189,12 +199,12 @@ async function activateTrial(env: BotEnv, tg: TelegramUser, chatId: number): Pro
   const subBefore = await getSubscription(env, claimed.id);
 
   try {
-    const existing = await xui.resolveExistingClient(tg.id, subBefore);
     const provision = await xui.provisionUser(env, {
+      userId: claimed.id,
       username: claimed.username,
       telegramId: tg.id,
       expiryMs: expiryMsFromDays(trialDays),
-      existing,
+      dbSubscription: subBefore,
     });
     await saveXuiInboundClients(
       env,
@@ -225,14 +235,37 @@ async function activateTrial(env: BotEnv, tg: TelegramUser, chatId: number): Pro
         "Пробный период активирован. Откройте «Подключить VPN» в меню."
     );
   } catch (error) {
-    await releaseTrialClaim(env, tg.id);
-    console.error("activateTrial:", error);
+    if (!tester) await releaseTrialClaim(env, tg.id);
+    const detail = error instanceof Error ? error.message : "unknown";
+    console.error("activateTrial:", detail);
     await sendMessage(
       token,
       chatId,
-      "Не удалось активировать пробный период. Попробуйте позже или напишите в поддержку."
+      tester
+        ? `Тест: ошибка активации — ${detail}`
+        : "Не удалось активировать пробный период. Попробуйте позже или напишите в поддержку."
     );
   }
+}
+
+async function handleTesterReset(
+  env: BotEnv,
+  tg: TelegramUser,
+  chatId: number
+): Promise<void> {
+  const token = clientBotToken(env)!;
+  const user = await getUserByTelegramId(env, tg.id);
+  if (!user || !isTesterAccount(env, tg.id, user.is_tester)) {
+    await sendMessage(token, chatId, "Команда доступна только тестовым аккаунтам.");
+    return;
+  }
+  await resetTesterTrial(env, tg.id);
+  await clearVpnUserData(env, user.id);
+  await sendMessage(
+    token,
+    chatId,
+    "Тестовый сброс выполнен.\nБД очищена. Если клиент удалён из панели — можно снова нажать «Пробный период»."
+  );
 }
 
 async function showProfile(
@@ -303,12 +336,12 @@ export async function handleManagerClientCallback(
         ? new Date(`${sub.ends_at}T23:59:59`).getTime()
         : Date.now();
     const expiryMs = Math.max(Date.now(), baseMs) + extendDays * 24 * 60 * 60 * 1000;
-    const existing = await xui.resolveExistingClient(user.telegram_id, sub);
     const provision = await xui.provisionUser(env, {
+      userId: user.id,
       username: user.username,
       telegramId: user.telegram_id,
       expiryMs,
-      existing,
+      dbSubscription: sub,
     });
     await saveXuiInboundClients(
       env,
@@ -523,6 +556,11 @@ export async function handleClientBotUpdate(
   const tg = message.from;
   const chatId = message.chat.id;
   const text = message.text?.trim() || "";
+
+  if (text === "/test_reset" || text.startsWith("/test_reset@")) {
+    await handleTesterReset(env, tg, chatId);
+    return;
+  }
 
   if (text.startsWith("/start")) {
     const ref = parseStartRef(text);

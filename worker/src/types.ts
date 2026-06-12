@@ -9,6 +9,7 @@ export interface DbUser {
   display_name: string;
   photo_url: string | null;
   has_used_trial?: boolean;
+  is_tester?: boolean;
   ref_by_partner_id?: number | null;
   first_payment_done?: boolean;
   created_at: string;

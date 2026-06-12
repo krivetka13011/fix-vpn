@@ -32,6 +32,7 @@ export interface BotEnv extends SupabaseEnv {
   MSG_TRIAL_ALREADY_USED?: string;
   MSG_PAYMENT_PENDING?: string;
   MSG_PARTNER_REGISTERED?: string;
+  TESTER_TELEGRAM_IDS?: string;
 }
 
 export const XUI_INBOUND_IDS_DEFAULT = [19, 20, 21, 24];
@@ -58,6 +59,23 @@ export function parseManagerIds(env: BotEnv): number[] {
     .split(",")
     .map((part) => Number(part.trim()))
     .filter((value) => Number.isFinite(value));
+}
+
+export function parseTesterIds(env: BotEnv): number[] {
+  const raw = env.TESTER_TELEGRAM_IDS || "";
+  return raw
+    .split(",")
+    .map((part) => Number(part.trim()))
+    .filter((value) => Number.isFinite(value));
+}
+
+export function isTesterAccount(
+  env: BotEnv,
+  telegramId: number,
+  userIsTester?: boolean
+): boolean {
+  if (userIsTester) return true;
+  return parseTesterIds(env).includes(telegramId);
 }
 
 export function managerChatId(env: BotEnv): number | null {

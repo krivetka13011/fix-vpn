@@ -1,5 +1,7 @@
 import type { BotEnv } from "./env";
 import { parseIdList } from "./env";
+import type { SupabaseEnv } from "./supabase";
+import { clearVpnUserData } from "./repository";
 
 export interface XuiClientRecord {
   id: string;
@@ -68,11 +70,15 @@ export class XuiApi {
     });
   }
 
-  private async parseOk(response: Response, action: string): Promise<void> {
+  private async parseResponse(
+    response: Response,
+    action: string
+  ): Promise<{ success?: boolean; msg?: string }> {
     const payload = (await response.json()) as { success?: boolean; msg?: string };
     if (!response.ok || payload.success === false) {
       throw new Error(payload.msg || `${action} failed`);
     }
+    return payload;
   }
 
   buildClientEmail(_username: string | null, telegramId: number): string {
@@ -115,6 +121,34 @@ export class XuiApi {
     return null;
   }
 
+  async findClientByEmail(email: string): Promise<{
+    email: string;
+    subId: string;
+    primaryUuid: string;
+    tgId: number;
+  } | null> {
+    for (const inboundId of this.inboundIds) {
+      const response = await this.request(`/panel/api/inbounds/get/${inboundId}`);
+      const payload = (await response.json()) as {
+        success?: boolean;
+        obj?: Record<string, unknown>;
+      };
+      if (!response.ok || payload.success === false || !payload.obj) continue;
+      for (const client of this.parseInboundClients(payload.obj)) {
+        if (String(client.email || "") !== email) continue;
+        const primaryUuid = String(client.id || "");
+        if (!primaryUuid) continue;
+        return {
+          email,
+          subId: String(client.subId || ""),
+          primaryUuid,
+          tgId: Number(client.tgId) || 0,
+        };
+      }
+    }
+    return null;
+  }
+
   buildSubscriptionUrl(env: BotEnv, subId: string): string {
     const base = (env.SUBSCRIPTION_BASE_URL || "").replace(/\/$/, "");
     const path = (env.SUBSCRIPTION_PATH || "/sub").replace(/\/$/, "");
@@ -150,7 +184,7 @@ export class XuiApi {
         client,
       }),
     });
-    await this.parseOk(response, "addClient");
+    await this.parseResponse(response, "addClient");
   }
 
   async updateClient(client: XuiClientRecord): Promise<void> {
@@ -165,7 +199,7 @@ export class XuiApi {
         }),
       }
     );
-    await this.parseOk(response, "updateClient");
+    await this.parseResponse(response, "updateClient");
   }
 
   async clearClientIps(email: string): Promise<void> {
@@ -173,7 +207,34 @@ export class XuiApi {
       `/panel/api/clients/clearIps/${encodeURIComponent(email)}`,
       { method: "POST", body: "{}" }
     );
-    await this.parseOk(response, "clearClientIps");
+    await this.parseResponse(response, "clearClientIps");
+  }
+
+  async syncPanelWithDb(
+    env: SupabaseEnv,
+    userId: string,
+    telegramId: number,
+    db?: {
+      client_email?: string | null;
+      xray_sub_id?: string | null;
+      xray_uuid?: string | null;
+    } | null
+  ): Promise<void> {
+    const panelByTg = await this.findClientByTelegramId(telegramId);
+    if (panelByTg) return;
+
+    const dbEmail = db?.client_email?.trim();
+    if (dbEmail) {
+      const panelByEmail = await this.findClientByEmail(dbEmail);
+      if (!panelByEmail) {
+        await clearVpnUserData(env, userId);
+        return;
+      }
+    }
+
+    if (db?.xray_uuid || db?.xray_sub_id || db?.client_email) {
+      await clearVpnUserData(env, userId);
+    }
   }
 
   async resolveExistingClient(
@@ -185,29 +246,45 @@ export class XuiApi {
     } | null
   ): Promise<{ email: string; subId: string; primaryUuid: string } | undefined> {
     const panelClient = await this.findClientByTelegramId(telegramId);
-    if (db?.client_email && db.xray_uuid) {
-      return {
-        email: db.client_email,
-        subId: db.xray_sub_id || panelClient?.subId || "",
-        primaryUuid: db.xray_uuid,
-      };
-    }
     if (panelClient) return panelClient;
+
+    const dbEmail = db?.client_email?.trim();
+    if (dbEmail) {
+      const panelByEmail = await this.findClientByEmail(dbEmail);
+      if (panelByEmail) {
+        return {
+          email: panelByEmail.email,
+          subId: panelByEmail.subId || db?.xray_sub_id || "",
+          primaryUuid: panelByEmail.primaryUuid,
+        };
+      }
+    }
+
     return undefined;
+  }
+
+  private isMissingClientError(error: unknown): boolean {
+    const message = error instanceof Error ? error.message.toLowerCase() : "";
+    return (
+      message.includes("not found") ||
+      message.includes("record not found") ||
+      message.includes("does not exist")
+    );
   }
 
   async provisionUser(
     env: BotEnv,
     params: {
+      userId: string;
       username: string | null;
       telegramId: number;
       expiryMs: number;
       totalGb?: number;
-      existing?: {
-        email: string;
-        subId: string;
-        primaryUuid: string;
-      };
+      dbSubscription?: {
+        client_email?: string | null;
+        xray_sub_id?: string | null;
+        xray_uuid?: string | null;
+      } | null;
     }
   ): Promise<{
     email: string;
@@ -216,9 +293,17 @@ export class XuiApi {
     primaryUuid: string;
     inbounds: Array<{ inboundId: number; clientUuid: string }>;
   }> {
-    const existing =
-      params.existing ||
-      (await this.resolveExistingClient(params.telegramId));
+    await this.syncPanelWithDb(
+      env,
+      params.userId,
+      params.telegramId,
+      params.dbSubscription
+    );
+
+    const existing = await this.resolveExistingClient(
+      params.telegramId,
+      params.dbSubscription
+    );
     const email =
       existing?.email ||
       this.buildClientEmail(params.username, params.telegramId);
@@ -236,17 +321,15 @@ export class XuiApi {
     );
 
     if (existing?.primaryUuid) {
-      await this.updateClient(client);
-    } else {
-      const panelDup = await this.findClientByTelegramId(params.telegramId);
-      if (panelDup) {
-        client.id = panelDup.primaryUuid;
-        client.email = panelDup.email;
-        client.subId = panelDup.subId || client.subId;
+      try {
         await this.updateClient(client);
-      } else {
+      } catch (error) {
+        if (!this.isMissingClientError(error)) throw error;
+        client.id = crypto.randomUUID();
         await this.addClient(client);
       }
+    } else {
+      await this.addClient(client);
     }
 
     return {

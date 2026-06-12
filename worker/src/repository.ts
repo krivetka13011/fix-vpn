@@ -164,6 +164,49 @@ export async function releaseTrialClaim(
   });
 }
 
+export async function resetTesterTrial(
+  env: SupabaseEnv,
+  telegramId: number
+): Promise<DbUser | null> {
+  const rows = await sbJson<DbUser[]>(
+    await sbRequest(env, `users?telegram_id=eq.${telegramId}`, {
+      method: "PATCH",
+      headers: { Prefer: "return=representation" },
+      body: JSON.stringify({
+        has_used_trial: false,
+        first_payment_done: false,
+        updated_at: new Date().toISOString(),
+      }),
+    })
+  );
+  return rows[0] ?? null;
+}
+
+export async function clearVpnUserData(
+  env: SupabaseEnv,
+  userId: string
+): Promise<void> {
+  await sbRequest(env, `xui_client_inbounds?user_id=eq.${userId}`, {
+    method: "DELETE",
+    headers: { Prefer: "return=minimal" },
+  });
+  await patchSubscription(env, userId, {
+    status: "none",
+    plan_type: "basic",
+    plan_label: null,
+    billing_months: null,
+    starts_at: null,
+    ends_at: null,
+    is_trial: false,
+    xray_uuid: null,
+    xray_sub_id: null,
+    subscription_url: null,
+    client_email: null,
+    vpn_key: null,
+    purchased_at: null,
+  });
+}
+
 export async function saveXuiInboundClients(
   env: SupabaseEnv,
   userId: string,

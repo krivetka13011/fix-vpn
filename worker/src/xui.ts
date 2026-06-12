@@ -118,7 +118,14 @@ export class XuiApi {
         return { email, subId, primaryUuid };
       }
     }
-    return null;
+
+    const byEmail = await this.findClientByEmail(this.buildClientEmail(null, telegramId));
+    if (!byEmail) return null;
+    return {
+      email: byEmail.email,
+      subId: byEmail.subId,
+      primaryUuid: byEmail.primaryUuid,
+    };
   }
 
   async findClientByEmail(email: string): Promise<{
@@ -220,19 +227,19 @@ export class XuiApi {
       xray_uuid?: string | null;
     } | null
   ): Promise<void> {
-    const panelByTg = await this.findClientByTelegramId(telegramId);
-    if (panelByTg) return;
+    const panelClient = await this.findClientByTelegramId(telegramId);
+    if (panelClient) return;
 
     const dbEmail = db?.client_email?.trim();
     if (dbEmail) {
       const panelByEmail = await this.findClientByEmail(dbEmail);
       if (!panelByEmail) {
         await clearVpnUserData(env, userId);
-        return;
       }
+      return;
     }
 
-    if (db?.xray_uuid || db?.xray_sub_id || db?.client_email) {
+    if (db?.xray_uuid || db?.xray_sub_id) {
       await clearVpnUserData(env, userId);
     }
   }

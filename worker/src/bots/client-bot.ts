@@ -180,6 +180,8 @@ async function activateTrial(env: BotEnv, tg: TelegramUser, chatId: number): Pro
   let claimed = user;
   if (tester) {
     claimed = (await resetTesterTrial(env, tg.id)) ?? user;
+    const subNow = await getSubscription(env, claimed.id);
+    await new XuiApi(env).syncPanelWithDb(env, claimed.id, tg.id, subNow);
   } else {
     const trialClaim = await claimTrialByTelegramId(env, tg.id);
     if (!trialClaim) {

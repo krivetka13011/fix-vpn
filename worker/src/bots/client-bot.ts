@@ -10,7 +10,6 @@ import {
   getSubscription,
   getUserByTelegramId,
   getTransaction,
-  getUserByTelegramId,
   claimTrialByTelegramId,
   clearVpnUserData,
   patchSubscription,
@@ -152,6 +151,67 @@ function formatDateFromMs(ms: number): string {
   return new Date(ms).toISOString().slice(0, 10);
 }
 
+async function persistProvision(
+  env: BotEnv,
+  userId: string,
+  provision: {
+    email: string;
+    subId: string;
+    subscriptionUrl: string;
+    primaryUuid: string;
+    inbounds: Array<{ inboundId: number; clientUuid: string }>;
+  },
+  subscription: Record<string, unknown>
+): Promise<void> {
+  await saveXuiInboundClients(
+    env,
+    userId,
+    provision.inbounds.map((row) => ({
+      inboundId: row.inboundId,
+      clientUuid: row.clientUuid,
+      clientEmail: provision.email,
+    }))
+  );
+  await patchSubscription(env, userId, {
+    xray_uuid: provision.primaryUuid,
+    xray_sub_id: provision.subId,
+    subscription_url: provision.subscriptionUrl,
+    client_email: provision.email,
+    ...subscription,
+  });
+}
+
+async function ensureVpnClientOnStart(
+  env: BotEnv,
+  user: Awaited<ReturnType<typeof upsertTelegramUser>>,
+  tg: TelegramUser
+): Promise<void> {
+  const xui = new XuiApi(env);
+  let sub = await getSubscription(env, user.id);
+  await xui.syncPanelWithDb(env, user.id, tg.id, sub);
+  sub = (await getSubscription(env, user.id)) ?? sub;
+
+  if (sub?.client_email && sub.subscription_url && sub.xray_sub_id && sub.xray_uuid) {
+    return;
+  }
+
+  const provision = await xui.ensureClientPrepared(env, {
+    userId: user.id,
+    username: user.username,
+    telegramId: tg.id,
+    dbSubscription: sub,
+  });
+  await persistProvision(env, user.id, provision, {
+    status: "none",
+    plan_type: "basic",
+    plan_label: null,
+    billing_months: null,
+    starts_at: null,
+    ends_at: null,
+    is_trial: false,
+  });
+}
+
 async function showMainMenu(
   env: BotEnv,
   chatId: number,
@@ -180,8 +240,6 @@ async function activateTrial(env: BotEnv, tg: TelegramUser, chatId: number): Pro
   let claimed = user;
   if (tester) {
     claimed = (await resetTesterTrial(env, tg.id)) ?? user;
-    const subNow = await getSubscription(env, claimed.id);
-    await new XuiApi(env).syncPanelWithDb(env, claimed.id, tg.id, subNow);
   } else {
     const trialClaim = await claimTrialByTelegramId(env, tg.id);
     if (!trialClaim) {
@@ -197,39 +255,38 @@ async function activateTrial(env: BotEnv, tg: TelegramUser, chatId: number): Pro
   }
 
   const trialDays = Number(env.TRIAL_DAYS || env.XUI_TRIAL_DAYS || "3");
-  const xui = new XuiApi(env);
-  const subBefore = await getSubscription(env, claimed.id);
+  const expiryMs = expiryMsFromDays(trialDays);
 
   try {
-    const provision = await xui.provisionUser(env, {
-      userId: claimed.id,
-      username: claimed.username,
-      telegramId: tg.id,
-      expiryMs: expiryMsFromDays(trialDays),
-      dbSubscription: subBefore,
-    });
-    await saveXuiInboundClients(
+    let sub = await getSubscription(env, claimed.id);
+    if (!sub?.client_email || !sub.xray_sub_id || !sub.xray_uuid) {
+      await ensureVpnClientOnStart(env, claimed, tg);
+      sub = await getSubscription(env, claimed.id);
+    }
+    if (!sub?.client_email || !sub.xray_sub_id || !sub.xray_uuid) {
+      throw new Error("клиент не подготовлен — нажмите /start");
+    }
+
+    await persistProvision(
       env,
       claimed.id,
-      provision.inbounds.map((row) => ({
-        inboundId: row.inboundId,
-        clientUuid: row.clientUuid,
-        clientEmail: provision.email,
-      }))
+      {
+        email: sub.client_email,
+        subId: sub.xray_sub_id,
+        subscriptionUrl: sub.subscription_url || "",
+        primaryUuid: sub.xray_uuid,
+        inbounds: [],
+      },
+      {
+        status: "active",
+        plan_type: "basic",
+        plan_label: `Пробный · ${trialDays} дн.`,
+        billing_months: 0,
+        starts_at: formatDateFromMs(Date.now()),
+        ends_at: formatDateFromMs(expiryMs),
+        is_trial: true,
+      }
     );
-    await patchSubscription(env, claimed.id, {
-      status: "active",
-      plan_type: "basic",
-      plan_label: `Пробный · ${trialDays} дн.`,
-      billing_months: 0,
-      starts_at: formatDateFromMs(Date.now()),
-      ends_at: formatDateFromMs(expiryMsFromDays(trialDays)),
-      is_trial: true,
-      xray_uuid: provision.primaryUuid,
-      xray_sub_id: provision.subId,
-      subscription_url: provision.subscriptionUrl,
-      client_email: provision.email,
-    });
     await sendMessage(
       token,
       chatId,
@@ -263,10 +320,11 @@ async function handleTesterReset(
   }
   await resetTesterTrial(env, tg.id);
   await clearVpnUserData(env, user.id);
+  await ensureVpnClientOnStart(env, user, tg);
   await sendMessage(
     token,
     chatId,
-    "Тестовый сброс выполнен.\nБД очищена. Если клиент удалён из панели — можно снова нажать «Пробный период»."
+    "Тестовый сброс выполнен.\nКлючи пересозданы в БД. Можно снова нажать «Пробный период»."
   );
 }
 
@@ -345,16 +403,7 @@ export async function handleManagerClientCallback(
       expiryMs,
       dbSubscription: sub,
     });
-    await saveXuiInboundClients(
-      env,
-      user.id,
-      provision.inbounds.map((row) => ({
-        inboundId: row.inboundId,
-        clientUuid: row.clientUuid,
-        clientEmail: provision.email,
-      }))
-    );
-    await patchSubscription(env, user.id, {
+    await persistProvision(env, user.id, provision, {
       status: "active",
       plan_type: "basic",
       plan_label: `Базовый · ${periodLabel(months)}`,
@@ -362,10 +411,6 @@ export async function handleManagerClientCallback(
       starts_at: sub?.starts_at || formatDateFromMs(Date.now()),
       ends_at: formatDateFromMs(expiryMs),
       is_trial: false,
-      xray_uuid: provision.primaryUuid,
-      xray_sub_id: provision.subId,
-      subscription_url: provision.subscriptionUrl,
-      client_email: provision.email,
     });
     if (txn.is_first_payment && user.ref_by_partner_id) {
       const commissionPct = Number(env.PARTNER_DEFAULT_COMMISSION_PERCENT || "50");
@@ -441,8 +486,8 @@ export async function handleClientBotUpdate(
       return;
     }
     if (data === "c:trial") {
+      await answerCallback(token, cq.id, "Активируем пробный период…");
       await activateTrial(env, tg, chatId);
-      await answerCallback(token, cq.id, "Пробный период");
       return;
     }
     if (data === "c:buy") {
@@ -566,17 +611,21 @@ export async function handleClientBotUpdate(
 
   if (text.startsWith("/start")) {
     const ref = parseStartRef(text);
+    let user;
     if (ref) {
       const partner = await getPartner(env, ref);
-      if (partner) {
-        await upsertTelegramUser(env, tg, ref);
-      } else {
-        await upsertTelegramUser(env, tg);
-      }
+      user = partner
+        ? await upsertTelegramUser(env, tg, ref)
+        : await upsertTelegramUser(env, tg);
     } else {
-      await upsertTelegramUser(env, tg);
+      user = await upsertTelegramUser(env, tg);
     }
     await showMainMenu(env, chatId, tg);
+    try {
+      await ensureVpnClientOnStart(env, user, tg);
+    } catch (error) {
+      console.error("ensureVpnClientOnStart:", error);
+    }
     return;
   }
 

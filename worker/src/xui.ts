@@ -15,6 +15,14 @@ export interface XuiClientRecord {
   flow: string;
 }
 
+export interface ProvisionResult {
+  email: string;
+  subId: string;
+  subscriptionUrl: string;
+  primaryUuid: string;
+  inbounds: Array<{ inboundId: number; clientUuid: string }>;
+}
+
 const ALLOWED_PREFIXES = [
   "/panel/api/clients/add",
   "/panel/api/clients/update/",
@@ -38,11 +46,21 @@ function randomSubId(length = 16): string {
   return out;
 }
 
+type ScannedClient = {
+  inboundId: number;
+  email: string;
+  subId: string;
+  primaryUuid: string;
+  tgId: number;
+  enable: boolean;
+};
+
 export class XuiApi {
   private baseUrl: string;
   private token: string;
   private inboundIds: number[];
   private limitIp: number;
+  private scanCache: ScannedClient[] | null = null;
 
   constructor(env: BotEnv) {
     const base = env.XUI_BASE_URL?.replace(/\/$/, "");
@@ -81,8 +99,8 @@ export class XuiApi {
     return payload;
   }
 
-  buildClientEmail(_username: string | null, telegramId: number): string {
-    return String(telegramId);
+  private invalidateScan(): void {
+    this.scanCache = null;
   }
 
   private parseInboundClients(
@@ -96,30 +114,65 @@ export class XuiApi {
     return settings?.clients ?? [];
   }
 
-  async findClientByTelegramId(telegramId: number): Promise<{
-    email: string;
-    subId: string;
-    primaryUuid: string;
-  } | null> {
-    for (const inboundId of this.inboundIds) {
-      const response = await this.request(`/panel/api/inbounds/get/${inboundId}`);
+  private async scanAllClients(): Promise<ScannedClient[]> {
+    if (this.scanCache) return this.scanCache;
+
+    const responses = await Promise.all(
+      this.inboundIds.map((inboundId) =>
+        this.request(`/panel/api/inbounds/get/${inboundId}`)
+      )
+    );
+
+    const scanned: ScannedClient[] = [];
+    for (let i = 0; i < responses.length; i += 1) {
+      const inboundId = this.inboundIds[i];
+      const response = responses[i];
       const payload = (await response.json()) as {
         success?: boolean;
         obj?: Record<string, unknown>;
       };
       if (!response.ok || payload.success === false || !payload.obj) continue;
       for (const client of this.parseInboundClients(payload.obj)) {
-        const tgId = Number(client.tgId);
-        if (!Number.isFinite(tgId) || tgId !== telegramId) continue;
         const email = String(client.email || "");
-        const subId = String(client.subId || "");
         const primaryUuid = String(client.id || "");
         if (!email || !primaryUuid) continue;
-        return { email, subId, primaryUuid };
+        scanned.push({
+          inboundId,
+          email,
+          subId: String(client.subId || ""),
+          primaryUuid,
+          tgId: Number(client.tgId) || 0,
+          enable: Boolean(client.enable),
+        });
       }
     }
 
-    const byEmail = await this.findClientByEmail(this.buildClientEmail(null, telegramId));
+    this.scanCache = scanned;
+    return scanned;
+  }
+
+  buildClientEmail(_username: string | null, telegramId: number): string {
+    return String(telegramId);
+  }
+
+  async findClientByTelegramId(telegramId: number): Promise<{
+    email: string;
+    subId: string;
+    primaryUuid: string;
+  } | null> {
+    const clients = await this.scanAllClients();
+    for (const client of clients) {
+      if (client.tgId === telegramId) {
+        return {
+          email: client.email,
+          subId: client.subId,
+          primaryUuid: client.primaryUuid,
+        };
+      }
+    }
+
+    const email = this.buildClientEmail(null, telegramId);
+    const byEmail = await this.findClientByEmail(email);
     if (!byEmail) return null;
     return {
       email: byEmail.email,
@@ -133,25 +186,18 @@ export class XuiApi {
     subId: string;
     primaryUuid: string;
     tgId: number;
+    enable: boolean;
   } | null> {
-    for (const inboundId of this.inboundIds) {
-      const response = await this.request(`/panel/api/inbounds/get/${inboundId}`);
-      const payload = (await response.json()) as {
-        success?: boolean;
-        obj?: Record<string, unknown>;
+    const clients = await this.scanAllClients();
+    for (const client of clients) {
+      if (client.email !== email) continue;
+      return {
+        email: client.email,
+        subId: client.subId,
+        primaryUuid: client.primaryUuid,
+        tgId: client.tgId,
+        enable: client.enable,
       };
-      if (!response.ok || payload.success === false || !payload.obj) continue;
-      for (const client of this.parseInboundClients(payload.obj)) {
-        if (String(client.email || "") !== email) continue;
-        const primaryUuid = String(client.id || "");
-        if (!primaryUuid) continue;
-        return {
-          email,
-          subId: String(client.subId || ""),
-          primaryUuid,
-          tgId: Number(client.tgId) || 0,
-        };
-      }
     }
     return null;
   }
@@ -168,6 +214,7 @@ export class XuiApi {
     telegramId: number,
     expiryMs: number,
     totalGb: number,
+    enable: boolean,
     existingUuid?: string
   ): XuiClientRecord {
     return {
@@ -176,10 +223,28 @@ export class XuiApi {
       subId,
       limitIp: this.limitIp,
       expiryTime: expiryMs,
-      enable: true,
+      enable,
       tgId: telegramId,
       totalGB: totalGb,
       flow: "",
+    };
+  }
+
+  private toProvisionResult(
+    env: BotEnv,
+    email: string,
+    subId: string,
+    primaryUuid: string
+  ): ProvisionResult {
+    return {
+      email,
+      subId,
+      subscriptionUrl: this.buildSubscriptionUrl(env, subId),
+      primaryUuid,
+      inbounds: this.inboundIds.map((inboundId) => ({
+        inboundId,
+        clientUuid: primaryUuid,
+      })),
     };
   }
 
@@ -192,6 +257,7 @@ export class XuiApi {
       }),
     });
     await this.parseResponse(response, "addClient");
+    this.invalidateScan();
   }
 
   async updateClient(client: XuiClientRecord): Promise<void> {
@@ -207,6 +273,7 @@ export class XuiApi {
       }
     );
     await this.parseResponse(response, "updateClient");
+    this.invalidateScan();
   }
 
   async clearClientIps(email: string): Promise<void> {
@@ -279,6 +346,79 @@ export class XuiApi {
     );
   }
 
+  private async addClientIfMissing(
+    email: string,
+    subId: string,
+    telegramId: number,
+    expiryMs: number,
+    totalGb: number
+  ): Promise<string> {
+    const client = this.buildClient(
+      email,
+      subId,
+      telegramId,
+      expiryMs,
+      totalGb,
+      true
+    );
+    try {
+      await this.addClient(client);
+      return client.id;
+    } catch (error) {
+      const message = error instanceof Error ? error.message.toLowerCase() : "";
+      if (!message.includes("already in use")) throw error;
+      const existing = await this.findClientByEmail(email);
+      if (!existing?.primaryUuid) throw error;
+      return existing.primaryUuid;
+    }
+  }
+
+  async ensureClientPrepared(
+    env: BotEnv,
+    params: {
+      userId: string;
+      username: string | null;
+      telegramId: number;
+      dbSubscription?: {
+        client_email?: string | null;
+        xray_sub_id?: string | null;
+        xray_uuid?: string | null;
+      } | null;
+    }
+  ): Promise<ProvisionResult> {
+    await this.syncPanelWithDb(
+      env,
+      params.userId,
+      params.telegramId,
+      params.dbSubscription
+    );
+
+    const existing = await this.resolveExistingClient(
+      params.telegramId,
+      params.dbSubscription
+    );
+    const email =
+      existing?.email ||
+      params.dbSubscription?.client_email?.trim() ||
+      this.buildClientEmail(params.username, params.telegramId);
+    const subId =
+      existing?.subId?.trim() ||
+      params.dbSubscription?.xray_sub_id?.trim() ||
+      randomSubId();
+    const primaryUuid =
+      existing?.primaryUuid ||
+      params.dbSubscription?.xray_uuid ||
+      (await this.addClientIfMissing(
+        email,
+        subId,
+        params.telegramId,
+        0,
+        0
+      ));
+
+    return this.toProvisionResult(env, email, subId, primaryUuid);
+  }
+
   async provisionUser(
     env: BotEnv,
     params: {
@@ -293,61 +433,38 @@ export class XuiApi {
         xray_uuid?: string | null;
       } | null;
     }
-  ): Promise<{
-    email: string;
-    subId: string;
-    subscriptionUrl: string;
-    primaryUuid: string;
-    inbounds: Array<{ inboundId: number; clientUuid: string }>;
-  }> {
-    await this.syncPanelWithDb(
-      env,
-      params.userId,
-      params.telegramId,
-      params.dbSubscription
-    );
+  ): Promise<ProvisionResult> {
+    const prepared = await this.ensureClientPrepared(env, {
+      userId: params.userId,
+      username: params.username,
+      telegramId: params.telegramId,
+      dbSubscription: params.dbSubscription,
+    });
 
-    const existing = await this.resolveExistingClient(
-      params.telegramId,
-      params.dbSubscription
-    );
-    const email =
-      existing?.email ||
-      this.buildClientEmail(params.username, params.telegramId);
-    const subId =
-      existing?.subId && existing.subId.trim()
-        ? existing.subId
-        : randomSubId();
+    if (!params.dbSubscription?.client_email) {
+      return prepared;
+    }
+
     const client = this.buildClient(
-      email,
-      subId,
+      prepared.email,
+      prepared.subId,
       params.telegramId,
       params.expiryMs,
       params.totalGb ?? 0,
-      existing?.primaryUuid
+      true,
+      prepared.primaryUuid
     );
-
-    if (existing?.primaryUuid) {
-      try {
-        await this.updateClient(client);
-      } catch (error) {
-        if (!this.isMissingClientError(error)) throw error;
-        client.id = crypto.randomUUID();
-        await this.addClient(client);
-      }
-    } else {
-      await this.addClient(client);
+    try {
+      await this.updateClient(client);
+    } catch (error) {
+      console.error("provisionUser update skipped:", error);
     }
 
-    return {
-      email,
-      subId,
-      subscriptionUrl: this.buildSubscriptionUrl(env, subId),
-      primaryUuid: client.id,
-      inbounds: this.inboundIds.map((inboundId) => ({
-        inboundId,
-        clientUuid: client.id,
-      })),
-    };
+    return this.toProvisionResult(
+      env,
+      prepared.email,
+      prepared.subId,
+      prepared.primaryUuid
+    );
   }
 }

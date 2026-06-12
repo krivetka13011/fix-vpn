@@ -212,18 +212,20 @@ export async function saveXuiInboundClients(
   userId: string,
   rows: Array<{ inboundId: number; clientUuid: string; clientEmail: string }>
 ): Promise<void> {
-  for (const row of rows) {
-    await sbRequest(env, "xui_client_inbounds?on_conflict=user_id,inbound_id", {
-      method: "POST",
-      headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
-      body: JSON.stringify({
-        user_id: userId,
-        inbound_id: row.inboundId,
-        client_uuid: row.clientUuid,
-        client_email: row.clientEmail,
-      }),
-    });
-  }
+  await Promise.all(
+    rows.map((row) =>
+      sbRequest(env, "xui_client_inbounds?on_conflict=user_id,inbound_id", {
+        method: "POST",
+        headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+        body: JSON.stringify({
+          user_id: userId,
+          inbound_id: row.inboundId,
+          client_uuid: row.clientUuid,
+          client_email: row.clientEmail,
+        }),
+      })
+    )
+  );
 }
 
 export async function getXuiInboundClients(

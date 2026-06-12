@@ -186,6 +186,21 @@ export async function resetTesterTrial(
   return rows[0] ?? null;
 }
 
+export async function resetTesterSubscriptionState(
+  env: SupabaseEnv,
+  userId: string
+): Promise<void> {
+  await patchSubscription(env, userId, {
+    status: "none",
+    plan_type: "basic",
+    plan_label: null,
+    billing_months: null,
+    starts_at: null,
+    ends_at: null,
+    is_trial: false,
+  });
+}
+
 export async function clearVpnUserData(
   env: SupabaseEnv,
   userId: string

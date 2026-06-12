@@ -11,13 +11,13 @@ import {
   getUserByTelegramId,
   getTransaction,
   claimTrialByTelegramId,
-  clearVpnUserData,
   clearVpnDeviceBindings,
   listVpnDeviceBindings,
   patchSubscription,
   patchTransaction,
   patchUser,
   releaseTrialClaim,
+  resetTesterSubscriptionState,
   resetTesterTrial,
   saveXuiInboundClients,
   setSession,
@@ -285,20 +285,31 @@ async function persistProvision(
   });
 }
 
-function randomSubId(length = 16): string {
-  const alphabet = "abcdefghijklmnopqrstuvwxyz0123456789";
-  let out = "";
-  const bytes = crypto.getRandomValues(new Uint8Array(length));
-  for (let i = 0; i < length; i += 1) {
-    out += alphabet[bytes[i] % alphabet.length];
-  }
-  return out;
-}
-
 function buildSubscriptionUrl(env: BotEnv, subId: string): string {
   const base = subscriptionBaseUrl(env);
   const path = (env.SUBSCRIPTION_PATH || "/sub").replace(/\/$/, "");
   return `${base}${path}/${subId}`;
+}
+
+function subscriptionLinkMessage(
+  os: string,
+  vpnClient: VpnClientId,
+  subscriptionUrl: string,
+  openUrl: string
+): { text: string; markup: Record<string, unknown> } {
+  return {
+    text:
+      `<b>Ссылка для ${clientLabel(vpnClient)} (${osLabel(os)})</b>\n\n` +
+      `Если в Happ/V2rayNG видите <b>404 Not Found</b> — удалите старую подписку FIX VPN в приложении и импортируйте заново.\n\n` +
+      `Скопируйте ссылку:\n` +
+      `<code>${subscriptionUrl}</code>`,
+    markup: {
+      inline_keyboard: [
+        [{ text: `Открыть ${clientLabel(vpnClient)}`, url: openUrl }],
+        [{ text: "Назад", callback_data: "c:connect" }],
+      ],
+    },
+  };
 }
 
 async function syncSubscriptionFromPanel(
@@ -372,28 +383,9 @@ async function ensureVpnClientOnStart(
     return;
   }
 
-  const email = String(tg.id);
-  const subId = sub?.xray_sub_id?.trim() || randomSubId();
-  const primaryUuid = sub?.xray_uuid?.trim() || crypto.randomUUID();
-  await persistProvision(
-    env,
-    user.id,
-    {
-      email,
-      subId,
-      subscriptionUrl: buildSubscriptionUrl(env, subId),
-      primaryUuid,
-      inbounds: [],
-    },
-    {
-      status: sub?.status || "none",
-      plan_type: "basic",
-      plan_label: sub?.plan_label ?? null,
-      billing_months: sub?.billing_months ?? null,
-      starts_at: sub?.starts_at ?? null,
-      ends_at: sub?.ends_at ?? null,
-      is_trial: sub?.is_trial ?? false,
-    }
+  console.error(
+    "ensureVpnClientOnStart: panel client missing and panel API unavailable for",
+    tg.id
   );
 }
 
@@ -502,12 +494,19 @@ async function handleTesterReset(
     return;
   }
   await resetTesterTrial(env, tg.id);
-  await clearVpnUserData(env, user.id);
+  await resetTesterSubscriptionState(env, user.id);
+  await clearVpnDeviceBindings(env, user.id);
   await ensureVpnClientOnStart(env, user, tg);
+  await syncSubscriptionFromPanel(env, user.id, tg);
+  const sub = await getSubscription(env, user.id);
+  const subHint = sub?.xray_sub_id ? `\nВаша ссылка: …/${sub.xray_sub_id}` : "";
   await sendMessage(
     token,
     chatId,
-    "Тестовый сброс выполнен.\nПодождите ~1 мин (синхронизация с панелью), затем «Пробный период»."
+    "Тестовый сброс выполнен.\n" +
+      "Ключ подписки сохранён из панели — новый случайный ID не создаётся." +
+      subHint +
+      "\n\nЕсли в Happ ошибка 404 — удалите старую подписку FIX VPN и подключитесь заново через «Подключить VPN»."
   );
 }
 
@@ -809,20 +808,27 @@ export async function handleClientBotUpdate(
       const syncedUrl = await syncSubscriptionFromPanel(env, user.id, tg);
       const sub = await getSubscription(env, user.id);
       const subscriptionUrl = syncedUrl || sub?.subscription_url || "";
-      if (!subscriptionUrl || sub?.status !== "active") {
-        await answerCallback(token, cq.id, "Сначала активируйте подписку");
+      if (!subscriptionUrl || !sub?.xray_sub_id || sub?.status !== "active") {
+        await answerCallback(
+          token,
+          cq.id,
+          "Подписка не готова. Нажмите /start и повторите через минуту.",
+          { showAlert: true }
+        );
         return;
       }
 
       const defaultClient = defaultClientForOs(os);
       const openUrl = buildRedirectUrl(env, defaultClient, subscriptionUrl);
+      const linkMessage = subscriptionLinkMessage(os, defaultClient, subscriptionUrl, openUrl);
       const text =
         `<b>Подключение VPN</b>\n\n` +
         `ОС: <b>${osLabel(os)}</b>\n` +
         (os === "android"
           ? `На Android нажмите <b>${clientLabel(defaultClient)}</b> ниже.\n` +
             `Если приложение не открылось — используйте ссылку из следующего сообщения.\n\n`
-          : `Открываем <b>${clientLabel(defaultClient)}</b>.\n\n`) +
+          : `Открываем <b>${clientLabel(defaultClient)}</b>.\n` +
+            `Ссылка для повторного импорта — в следующем сообщении.\n\n`) +
         `Если приложение не открылось — выберите клиент ниже:`;
 
       try {
@@ -839,23 +845,10 @@ export async function handleClientBotUpdate(
       }
 
       await recordDeviceConnect(env, user.id, os, defaultClient);
+      await sendMessage(token, chatId, linkMessage.text, linkMessage.markup);
 
       if (os === "android") {
         await answerCallback(token, cq.id, `Нажмите ${clientLabel(defaultClient)} ниже`);
-        await sendMessage(
-          token,
-          chatId,
-          `<b>Ссылка для ${clientLabel(defaultClient)} (Android)</b>\n\n` +
-            `Скопируйте и вставьте в приложение:\n` +
-            `«+» → «Импорт по ссылке»\n\n` +
-            `<code>${subscriptionUrl}</code>`,
-          {
-            inline_keyboard: [
-              [{ text: `Открыть ${clientLabel(defaultClient)}`, url: openUrl }],
-              [{ text: "Назад", callback_data: "c:connect" }],
-            ],
-          }
-        );
         return;
       }
 

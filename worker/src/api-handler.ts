@@ -84,6 +84,48 @@ export async function handleApiRequest(
     return new Response(null, { headers: CORS });
   }
 
+  if (path.startsWith("/api/sub/") && request.method === "GET") {
+    const subId = decodeURIComponent(path.slice("/api/sub/".length))
+      .replace(/\/$/, "")
+      .trim();
+    if (!subId || subId.includes("/")) {
+      return new Response("bad sub", { status: 400, headers: CORS });
+    }
+    const upstreamBase = subscriptionBaseUrl(env);
+    if (!upstreamBase) {
+      return new Response("subscription upstream missing", { status: 503, headers: CORS });
+    }
+    const subPath = (env.SUBSCRIPTION_PATH || "/sub").replace(/\/$/, "");
+    const upstream = `${upstreamBase}${subPath}/${encodeURIComponent(subId)}`;
+    try {
+      const upstreamRes = await fetch(upstream);
+      const body = await upstreamRes.text();
+      const headers: Record<string, string> = {
+        "Content-Type":
+          upstreamRes.headers.get("Content-Type") || "text/plain; charset=utf-8",
+        "hide-settings": "1",
+        "Cache-Control": "no-store",
+        ...CORS,
+      };
+      for (const name of [
+        "Profile-Title",
+        "Profile-Update-Interval",
+        "Subscription-Userinfo",
+        "Profile-Web-Page-Url",
+        "Support-Url",
+        "Announce",
+        "Content-Disposition",
+      ]) {
+        const value = upstreamRes.headers.get(name);
+        if (value) headers[name] = value;
+      }
+      return new Response(body, { status: upstreamRes.status, headers });
+    } catch (error) {
+      console.error("subscription proxy:", error);
+      return new Response("subscription proxy failed", { status: 502, headers: CORS });
+    }
+  }
+
   if (path.startsWith("/api/redirect/") && request.method === "GET") {
     const client = path.slice("/api/redirect/".length) as VpnClientId;
     const sub = new URL(request.url).searchParams.get("sub")?.trim();

@@ -23,15 +23,60 @@ const CLIENTS_BY_OS: Record<string, VpnClientId[]> = {
   macos: ["happ", "hiddify"],
 };
 
+const HAPP_CRYPTO_API = "https://crypto.happ.su/api-v2.php";
+
 export function workerBaseUrl(env: BotEnv): string {
   return (env.WEBAPP_URL || "").replace(/\/$/, "");
 }
 
-export function buildDeepLink(client: VpnClientId, subscriptionUrl: string): string {
-  const encoded = encodeURIComponent(subscriptionUrl);
+export function isHappEncryptedLink(link: string): boolean {
+  return /^happ:\/\/crypt[45]\//i.test(link.trim());
+}
+
+export function buildProtectedSubscriptionUrl(env: BotEnv, subId: string): string {
+  const base = workerBaseUrl(env);
+  if (!base) throw new Error("WEBAPP_URL missing");
+  const path = (env.SUBSCRIPTION_PATH || "/sub").replace(/\/$/, "");
+  return `${base}/api/sub/${encodeURIComponent(subId)}`;
+}
+
+export async function encryptHappLink(subscriptionUrl: string): Promise<string> {
+  const response = await fetch(HAPP_CRYPTO_API, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ url: subscriptionUrl }),
+  });
+  const payload = (await response.json()) as {
+    encrypted_link?: string;
+    error?: string;
+    message?: string;
+  };
+  const encrypted = payload.encrypted_link?.trim();
+  if (!response.ok || !encrypted) {
+    throw new Error(payload.error || payload.message || "Happ encrypt failed");
+  }
+  return encrypted;
+}
+
+export async function buildClientImportTarget(
+  env: BotEnv,
+  client: VpnClientId,
+  subId: string
+): Promise<string> {
+  const protectedUrl = buildProtectedSubscriptionUrl(env, subId);
+  if (client === "happ") {
+    return encryptHappLink(protectedUrl);
+  }
+  return protectedUrl;
+}
+
+export function buildDeepLink(client: VpnClientId, importTarget: string): string {
+  if (client === "happ") {
+    if (isHappEncryptedLink(importTarget)) return importTarget;
+    return `happ://add/${importTarget}`;
+  }
+  const encoded = encodeURIComponent(importTarget);
   switch (client) {
-    case "happ":
-      return `happ://add/${subscriptionUrl}`;
     case "v2rayng":
       return `v2rayng://install-sub?url=${encoded}`;
     case "hiddify":
@@ -39,18 +84,18 @@ export function buildDeepLink(client: VpnClientId, subscriptionUrl: string): str
     case "shadowrocket":
       return `shadowrocket://add/sub?url=${encoded}`;
     default:
-      return `happ://add/${subscriptionUrl}`;
+      return `happ://add/${importTarget}`;
   }
 }
 
 export function buildRedirectUrl(
   env: BotEnv,
   client: VpnClientId,
-  subscriptionUrl: string
+  importTarget: string
 ): string {
   const base = workerBaseUrl(env);
   if (!base) throw new Error("WEBAPP_URL missing");
-  return `${base}/api/redirect/${client}?sub=${encodeURIComponent(subscriptionUrl)}`;
+  return `${base}/api/redirect/${client}?sub=${encodeURIComponent(importTarget)}`;
 }
 
 export function clientLabel(client: VpnClientId): string {
@@ -65,11 +110,45 @@ export function defaultClientForOs(os: string): VpnClientId {
   return DEFAULT_CLIENT_BY_OS[os] || "happ";
 }
 
-export function redirectHtml(client: VpnClientId, subscriptionUrl: string): string {
-  const deepLink = buildDeepLink(client, subscriptionUrl);
+export function redirectHtml(client: VpnClientId, importTarget: string): string {
+  const deepLink = buildDeepLink(client, importTarget);
   const safeDeep = deepLink.replace(/"/g, "&quot;");
-  const safeSub = subscriptionUrl.replace(/"/g, "&quot;");
   const label = clientLabel(client);
+  const locked = client === "happ" || isHappEncryptedLink(importTarget);
+
+  if (locked) {
+    return `<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>FIX VPN · ${label}</title>
+  <style>
+    body { font-family: system-ui, sans-serif; background: #0b1220; color: #e8eefc; display: grid; place-items: center; min-height: 100vh; margin: 0; padding: 24px; text-align: center; }
+    .card { max-width: 420px; width: 100%; }
+    .btn { display: block; width: 100%; box-sizing: border-box; margin: 10px 0; padding: 14px 18px; border-radius: 12px; border: 0; font-size: 17px; font-weight: 600; cursor: pointer; text-decoration: none; background: #3d7eff; color: #fff; }
+    .hint { color: #9db0d0; font-size: 14px; line-height: 1.5; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <p>Импорт подписки в <b>${label}</b></p>
+    <p class="hint">Подписка защищена: ссылку и настройки серверов нельзя просмотреть или изменить после импорта.</p>
+    <a class="btn" id="open-app" href="${safeDeep}">Открыть ${label}</a>
+  </div>
+  <script>
+    (function () {
+      var deepLink = ${JSON.stringify(deepLink)};
+      var isAndroid = /Android/i.test(navigator.userAgent);
+      if (!isAndroid) {
+        setTimeout(function () { window.location.replace(deepLink); }, 120);
+      }
+    })();
+  </script>
+</body>
+</html>`;
+  }
+
   return `<!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -79,43 +158,21 @@ export function redirectHtml(client: VpnClientId, subscriptionUrl: string): stri
   <style>
     body { font-family: system-ui, sans-serif; background: #0b1220; color: #e8eefc; display: grid; place-items: center; min-height: 100vh; margin: 0; padding: 24px; text-align: center; }
     .card { max-width: 420px; width: 100%; }
-    .btn { display: block; width: 100%; box-sizing: border-box; margin: 10px 0; padding: 14px 18px; border-radius: 12px; border: 0; font-size: 17px; font-weight: 600; cursor: pointer; text-decoration: none; }
-    .primary { background: #3d7eff; color: #fff; }
-    .secondary { background: #1a2744; color: #e8eefc; }
+    .btn { display: block; width: 100%; box-sizing: border-box; margin: 10px 0; padding: 14px 18px; border-radius: 12px; border: 0; font-size: 17px; font-weight: 600; cursor: pointer; text-decoration: none; background: #3d7eff; color: #fff; }
     .hint { color: #9db0d0; font-size: 14px; line-height: 1.5; }
-    code { display: block; word-break: break-all; background: #111a2e; padding: 12px; border-radius: 10px; margin-top: 12px; font-size: 12px; }
   </style>
 </head>
 <body>
   <div class="card">
     <p>Импорт подписки в <b>${label}</b></p>
-    <p class="hint">На Android в Telegram нажмите кнопку ниже. Если приложение не открылось — скопируйте ссылку и вставьте в ${label} вручную.</p>
-    <a class="btn primary" id="open-app" href="${safeDeep}">Открыть ${label}</a>
-    <button class="btn secondary" id="copy-sub" type="button">Скопировать ссылку</button>
-    <code id="sub-text">${safeSub}</code>
+    <p class="hint">Нажмите кнопку ниже, чтобы открыть ${label}. Настройки серверов защищены от случайного редактирования.</p>
+    <a class="btn" id="open-app" href="${safeDeep}">Открыть ${label}</a>
   </div>
   <script>
     (function () {
-      var subUrl = ${JSON.stringify(subscriptionUrl)};
       var deepLink = ${JSON.stringify(deepLink)};
       var isAndroid = /Android/i.test(navigator.userAgent);
-      var copyBtn = document.getElementById("copy-sub");
-      var openBtn = document.getElementById("open-app");
-      if (copyBtn) {
-        copyBtn.addEventListener("click", function () {
-          var done = function () { copyBtn.textContent = "Ссылка скопирована"; };
-          if (navigator.clipboard && navigator.clipboard.writeText) {
-            navigator.clipboard.writeText(subUrl).then(done).catch(function () {
-              window.prompt("Скопируйте ссылку:", subUrl);
-              done();
-            });
-          } else {
-            window.prompt("Скопируйте ссылку:", subUrl);
-            done();
-          }
-        });
-      }
-      if (!isAndroid && openBtn) {
+      if (!isAndroid) {
         setTimeout(function () { window.location.replace(deepLink); }, 120);
       }
     })();

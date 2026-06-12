@@ -36,6 +36,7 @@ import { BILLING_OPTIONS, calcPrice, periodLabel, type BillingMonths } from "./p
 import { managerTxnKeyboard, notifyManager } from "./manager";
 import { handleManagerPartnerCallback } from "./partner-bot";
 import {
+  buildClientImportTarget,
   buildRedirectUrl,
   clientLabel,
   clientsForOs,
@@ -113,14 +114,19 @@ function connectOsKeyboard() {
   };
 }
 
-function connectClientKeyboard(env: BotEnv, os: string, subscriptionUrl: string) {
+function connectClientKeyboard(
+  env: BotEnv,
+  os: string,
+  subId: string,
+  redirectByClient: Partial<Record<VpnClientId, string>>
+) {
   const options = clientsForOs(os);
   return {
     inline_keyboard: options
       .map((client) => [
         {
           text: clientLabel(client),
-          url: buildRedirectUrl(env, client, subscriptionUrl),
+          url: redirectByClient[client] || buildRedirectUrl(env, client, subId),
         },
       ])
       .concat([[{ text: "Назад", callback_data: "c:connect" }]]),
@@ -291,18 +297,19 @@ function buildSubscriptionUrl(env: BotEnv, subId: string): string {
   return `${base}${path}/${subId}`;
 }
 
-function subscriptionLinkMessage(
+function importInstructionsMessage(
   os: string,
   vpnClient: VpnClientId,
-  subscriptionUrl: string,
   openUrl: string
 ): { text: string; markup: Record<string, unknown> } {
+  const locked = vpnClient === "happ";
   return {
-    text:
-      `<b>Ссылка для ${clientLabel(vpnClient)} (${osLabel(os)})</b>\n\n` +
-      `Если в Happ/V2rayNG видите <b>404 Not Found</b> — удалите старую подписку FIX VPN в приложении и импортируйте заново.\n\n` +
-      `Скопируйте ссылку:\n` +
-      `<code>${subscriptionUrl}</code>`,
+    text: locked
+      ? `<b>Импорт в Happ (${osLabel(os)})</b>\n\n` +
+        `Нажмите кнопку ниже. Подписка защищена: ссылку и настройки серверов нельзя просмотреть или изменить.\n\n` +
+        `Если видите ошибку 404 — удалите старую подписку FIX VPN в Happ и импортируйте заново.`
+      : `<b>Импорт в ${clientLabel(vpnClient)} (${osLabel(os)})</b>\n\n` +
+        `Нажмите кнопку ниже. Настройки серверов защищены от случайного редактирования.`,
     markup: {
       inline_keyboard: [
         [{ text: `Открыть ${clientLabel(vpnClient)}`, url: openUrl }],
@@ -310,6 +317,19 @@ function subscriptionLinkMessage(
       ],
     },
   };
+}
+
+async function buildConnectRedirects(
+  env: BotEnv,
+  os: string,
+  subId: string
+): Promise<Partial<Record<VpnClientId, string>>> {
+  const redirects: Partial<Record<VpnClientId, string>> = {};
+  for (const client of clientsForOs(os)) {
+    const importTarget = await buildClientImportTarget(env, client, subId);
+    redirects[client] = buildRedirectUrl(env, client, importTarget);
+  }
+  return redirects;
 }
 
 async function syncSubscriptionFromPanel(
@@ -499,7 +519,9 @@ async function handleTesterReset(
   await ensureVpnClientOnStart(env, user, tg);
   await syncSubscriptionFromPanel(env, user.id, tg);
   const sub = await getSubscription(env, user.id);
-  const subHint = sub?.xray_sub_id ? `\nВаша ссылка: …/${sub.xray_sub_id}` : "";
+  const subHint = sub?.xray_sub_id
+    ? "\nПодписка привязана к вашему клиенту в панели."
+    : "";
   await sendMessage(
     token,
     chatId,
@@ -805,10 +827,10 @@ export async function handleClientBotUpdate(
     if (data.startsWith("c:os:")) {
       const os = data.split(":")[2];
       const user = await upsertTelegramUser(env, tg);
-      const syncedUrl = await syncSubscriptionFromPanel(env, user.id, tg);
+      await syncSubscriptionFromPanel(env, user.id, tg);
       const sub = await getSubscription(env, user.id);
-      const subscriptionUrl = syncedUrl || sub?.subscription_url || "";
-      if (!subscriptionUrl || !sub?.xray_sub_id || sub?.status !== "active") {
+      const subId = sub?.xray_sub_id?.trim() || "";
+      if (!subId || sub?.status !== "active") {
         await answerCallback(
           token,
           cq.id,
@@ -819,16 +841,31 @@ export async function handleClientBotUpdate(
       }
 
       const defaultClient = defaultClientForOs(os);
-      const openUrl = buildRedirectUrl(env, defaultClient, subscriptionUrl);
-      const linkMessage = subscriptionLinkMessage(os, defaultClient, subscriptionUrl, openUrl);
+      let redirects: Partial<Record<VpnClientId, string>>;
+      try {
+        redirects = await buildConnectRedirects(env, os, subId);
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : "import prep failed";
+        console.error("buildConnectRedirects:", detail);
+        await answerCallback(token, cq.id, "Не удалось подготовить импорт. Повторите позже.", {
+          showAlert: true,
+        });
+        return;
+      }
+      const openUrl = redirects[defaultClient];
+      if (!openUrl) {
+        await answerCallback(token, cq.id, "Импорт недоступен", { showAlert: true });
+        return;
+      }
+      const linkMessage = importInstructionsMessage(os, defaultClient, openUrl);
       const text =
         `<b>Подключение VPN</b>\n\n` +
         `ОС: <b>${osLabel(os)}</b>\n` +
         (os === "android"
-          ? `На Android нажмите <b>${clientLabel(defaultClient)}</b> ниже.\n` +
-            `Если приложение не открылось — используйте ссылку из следующего сообщения.\n\n`
+          ? `Нажмите <b>${clientLabel(defaultClient)}</b> ниже.\n` +
+            `Ссылка подписки скрыта и защищена — импорт только через кнопку.\n\n`
           : `Открываем <b>${clientLabel(defaultClient)}</b>.\n` +
-            `Ссылка для повторного импорта — в следующем сообщении.\n\n`) +
+            `Ссылка подписки скрыта — импорт через кнопку ниже.\n\n`) +
         `Если приложение не открылось — выберите клиент ниже:`;
 
       try {
@@ -837,11 +874,16 @@ export async function handleClientBotUpdate(
           chatId,
           messageId,
           text,
-          connectClientKeyboard(env, os, subscriptionUrl)
+          connectClientKeyboard(env, os, subId, redirects)
         );
       } catch (error) {
         console.error("connect os edit:", error);
-        await sendMessage(token, chatId, text, connectClientKeyboard(env, os, subscriptionUrl));
+        await sendMessage(
+          token,
+          chatId,
+          text,
+          connectClientKeyboard(env, os, subId, redirects)
+        );
       }
 
       await recordDeviceConnect(env, user.id, os, defaultClient);

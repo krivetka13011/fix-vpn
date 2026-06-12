@@ -48,13 +48,20 @@ export async function editMessage(
 export async function answerCallback(
   token: string,
   callbackQueryId: string,
-  text?: string
+  text?: string,
+  options?: { url?: string; showAlert?: boolean }
 ): Promise<void> {
-  await tgCall(token, "answerCallbackQuery", {
+  const body: Record<string, unknown> = {
     callback_query_id: callbackQueryId,
-    text,
-    show_alert: Boolean(text && text.length > 40),
-  });
+  };
+  if (text) {
+    body.text = text;
+    body.show_alert = options?.showAlert ?? text.length > 40;
+  }
+  if (options?.url) {
+    body.url = options.url;
+  }
+  await tgCall(token, "answerCallbackQuery", body);
 }
 
 export async function forwardMessage(

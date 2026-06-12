@@ -32,6 +32,12 @@ import {
 import { BILLING_OPTIONS, calcPrice, periodLabel, type BillingMonths } from "./pricing";
 import { managerTxnKeyboard, notifyManager } from "./manager";
 import { handleManagerPartnerCallback } from "./partner-bot";
+import {
+  buildRedirectUrl,
+  clientLabel,
+  clientsForOs,
+  defaultClientForOs,
+} from "../connect-links";
 
 type TgUpdate = {
   message?: {
@@ -103,34 +109,28 @@ function connectOsKeyboard() {
   };
 }
 
-function connectClientKeyboard(os: string, subscriptionUrl: string) {
-  const encoded = encodeURIComponent(subscriptionUrl);
-  const links: Record<string, Array<{ name: string; template: string }>> = {
-    android: [
-      { name: "Happ", template: `happ://add/${subscriptionUrl}` },
-      { name: "V2rayNG", template: `v2rayng://install-sub?url=${encoded}` },
-      { name: "Hiddify", template: `hiddify://install-sub?url=${encoded}` },
-    ],
-    ios: [
-      { name: "Happ", template: `happ://add/${subscriptionUrl}` },
-      { name: "Shadowrocket", template: `shadowrocket://add/sub?url=${encoded}` },
-      { name: "Hiddify", template: `hiddify://install-sub?url=${encoded}` },
-    ],
-    windows: [
-      { name: "Happ", template: `happ://add/${subscriptionUrl}` },
-      { name: "Hiddify", template: `hiddify://install-sub?url=${encoded}` },
-    ],
-    macos: [
-      { name: "Happ", template: `happ://add/${subscriptionUrl}` },
-      { name: "Hiddify", template: `hiddify://install-sub?url=${encoded}` },
-    ],
-  };
-  const options = links[os] || links.android;
+function connectClientKeyboard(env: BotEnv, os: string, subscriptionUrl: string) {
+  const options = clientsForOs(os);
   return {
     inline_keyboard: options
-      .map((item) => [{ text: item.name, url: item.template }])
+      .map((client) => [
+        {
+          text: clientLabel(client),
+          url: buildRedirectUrl(env, client, subscriptionUrl),
+        },
+      ])
       .concat([[{ text: "Назад", callback_data: "c:connect" }]]),
   };
+}
+
+function osLabel(os: string): string {
+  const labels: Record<string, string> = {
+    android: "Android",
+    ios: "iOS",
+    windows: "Windows",
+    macos: "macOS",
+  };
+  return labels[os] || os;
 }
 
 function parseStartRef(text?: string): number | null {
@@ -629,15 +629,36 @@ export async function handleClientBotUpdate(
       const os = data.split(":")[2];
       const user = await upsertTelegramUser(env, tg);
       const sub = await getSubscription(env, user.id);
-      const url = sub?.subscription_url || "";
-      await editMessage(
-        token,
-        chatId,
-        messageId,
-        "Выберите клиент для импорта подписки:",
-        connectClientKeyboard(os, url)
-      );
-      await answerCallback(token, cq.id);
+      const subscriptionUrl = sub?.subscription_url || "";
+      if (!subscriptionUrl || sub?.status !== "active") {
+        await answerCallback(token, cq.id, "Сначала активируйте подписку");
+        return;
+      }
+
+      const defaultClient = defaultClientForOs(os);
+      const openUrl = buildRedirectUrl(env, defaultClient, subscriptionUrl);
+      const text =
+        `<b>Подключение VPN</b>\n\n` +
+        `ОС: <b>${osLabel(os)}</b>\n` +
+        `Открываем <b>${clientLabel(defaultClient)}</b>.\n\n` +
+        `Если приложение не открылось — выберите клиент ниже:`;
+
+      try {
+        await editMessage(
+          token,
+          chatId,
+          messageId,
+          text,
+          connectClientKeyboard(env, os, subscriptionUrl)
+        );
+      } catch (error) {
+        console.error("connect os edit:", error);
+        await sendMessage(token, chatId, text, connectClientKeyboard(env, os, subscriptionUrl));
+      }
+
+      await answerCallback(token, cq.id, `Открываем ${clientLabel(defaultClient)}…`, {
+        url: openUrl,
+      });
       return;
     }
     return;

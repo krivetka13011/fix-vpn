@@ -22,6 +22,7 @@ import { clientBotToken, partnerBotToken, subscriptionBaseUrl, xuiBaseUrl } from
 import { handleClientBotUpdate } from "./bots/client-bot";
 import { handlePartnerBotUpdate } from "./bots/partner-bot";
 import { XuiApi } from "./xui";
+import { redirectHtml, type VpnClientId } from "./connect-links";
 
 export interface ApiEnv extends BotEnv {
   TELEGRAM_BOT_TOKEN?: string;
@@ -81,6 +82,25 @@ export async function handleApiRequest(
 ): Promise<Response> {
   if (request.method === "OPTIONS") {
     return new Response(null, { headers: CORS });
+  }
+
+  if (path.startsWith("/api/redirect/") && request.method === "GET") {
+    const client = path.slice("/api/redirect/".length) as VpnClientId;
+    const sub = new URL(request.url).searchParams.get("sub")?.trim();
+    if (!sub) {
+      return new Response("missing sub", { status: 400, headers: CORS });
+    }
+    const allowed: VpnClientId[] = ["happ", "v2rayng", "hiddify", "shadowrocket"];
+    if (!allowed.includes(client)) {
+      return new Response("unknown client", { status: 404, headers: CORS });
+    }
+    return new Response(redirectHtml(client, sub), {
+      headers: {
+        "Content-Type": "text/html; charset=utf-8",
+        "Cache-Control": "no-store",
+        ...CORS,
+      },
+    });
   }
 
   if (path === "/api/health" && request.method === "GET") {

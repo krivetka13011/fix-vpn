@@ -90,3 +90,14 @@ export function redirectHtml(client: VpnClientId, subscriptionUrl: string): stri
 </body>
 </html>`;
 }
+
+export async function subscriptionIsReady(subscriptionUrl: string): Promise<boolean> {
+  if (!subscriptionUrl.trim()) return false;
+  try {
+    const response = await fetch(subscriptionUrl);
+    const body = await response.text();
+    return response.ok && body.trim().length > 200;
+  } catch {
+    return false;
+  }
+}

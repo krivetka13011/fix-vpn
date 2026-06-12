@@ -1,5 +1,5 @@
 import type { BotEnv } from "../env";
-import { clientBotToken, isTesterAccount } from "../env";
+import { clientBotToken, isTesterAccount, subscriptionBaseUrl } from "../env";
 import {
   addPartnerBalance,
   clearSession,
@@ -183,35 +183,82 @@ async function persistProvision(
   });
 }
 
+function randomSubId(length = 16): string {
+  const alphabet = "abcdefghijklmnopqrstuvwxyz0123456789";
+  let out = "";
+  const bytes = crypto.getRandomValues(new Uint8Array(length));
+  for (let i = 0; i < length; i += 1) {
+    out += alphabet[bytes[i] % alphabet.length];
+  }
+  return out;
+}
+
+function buildSubscriptionUrl(env: BotEnv, subId: string): string {
+  const base = subscriptionBaseUrl(env);
+  const path = (env.SUBSCRIPTION_PATH || "/sub").replace(/\/$/, "");
+  return `${base}${path}/${subId}`;
+}
+
 async function ensureVpnClientOnStart(
   env: BotEnv,
   user: Awaited<ReturnType<typeof upsertTelegramUser>>,
   tg: TelegramUser
 ): Promise<void> {
-  const xui = new XuiApi(env);
   let sub = await getSubscription(env, user.id);
-  await xui.syncPanelWithDb(env, user.id, tg.id, sub);
-  sub = (await getSubscription(env, user.id)) ?? sub;
-
   if (sub?.client_email && sub.subscription_url && sub.xray_sub_id && sub.xray_uuid) {
     return;
   }
 
-  const provision = await xui.ensureClientPrepared(env, {
-    userId: user.id,
-    username: user.username,
-    telegramId: tg.id,
-    dbSubscription: sub,
-  });
-  await persistProvision(env, user.id, provision, {
-    status: "none",
-    plan_type: "basic",
-    plan_label: null,
-    billing_months: null,
-    starts_at: null,
-    ends_at: null,
-    is_trial: false,
-  });
+  try {
+    const xui = new XuiApi(env);
+    await xui.syncPanelWithDb(env, user.id, tg.id, sub);
+    sub = (await getSubscription(env, user.id)) ?? sub;
+    if (sub?.client_email && sub.subscription_url && sub.xray_sub_id && sub.xray_uuid) {
+      return;
+    }
+    const provision = await xui.ensureClientPrepared(env, {
+      userId: user.id,
+      username: user.username,
+      telegramId: tg.id,
+      dbSubscription: sub,
+    });
+    await persistProvision(env, user.id, provision, {
+      status: "none",
+      plan_type: "basic",
+      plan_label: null,
+      billing_months: null,
+      starts_at: null,
+      ends_at: null,
+      is_trial: false,
+    });
+    return;
+  } catch (error) {
+    console.error("ensureVpnClientOnStart panel:", error);
+  }
+
+  const email = String(tg.id);
+  const subId = sub?.xray_sub_id?.trim() || randomSubId();
+  const primaryUuid = sub?.xray_uuid?.trim() || crypto.randomUUID();
+  await persistProvision(
+    env,
+    user.id,
+    {
+      email,
+      subId,
+      subscriptionUrl: buildSubscriptionUrl(env, subId),
+      primaryUuid,
+      inbounds: [],
+    },
+    {
+      status: "none",
+      plan_type: "basic",
+      plan_label: null,
+      billing_months: null,
+      starts_at: null,
+      ends_at: null,
+      is_trial: false,
+    }
+  );
 }
 
 async function showMainMenu(
@@ -269,26 +316,22 @@ async function activateTrial(env: BotEnv, tg: TelegramUser, chatId: number): Pro
       throw new Error("клиент не подготовлен — нажмите /start");
     }
 
-    await persistProvision(
-      env,
-      claimed.id,
-      {
-        email: sub.client_email,
-        subId: sub.xray_sub_id,
-        subscriptionUrl: sub.subscription_url || "",
-        primaryUuid: sub.xray_uuid,
-        inbounds: [],
-      },
-      {
-        status: "active",
-        plan_type: "basic",
-        plan_label: `Пробный · ${trialDays} дн.`,
-        billing_months: 0,
-        starts_at: formatDateFromMs(Date.now()),
-        ends_at: formatDateFromMs(expiryMs),
-        is_trial: true,
-      }
-    );
+    const subscriptionUrl =
+      sub.subscription_url || buildSubscriptionUrl(env, sub.xray_sub_id);
+
+    await patchSubscription(env, claimed.id, {
+      status: "active",
+      plan_type: "basic",
+      plan_label: `Пробный · ${trialDays} дн.`,
+      billing_months: 0,
+      starts_at: formatDateFromMs(Date.now()),
+      ends_at: formatDateFromMs(expiryMs),
+      is_trial: true,
+      client_email: sub.client_email,
+      xray_sub_id: sub.xray_sub_id,
+      xray_uuid: sub.xray_uuid,
+      subscription_url: subscriptionUrl,
+    });
     await sendMessage(
       token,
       chatId,

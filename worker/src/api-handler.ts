@@ -22,6 +22,7 @@ import { clientBotToken, partnerBotToken, subscriptionBaseUrl, subscriptionClien
 import { isPanelErrorBody, panelFetch } from "./panel-fetch";
 import { handleClientBotUpdate } from "./bots/client-bot";
 import { handlePartnerBotUpdate } from "./bots/partner-bot";
+import { beginE2eTrace, endE2eTrace } from "./e2e-trace";
 import { XuiApi } from "./xui";
 import { getSubscriptionBySubId } from "./repository";
 import {
@@ -83,6 +84,32 @@ async function getAuthUser(
   }
 }
 
+function e2eTraceResponse(
+  ok: boolean,
+  trace: ReturnType<typeof endE2eTrace>,
+  error?: unknown
+): Response {
+  try {
+    return json(
+      ok
+        ? { ok: true, trace }
+        : { ok: false, error: String(error), trace },
+      ok ? 200 : 500
+    );
+  } catch (serializeError) {
+    console.error("e2e trace serialize:", serializeError);
+    return new Response(
+      JSON.stringify({
+        ok: false,
+        error: error ? String(error) : "trace serialize failed",
+        serializeError: String(serializeError),
+        entryCount: trace?.entries?.length ?? 0,
+      }),
+      { status: 500, headers: { "Content-Type": "application/json", ...CORS } }
+    );
+  }
+}
+
 async function handleLegacyTelegramWebhook(
   request: Request,
   env: ApiEnv
@@ -96,21 +123,20 @@ async function handleLegacyTelegramWebhook(
     beginE2eTrace(dry);
   }
 
+  let handlerError: unknown = null;
   try {
     const update = await request.json();
     await handleClientBotUpdate(env, update);
   } catch (error) {
+    handlerError = error;
     console.error("client webhook:", error);
-    if (tracing) {
-      const trace = endE2eTrace();
-      return json({ ok: false, error: String(error), trace }, 500);
-    }
-    return new Response("error", { status: 500 });
   }
 
   if (tracing) {
-    const trace = endE2eTrace();
-    return json({ ok: true, trace });
+    return e2eTraceResponse(!handlerError, endE2eTrace(), handlerError);
+  }
+  if (handlerError) {
+    return new Response("error", { status: 500 });
   }
   return new Response("ok");
 }

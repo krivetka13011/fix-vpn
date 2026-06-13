@@ -1,9 +1,4 @@
-import {
-  beginE2eTrace,
-  endE2eTrace,
-  isE2eDryRun,
-  recordE2eTrace,
-} from "../e2e-trace";
+import { isE2eDryRun, recordE2eTrace } from "../e2e-trace";
 
 export async function tgCall<T = Record<string, unknown>>(
   token: string,

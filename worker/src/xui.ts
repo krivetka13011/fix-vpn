@@ -23,6 +23,7 @@ export interface ProvisionResult {
 }
 
 const ALLOWED_PREFIXES = [
+  "/panel/api/clients/get/",
   "/panel/api/clients/add",
   "/panel/api/clients/update/",
   "/panel/api/clients/clearIps/",
@@ -209,6 +210,17 @@ export class XuiApi {
     tgId: number;
     enable: boolean;
   } | null> {
+    const fromApi = await this.getClientByEmailApi(email);
+    if (fromApi) {
+      return {
+        email: fromApi.email,
+        subId: fromApi.subId,
+        primaryUuid: fromApi.primaryUuid,
+        tgId: fromApi.tgId,
+        enable: fromApi.enable,
+      };
+    }
+
     const clients = await this.scanAllClients();
     for (const client of clients) {
       if (client.email !== email) continue;
@@ -221,6 +233,90 @@ export class XuiApi {
       };
     }
     return null;
+  }
+
+  async getClientByEmailApi(email: string): Promise<{
+    email: string;
+    subId: string;
+    primaryUuid: string;
+    tgId: number;
+    enable: boolean;
+  } | null> {
+    const response = await this.request(
+      `/panel/api/clients/get/${encodeURIComponent(email)}`
+    );
+    const payload = await this.readJsonBody(response);
+    if (!response.ok || payload.success === false) return null;
+    const obj = payload.obj as { client?: Record<string, unknown> } | undefined;
+    const client = obj?.client;
+    if (!client) return null;
+    const subId = String(client.subId || "").trim();
+    const primaryUuid = String(client.id || client.uuid || "").trim();
+    const resolvedEmail = String(client.email || email).trim();
+    if (!subId || !primaryUuid || !resolvedEmail) return null;
+    return {
+      email: resolvedEmail,
+      subId,
+      primaryUuid,
+      tgId: Number(client.tgId) || 0,
+      enable: Boolean(client.enable),
+    };
+  }
+
+  async ensureLockedPanelClient(
+    env: BotEnv,
+    telegramId: number,
+    db?: {
+      client_email?: string | null;
+      xray_sub_id?: string | null;
+      xray_uuid?: string | null;
+    } | null
+  ): Promise<{ email: string; subId: string; primaryUuid: string }> {
+    const email =
+      db?.client_email?.trim() || this.buildClientEmail(null, telegramId);
+    const lockedSubId = db?.xray_sub_id?.trim() || "";
+    const lockedUuid = db?.xray_uuid?.trim() || "";
+
+    const dbFallback = (): { email: string; subId: string; primaryUuid: string } => {
+      if (!lockedSubId || !lockedUuid) {
+        throw new Error("клиент в панели не найден");
+      }
+      return { email, subId: lockedSubId, primaryUuid: lockedUuid };
+    };
+
+    try {
+      let panel =
+        (await this.getClientByEmailApi(email)) ||
+        (await this.findClientByTelegramId(telegramId));
+
+      if (!panel && lockedSubId && lockedUuid) {
+        await this.addClientIfMissing(
+          email,
+          lockedSubId,
+          telegramId,
+          0,
+          0,
+          lockedUuid
+        );
+        this.invalidateScan();
+        panel =
+          (await this.getClientByEmailApi(email)) ||
+          (await this.findClientByTelegramId(telegramId));
+      }
+
+      if (!panel?.subId?.trim() || !panel.primaryUuid) {
+        return dbFallback();
+      }
+
+      return {
+        email: panel.email,
+        subId: lockedSubId || panel.subId,
+        primaryUuid: lockedUuid || panel.primaryUuid,
+      };
+    } catch (error) {
+      console.error("ensureLockedPanelClient:", error);
+      return dbFallback();
+    }
   }
 
   buildSubscriptionUrl(env: BotEnv, subId: string): string {
@@ -431,7 +527,8 @@ export class XuiApi {
     subId: string,
     telegramId: number,
     expiryMs: number,
-    totalGb: number
+    totalGb: number,
+    existingUuid?: string
   ): Promise<string> {
     const client = this.buildClient(
       email,
@@ -439,7 +536,8 @@ export class XuiApi {
       telegramId,
       expiryMs,
       totalGb,
-      true
+      true,
+      existingUuid
     );
     try {
       await this.addClient(client);
@@ -485,12 +583,14 @@ export class XuiApi {
     if (!existing) {
       const seedSubId =
         params.dbSubscription?.xray_sub_id?.trim() || randomSubId();
+      const seedUuid = params.dbSubscription?.xray_uuid?.trim();
       await this.addClientIfMissing(
         email,
         seedSubId,
         params.telegramId,
         0,
-        0
+        0,
+        seedUuid
       );
       this.invalidateScan();
       existing =

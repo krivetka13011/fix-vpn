@@ -1,4 +1,5 @@
 import type { BotEnv } from "./env";
+import { subscriptionBaseUrl, workerSubscriptionFetchBase } from "./env";
 
 export type VpnClientId = "happ" | "v2rayng" | "hiddify" | "shadowrocket";
 
@@ -33,6 +34,45 @@ export function isHappEncryptedLink(link: string): boolean {
   return /^happ:\/\/crypt[45]\//i.test(link.trim());
 }
 
+export function buildPanelSubscriptionUrl(env: BotEnv, subId: string): string {
+  const base = subscriptionBaseUrl(env);
+  const path = (env.SUBSCRIPTION_PATH || "/sub").replace(/\/$/, "");
+  return `${base}${path}/${subId}`;
+}
+
+function subscriptionBodyLooksValid(body: string): boolean {
+  const trimmed = body.trim();
+  return (
+    trimmed.length > 200 &&
+    !trimmed.includes("error code:") &&
+    !trimmed.startsWith("<!DOCTYPE")
+  );
+}
+
+export async function verifyPanelSubscription(
+  env: BotEnv,
+  subId: string
+): Promise<boolean> {
+  if (!subId.trim()) return false;
+  const path = (env.SUBSCRIPTION_PATH || "/sub").replace(/\/$/, "");
+  const encoded = encodeURIComponent(subId);
+  const bases = [
+    workerSubscriptionFetchBase(env),
+    subscriptionBaseUrl(env),
+  ].filter((base, index, list) => base && list.indexOf(base) === index);
+
+  for (const base of bases) {
+    try {
+      const response = await fetch(`${base}${path}/${encoded}`);
+      const body = await response.text();
+      if (response.ok && subscriptionBodyLooksValid(body)) return true;
+    } catch {
+      // Worker-side verify is best-effort only
+    }
+  }
+  return false;
+}
+
 export function buildProtectedSubscriptionUrl(env: BotEnv, subId: string): string {
   const base = workerBaseUrl(env);
   if (!base) throw new Error("WEBAPP_URL missing");
@@ -63,11 +103,11 @@ export async function buildClientImportTarget(
   client: VpnClientId,
   subId: string
 ): Promise<string> {
-  const protectedUrl = buildProtectedSubscriptionUrl(env, subId);
+  const panelUrl = buildPanelSubscriptionUrl(env, subId);
   if (client === "happ") {
-    return encryptHappLink(protectedUrl);
+    return encryptHappLink(panelUrl);
   }
-  return protectedUrl;
+  return panelUrl;
 }
 
 export function buildDeepLink(client: VpnClientId, importTarget: string): string {

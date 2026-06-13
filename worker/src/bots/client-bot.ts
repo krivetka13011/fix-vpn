@@ -271,6 +271,11 @@ async function persistProvision(
   },
   subscription: Record<string, unknown>
 ): Promise<void> {
+  const current = await getSubscription(env, userId);
+  const lockedSubId = current?.xray_sub_id?.trim();
+  const subId = lockedSubId || provision.subId;
+  const subscriptionUrl = buildSubscriptionUrl(env, subId);
+
   if (provision.inbounds.length > 0) {
     await saveXuiInboundClients(
       env,
@@ -284,8 +289,8 @@ async function persistProvision(
   }
   await patchSubscription(env, userId, {
     xray_uuid: provision.primaryUuid,
-    xray_sub_id: provision.subId,
-    subscription_url: provision.subscriptionUrl,
+    xray_sub_id: subId,
+    subscription_url: subscriptionUrl,
     client_email: provision.email,
     ...subscription,
   });
@@ -307,7 +312,7 @@ function importInstructionsMessage(
     text: locked
       ? `<b>Импорт в Happ (${osLabel(os)})</b>\n\n` +
         `Нажмите кнопку ниже. Подписка защищена: ссылку и настройки серверов нельзя просмотреть или изменить.\n\n` +
-        `Если видите ошибку 404 — удалите подписку в Happ и нажмите «Подключить VPN» снова. Ссылка останется той же, что в панели.`
+        `Если подписка не появилась — удалите старую в Happ и нажмите кнопку снова. Ссылка всегда одна и та же.`
       : `<b>Импорт в ${clientLabel(vpnClient)} (${osLabel(os)})</b>\n\n` +
         `Нажмите кнопку ниже. Настройки серверов защищены от случайного редактирования.`,
     markup: {
@@ -337,16 +342,26 @@ async function syncSubscriptionFromPanel(
   userId: string,
   tg: TelegramUser
 ): Promise<string | null> {
+  const sub = await getSubscription(env, userId);
+  const lockedSubId = sub?.xray_sub_id?.trim();
+  const lockedUuid = sub?.xray_uuid?.trim();
+
   try {
     const xui = new XuiApi(env);
-    const sub = await getSubscription(env, userId);
-    const panelClient = await xui.resolveExistingClient(tg.id, sub);
-    if (!panelClient?.subId?.trim()) return null;
 
-    const subscriptionUrl = buildSubscriptionUrl(env, panelClient.subId);
+    const panelClient = lockedSubId
+      ? await xui.ensureLockedPanelClient(env, tg.id, sub)
+      : await xui.resolveExistingClient(tg.id, sub);
+
+    if (!panelClient?.subId?.trim()) {
+      return lockedSubId || null;
+    }
+
+    const subId = lockedSubId || panelClient.subId;
+    const subscriptionUrl = buildSubscriptionUrl(env, subId);
     const patch: Record<string, string> = {
       client_email: panelClient.email,
-      xray_sub_id: panelClient.subId,
+      xray_sub_id: subId,
       xray_uuid: panelClient.primaryUuid,
       subscription_url: subscriptionUrl,
     };
@@ -358,10 +373,10 @@ async function syncSubscriptionFromPanel(
     if (changed) {
       await patchSubscription(env, userId, patch);
     }
-    return panelClient.subId;
+    return subId;
   } catch (error) {
     console.error("syncSubscriptionFromPanel:", error);
-    return null;
+    return lockedSubId || null;
   }
 }
 
@@ -370,19 +385,32 @@ async function resolvePanelSubId(
   user: Awaited<ReturnType<typeof upsertTelegramUser>>,
   tg: TelegramUser
 ): Promise<string | null> {
-  let subId = await syncSubscriptionFromPanel(env, user.id, tg);
-  if (subId) return subId;
+  let sub = await getSubscription(env, user.id);
+  const lockedSubId = sub?.xray_sub_id?.trim();
+  const lockedUuid = sub?.xray_uuid?.trim();
+
+  if (lockedSubId && lockedUuid) {
+    try {
+      const xui = new XuiApi(env);
+      const panel = await xui.ensureLockedPanelClient(env, tg.id, sub);
+      await patchSubscription(env, user.id, {
+        client_email: panel.email,
+        xray_sub_id: lockedSubId,
+        xray_uuid: panel.primaryUuid,
+        subscription_url: buildSubscriptionUrl(env, lockedSubId),
+      });
+    } catch (error) {
+      console.error("resolvePanelSubId panel sync:", error);
+    }
+    return lockedSubId;
+  }
 
   try {
     await ensureVpnClientOnStart(env, user, tg);
   } catch (error) {
     console.error("resolvePanelSubId ensure:", error);
   }
-
-  subId = await syncSubscriptionFromPanel(env, user.id, tg);
-  if (subId) return subId;
-
-  const sub = await getSubscription(env, user.id);
+  sub = await getSubscription(env, user.id);
   return sub?.xray_sub_id?.trim() || null;
 }
 
@@ -856,7 +884,7 @@ export async function handleClientBotUpdate(
         await answerCallback(
           token,
           cq.id,
-          "Не удалось получить ссылку из панели. Нажмите /start и повторите.",
+          "Ссылка подписки временно недоступна. Удалите старую подписку в Happ и повторите через минуту.",
           { showAlert: true }
         );
         return;

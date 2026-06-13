@@ -18,7 +18,13 @@ import {
 import { sbRequest } from "./supabase";
 import { validateInitData, type TelegramUser } from "./telegram";
 import type { BotEnv } from "./env";
-import { clientBotToken, partnerBotToken, subscriptionBaseUrl, xuiBaseUrl } from "./env";
+import {
+  clientBotToken,
+  partnerBotToken,
+  subscriptionBaseUrl,
+  workerSubscriptionFetchBase,
+  xuiBaseUrl,
+} from "./env";
 import { handleClientBotUpdate } from "./bots/client-bot";
 import { handlePartnerBotUpdate } from "./bots/partner-bot";
 import { XuiApi } from "./xui";
@@ -91,14 +97,30 @@ export async function handleApiRequest(
     if (!subId || subId.includes("/")) {
       return new Response("bad sub", { status: 400, headers: CORS });
     }
-    const upstreamBase = subscriptionBaseUrl(env);
-    if (!upstreamBase) {
+    const subPath = (env.SUBSCRIPTION_PATH || "/sub").replace(/\/$/, "");
+    const encodedSubId = encodeURIComponent(subId);
+    const upstreamBases = [
+      workerSubscriptionFetchBase(env),
+      subscriptionBaseUrl(env),
+    ].filter((base, index, list) => base && list.indexOf(base) === index);
+    if (upstreamBases.length === 0) {
       return new Response("subscription upstream missing", { status: 503, headers: CORS });
     }
-    const subPath = (env.SUBSCRIPTION_PATH || "/sub").replace(/\/$/, "");
-    const upstream = `${upstreamBase}${subPath}/${encodeURIComponent(subId)}`;
     try {
-      const upstreamRes = await fetch(upstream);
+      let upstreamRes: Response | null = null;
+      for (const upstreamBase of upstreamBases) {
+        const upstream = `${upstreamBase}${subPath}/${encodedSubId}`;
+        const attempt = await fetch(upstream);
+        const preview = await attempt.clone().text();
+        if (attempt.ok && preview.trim().length > 20 && !preview.includes("error code:")) {
+          upstreamRes = attempt;
+          break;
+        }
+        upstreamRes = attempt;
+      }
+      if (!upstreamRes) {
+        return new Response("subscription upstream failed", { status: 502, headers: CORS });
+      }
       const body = await upstreamRes.text();
       const headers: Record<string, string> = {
         "Content-Type":

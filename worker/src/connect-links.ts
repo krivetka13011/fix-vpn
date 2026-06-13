@@ -218,7 +218,7 @@ export function applyLockedSubscriptionBody(body: string): string {
 
 export const LOCKED_SUBSCRIPTION_HEADERS: Record<string, string> = {
   "hide-settings": "1",
-  "Profile-Update-Interval": "60",
+  "Profile-Update-Interval": "1",
   "Profile-Title": "base64:8J+Up0ZJWCBWUE4=",
 };
 

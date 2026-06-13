@@ -96,6 +96,7 @@ jobs:
           put_secret SUPABASE_URL "$SUPABASE_URL"
           put_secret SUPABASE_SERVICE_ROLE_KEY "$SUPABASE_SERVICE_ROLE_KEY"
           put_secret XUI_BASE_URL "${{ secrets.XUI_BASE_URL || 'https://fixvp.xyz:54596/LXZo7cOhasXWon5uQu' }}"
+          put_secret XUI_WORKER_BASE_URL "${{ secrets.XUI_WORKER_BASE_URL || 'https://31.76.2.248:54596/LXZo7cOhasXWon5uQu' }}"
           put_secret XUI_API_TOKEN "$XUI_API_TOKEN"
           put_secret XUI_INSECURE_SSL "1"
           put_secret XUI_INBOUND_IDS "19,20,21,24"

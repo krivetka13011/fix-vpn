@@ -1,5 +1,5 @@
 import type { BotEnv } from "./env";
-import { parseIdList, subscriptionBaseUrl, xuiBaseUrl } from "./env";
+import { parseIdList, subscriptionBaseUrl, xuiBaseUrlCandidates } from "./env";
 import type { SupabaseEnv } from "./supabase";
 
 export interface XuiClientRecord {
@@ -70,8 +70,18 @@ type ScannedClient = {
   enable: boolean;
 };
 
+function isPanelHtmlError(text: string, status: number): boolean {
+  const trimmed = text.trim();
+  return (
+    status === 526 ||
+    trimmed.includes("error code: 526") ||
+    trimmed.startsWith("<!DOCTYPE") ||
+    trimmed.startsWith("<html")
+  );
+}
+
 export class XuiApi {
-  private baseUrl: string;
+  private baseUrls: string[];
   private token: string;
   private inboundIds: number[];
   private limitIp: number;
@@ -79,7 +89,7 @@ export class XuiApi {
 
   constructor(env: BotEnv) {
     if (!env.XUI_API_TOKEN) throw new Error("XUI_API_TOKEN missing");
-    this.baseUrl = xuiBaseUrl(env);
+    this.baseUrls = xuiBaseUrlCandidates(env);
     this.token = env.XUI_API_TOKEN;
     this.inboundIds = parseIdList(env.XUI_INBOUND_IDS);
     this.limitIp = Number(env.XUI_CLIENT_LIMIT_IP || "1");
@@ -95,10 +105,28 @@ export class XuiApi {
 
   private async request(path: string, init?: RequestInit): Promise<Response> {
     assertAllowed(path);
-    return fetch(`${this.baseUrl}${path}`, {
-      ...init,
-      headers: { ...this.headers(), ...(init?.headers || {}) },
-    });
+    let lastError: Error | null = null;
+
+    for (const baseUrl of this.baseUrls) {
+      try {
+        const response = await fetch(`${baseUrl}${path}`, {
+          ...init,
+          headers: { ...this.headers(), ...(init?.headers || {}) },
+        });
+        const preview = await response.clone().text();
+        if (isPanelHtmlError(preview, response.status)) {
+          lastError = new Error(
+            `XUI HTML/526 (${response.status}) via ${baseUrl}`
+          );
+          continue;
+        }
+        return response;
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+      }
+    }
+
+    throw lastError ?? new Error("XUI request failed");
   }
 
   private async readJsonBody(response: Response): Promise<Record<string, unknown>> {

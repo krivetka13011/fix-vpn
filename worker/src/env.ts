@@ -36,6 +36,7 @@ export interface BotEnv extends SupabaseEnv {
   MSG_PAYMENT_PENDING?: string;
   MSG_PARTNER_REGISTERED?: string;
   TESTER_TELEGRAM_IDS?: string;
+  XUI_WORKER_BASE_URL?: string;
 }
 
 export const XUI_INBOUND_IDS_DEFAULT = [19, 20, 21, 24];
@@ -103,6 +104,21 @@ export function xuiBaseUrl(env: BotEnv): string {
   const raw = env.XUI_BASE_URL?.trim();
   if (!raw) throw new Error("XUI_BASE_URL missing");
   return normalizeWorkerFetchUrl(raw.replace(/\/$/, ""), env);
+}
+
+/** Direct panel API URL for Cloudflare Worker (bypass CF 526 on hostname). */
+export function xuiWorkerBaseUrl(env: BotEnv): string {
+  const worker = env.XUI_WORKER_BASE_URL?.trim();
+  if (worker) return worker.replace(/\/$/, "");
+  const raw = env.XUI_BASE_URL?.trim();
+  if (!raw) throw new Error("XUI_BASE_URL missing");
+  return raw.replace(/\/$/, "");
+}
+
+export function xuiBaseUrlCandidates(env: BotEnv): string[] {
+  return [xuiWorkerBaseUrl(env), xuiBaseUrl(env)].filter(
+    (base, index, list) => base && list.indexOf(base) === index
+  );
 }
 
 export function subscriptionBaseUrl(env: BotEnv): string {

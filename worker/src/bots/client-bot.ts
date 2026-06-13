@@ -479,10 +479,15 @@ async function activateTrial(env: BotEnv, tg: TelegramUser, chatId: number): Pro
 
   try {
     let sub = await getSubscription(env, claimed.id);
-    const panelSubId = await resolvePanelSubId(env, claimed, tg);
+    let panelSubId = await resolvePanelSubId(env, claimed, tg);
     sub = await getSubscription(env, claimed.id);
-    if (!panelSubId || !sub?.client_email || !sub.xray_sub_id || !sub.xray_uuid) {
-      throw new Error("клиент не подготовлен — нажмите /start");
+
+    if (!panelSubId && sub?.xray_sub_id?.trim() && sub?.xray_uuid?.trim()) {
+      panelSubId = sub.xray_sub_id.trim();
+    }
+
+    if (!panelSubId || !sub?.xray_sub_id || !sub?.xray_uuid) {
+      throw new Error("клиент не подготовлен — нажмите /start ещё раз");
     }
 
     const subscriptionUrl =
@@ -496,7 +501,7 @@ async function activateTrial(env: BotEnv, tg: TelegramUser, chatId: number): Pro
       starts_at: formatDateFromMs(Date.now()),
       ends_at: formatDateFromMs(expiryMs),
       is_trial: true,
-      client_email: sub.client_email,
+      client_email: sub.client_email || String(tg.id),
       xray_sub_id: sub.xray_sub_id,
       xray_uuid: sub.xray_uuid,
       subscription_url: subscriptionUrl,
@@ -967,9 +972,10 @@ export async function handleClientBotUpdate(
     }
     await showMainMenu(env, chatId, tg);
     try {
-      await ensureVpnClientOnStart(env, user, tg);
+      const sub = await getSubscription(env, user.id);
+      await syncPanelSubIdForUser(env, user.id, tg.id, user.username, sub);
     } catch (error) {
-      console.error("ensureVpnClientOnStart:", error);
+      console.error("start panel sync:", error);
     }
     return;
   }

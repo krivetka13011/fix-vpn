@@ -114,24 +114,6 @@ export function subscriptionUserinfoHeader(
   return `upload=0; download=0; total=0; expire=${expire}`;
 }
 
-export async function encryptHappLink(subscriptionUrl: string): Promise<string> {
-  const response = await fetch(HAPP_CRYPTO_API, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ url: subscriptionUrl }),
-  });
-  const payload = (await response.json()) as {
-    encrypted_link?: string;
-    error?: string;
-    message?: string;
-  };
-  const encrypted = payload.encrypted_link?.trim();
-  if (!response.ok || !encrypted) {
-    throw new Error(payload.error || payload.message || "Happ encrypt failed");
-  }
-  return encrypted;
-}
-
 export async function panelSubscriptionIsLive(
   env: BotEnv,
   subId: string
@@ -170,6 +152,37 @@ export function buildPanelSubscriptionUrlForUser(env: BotEnv, subId: string): st
   return buildHappSubscriptionUrl(env, subId);
 }
 
+export async function encryptHappLink(subscriptionUrl: string): Promise<string> {
+  const response = await fetch(HAPP_CRYPTO_API, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ url: subscriptionUrl }),
+  });
+  const payload = (await response.json()) as {
+    encrypted_link?: string;
+    error?: string;
+    message?: string;
+  };
+  const encrypted = payload.encrypted_link?.trim();
+  if (!response.ok || !encrypted) {
+    throw new Error(payload.error || payload.message || "Happ encrypt failed");
+  }
+  return encrypted;
+}
+
+export async function buildHappImportTarget(
+  env: BotEnv,
+  subId: string
+): Promise<string> {
+  const url = buildHappSubscriptionUrl(env, subId);
+  try {
+    return await encryptHappLink(url);
+  } catch (error) {
+    console.error("encryptHappLink fallback:", error);
+    return `happ://add/${encodeURIComponent(url)}`;
+  }
+}
+
 export async function buildClientImportTarget(
   env: BotEnv,
   client: VpnClientId,
@@ -180,7 +193,7 @@ export async function buildClientImportTarget(
     if (!alive) {
       console.error("panelSubscriptionIsLive false for", subId);
     }
-    return encryptHappLink(buildHappSubscriptionUrl(env, subId));
+    return buildHappImportTarget(env, subId);
   }
   return buildProtectedSubscriptionUrl(env, subId);
 }

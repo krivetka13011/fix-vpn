@@ -37,6 +37,7 @@ export interface BotEnv extends SupabaseEnv {
   MSG_PARTNER_REGISTERED?: string;
   TESTER_TELEGRAM_IDS?: string;
   XUI_WORKER_BASE_URL?: string;
+  PANEL_ORIGIN_IP?: string;
 }
 
 export const XUI_INBOUND_IDS_DEFAULT = [19, 20, 21, 24];
@@ -116,7 +117,9 @@ export function xuiWorkerBaseUrl(env: BotEnv): string {
 }
 
 export function xuiBaseUrlCandidates(env: BotEnv): string[] {
-  return [xuiWorkerBaseUrl(env), xuiBaseUrl(env)].filter(
+  const hostname = xuiBaseUrl(env);
+  const direct = xuiWorkerBaseUrl(env);
+  return [hostname, direct].filter(
     (base, index, list) => base && list.indexOf(base) === index
   );
 }
@@ -138,12 +141,11 @@ export function subscriptionClientBaseUrl(env: BotEnv): string {
   return raw.replace(/\/$/, "");
 }
 
-/** Worker-internal fetch base (Cloudflare often cannot TLS to fixvp.xyz:2096 — use IP). */
+/** Worker-internal fetch base — hostname; use panelFetch + resolveOverride to reach origin. */
 export function workerSubscriptionFetchBase(env: BotEnv): string {
-  const raw =
-    env.SUBSCRIPTION_WORKER_FETCH_URL?.trim() ||
-    env.SUBSCRIPTION_BASE_URL?.trim() ||
-    "";
-  if (!raw) return "";
+  const hostname =
+    subscriptionBaseUrl(env) || subscriptionClientBaseUrl(env) || "";
+  if (hostname) return hostname;
+  const raw = env.SUBSCRIPTION_WORKER_FETCH_URL?.trim() || "";
   return raw.replace(/\/$/, "");
 }

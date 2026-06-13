@@ -1,5 +1,6 @@
 import type { BotEnv } from "./env";
 import { parseIdList, subscriptionBaseUrl, xuiBaseUrlCandidates } from "./env";
+import { isPanelErrorBody, panelFetch } from "./panel-fetch";
 import type { SupabaseEnv } from "./supabase";
 
 export interface XuiClientRecord {
@@ -71,16 +72,11 @@ type ScannedClient = {
 };
 
 function isPanelHtmlError(text: string, status: number): boolean {
-  const trimmed = text.trim();
-  return (
-    status === 526 ||
-    trimmed.includes("error code: 526") ||
-    trimmed.startsWith("<!DOCTYPE") ||
-    trimmed.startsWith("<html")
-  );
+  return isPanelErrorBody(text, status);
 }
 
 export class XuiApi {
+  private env: BotEnv;
   private baseUrls: string[];
   private token: string;
   private inboundIds: number[];
@@ -89,6 +85,7 @@ export class XuiApi {
 
   constructor(env: BotEnv) {
     if (!env.XUI_API_TOKEN) throw new Error("XUI_API_TOKEN missing");
+    this.env = env;
     this.baseUrls = xuiBaseUrlCandidates(env);
     this.token = env.XUI_API_TOKEN;
     this.inboundIds = parseIdList(env.XUI_INBOUND_IDS);
@@ -109,7 +106,7 @@ export class XuiApi {
 
     for (const baseUrl of this.baseUrls) {
       try {
-        const response = await fetch(`${baseUrl}${path}`, {
+        const response = await panelFetch(this.env, `${baseUrl}${path}`, {
           ...init,
           headers: { ...this.headers(), ...(init?.headers || {}) },
         });
@@ -483,6 +480,20 @@ export class XuiApi {
     const base = subscriptionBaseUrl(env);
     const path = (env.SUBSCRIPTION_PATH || "/sub").replace(/\/$/, "");
     return `${base}${path}/${subId}`;
+  }
+
+  async getClientSubLinks(subId: string): Promise<string[]> {
+    const encoded = encodeURIComponent(subId.trim());
+    const response = await this.request(`/panel/api/clients/subLinks/${encoded}`);
+    const payload = await this.readJsonBody(response);
+    if (!response.ok || payload.success === false) {
+      throw new Error(String(payload.msg || "subLinks failed"));
+    }
+    const links = payload.obj;
+    if (!Array.isArray(links)) return [];
+    return links.filter(
+      (line): line is string => typeof line === "string" && line.trim().length > 0
+    );
   }
 
   async ping(): Promise<boolean> {

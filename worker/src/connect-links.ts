@@ -5,6 +5,8 @@ import {
   subscriptionClientBaseUrl,
   workerSubscriptionFetchBase,
 } from "./env";
+import { isPanelErrorBody, panelFetch } from "./panel-fetch";
+import { XuiApi } from "./xui";
 
 export type VpnClientId = "happ" | "v2rayng" | "hiddify" | "shadowrocket";
 
@@ -126,20 +128,35 @@ export async function fetchPanelSubscriptionBody(
   subId: string
 ): Promise<{ body: string; headers: Record<string, string> } | null> {
   if (!subId.trim()) return null;
+
+  try {
+    const xui = new XuiApi(env);
+    const links = await xui.getClientSubLinks(subId);
+    if (links.length > 0) {
+      const body = links.join("\n");
+      if (subscriptionBodyLooksValid(body) && PLAIN_PROTOCOL_RE.test(body)) {
+        return { body, headers: {} };
+      }
+    }
+  } catch (error) {
+    console.error("fetchPanelSubscriptionBody subLinks:", error);
+  }
+
   const path = (env.SUBSCRIPTION_PATH || "/sub").replace(/\/$/, "");
   const encoded = encodeURIComponent(subId);
   const bases = [
     workerSubscriptionFetchBase(env),
-    `https://${resolveVpnHost(env)}:2096`,
     subscriptionClientBaseUrl(env),
     subscriptionBaseUrl(env),
+    `https://${resolveVpnHost(env)}:2096`,
   ].filter((base, index, list) => base && list.indexOf(base) === index);
 
   for (const base of bases) {
     try {
-      const response = await fetch(`${base}${path}/${encoded}`);
+      const response = await panelFetch(env, `${base}${path}/${encoded}`);
       const raw = await response.text();
-      if (!response.ok || !subscriptionBodyLooksValid(raw)) continue;
+      if (!response.ok || isPanelErrorBody(raw, response.status)) continue;
+      if (!subscriptionBodyLooksValid(raw)) continue;
       const body = normalizeSubscriptionBody(raw);
       if (!subscriptionBodyLooksValid(body)) continue;
       const headers: Record<string, string> = {};

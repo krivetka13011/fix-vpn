@@ -19,6 +19,7 @@ import { sbRequest } from "./supabase";
 import { validateInitData, type TelegramUser } from "./telegram";
 import type { BotEnv } from "./env";
 import { clientBotToken, partnerBotToken, subscriptionBaseUrl, subscriptionClientBaseUrl, workerSubscriptionFetchBase, xuiBaseUrl } from "./env";
+import { isPanelErrorBody, panelFetch } from "./panel-fetch";
 import { handleClientBotUpdate } from "./bots/client-bot";
 import { handlePartnerBotUpdate } from "./bots/partner-bot";
 import { XuiApi } from "./xui";
@@ -160,18 +161,25 @@ export async function handleApiRequest(
       let upstreamRes: Response | null = null;
       for (const upstreamBase of upstreamBases) {
         const upstream = `${upstreamBase}${subPath}/${encodedSubId}`;
-        const attempt = await fetch(upstream);
+        const attempt = await panelFetch(env, upstream);
         const preview = await attempt.clone().text();
-        if (attempt.ok && preview.trim().length > 20 && !preview.includes("error code:")) {
+        if (
+          attempt.ok &&
+          preview.trim().length > 20 &&
+          !isPanelErrorBody(preview, attempt.status)
+        ) {
           upstreamRes = attempt;
           break;
         }
-        upstreamRes = attempt;
       }
       if (!upstreamRes) {
-        return new Response("subscription upstream failed", { status: 502, headers: CORS });
+        return new Response("subscription unavailable", { status: 503, headers: CORS });
       }
-      const body = normalizeSubscriptionBody(await upstreamRes.text());
+      const rawBody = await upstreamRes.text();
+      if (isPanelErrorBody(rawBody, upstreamRes.status)) {
+        return new Response("subscription unavailable", { status: 503, headers: CORS });
+      }
+      const body = normalizeSubscriptionBody(rawBody);
       const headers: Record<string, string> = {
         ...lockedHeaders,
         "Content-Type":
@@ -188,7 +196,7 @@ export async function handleApiRequest(
         const value = upstreamRes.headers.get(name);
         if (value) headers[name] = value;
       }
-      return new Response(body, { status: upstreamRes.status, headers });
+      return new Response(body, { status: 200, headers });
     } catch (error) {
       console.error("subscription proxy:", error);
       return new Response("subscription proxy failed", { status: 502, headers: CORS });

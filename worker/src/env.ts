@@ -21,6 +21,7 @@ export interface BotEnv extends SupabaseEnv {
   XUI_CLIENT_LIMIT_IP?: string;
   XUI_TRIAL_DAYS?: string;
   SUBSCRIPTION_BASE_URL?: string;
+  SUBSCRIPTION_CLIENT_BASE_URL?: string;
   SUBSCRIPTION_WORKER_FETCH_URL?: string;
   SUBSCRIPTION_PATH?: string;
   VPN_SERVER_HOST?: string;
@@ -108,6 +109,17 @@ export function subscriptionBaseUrl(env: BotEnv): string {
   const raw = env.SUBSCRIPTION_BASE_URL?.trim();
   if (!raw) return "";
   return normalizeWorkerFetchUrl(raw.replace(/\/$/, ""), env);
+}
+
+/** URL that VPN clients fetch on device (must pass strict TLS on Android/iOS). */
+export function subscriptionClientBaseUrl(env: BotEnv): string {
+  const raw =
+    env.SUBSCRIPTION_CLIENT_BASE_URL?.trim() ||
+    env.SUBSCRIPTION_WORKER_FETCH_URL?.trim() ||
+    env.SUBSCRIPTION_BASE_URL?.trim() ||
+    "";
+  if (!raw) return "";
+  return raw.replace(/\/$/, "");
 }
 
 /** Worker-internal fetch base (Cloudflare often cannot TLS to fixvp.xyz:2096 — use IP). */

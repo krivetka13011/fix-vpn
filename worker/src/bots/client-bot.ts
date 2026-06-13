@@ -1,5 +1,5 @@
 import type { BotEnv } from "../env";
-import { clientBotToken, isTesterAccount, subscriptionBaseUrl } from "../env";
+import { clientBotToken, isTesterAccount, subscriptionBaseUrl, subscriptionClientBaseUrl } from "../env";
 import {
   addPartnerBalance,
   clearSession,
@@ -36,7 +36,6 @@ import { BILLING_OPTIONS, calcPrice, periodLabel, type BillingMonths } from "./p
 import { managerTxnKeyboard, notifyManager } from "./manager";
 import { handleManagerPartnerCallback } from "./partner-bot";
 import {
-  buildClientImportTarget,
   buildRedirectUrl,
   clientLabel,
   clientsForOs,
@@ -297,7 +296,7 @@ async function persistProvision(
 }
 
 function buildSubscriptionUrl(env: BotEnv, subId: string): string {
-  const base = subscriptionBaseUrl(env);
+  const base = subscriptionClientBaseUrl(env) || subscriptionBaseUrl(env);
   const path = (env.SUBSCRIPTION_PATH || "/sub").replace(/\/$/, "");
   return `${base}${path}/${subId}`;
 }
@@ -312,7 +311,7 @@ function importInstructionsMessage(
     text: locked
       ? `<b>Импорт в Happ (${osLabel(os)})</b>\n\n` +
         `Нажмите кнопку ниже. Подписка защищена: ссылку и настройки серверов нельзя просмотреть или изменить.\n\n` +
-        `Если подписка не появилась — удалите старую в Happ и нажмите кнопку снова. Ссылка всегда одна и та же.`
+        `Удалите старые подписки «Encrypted» в Happ, затем нажмите кнопку снова.`
       : `<b>Импорт в ${clientLabel(vpnClient)} (${osLabel(os)})</b>\n\n` +
         `Нажмите кнопку ниже. Настройки серверов защищены от случайного редактирования.`,
     markup: {
@@ -324,15 +323,14 @@ function importInstructionsMessage(
   };
 }
 
-async function buildConnectRedirects(
+function buildConnectRedirects(
   env: BotEnv,
   os: string,
   subId: string
-): Promise<Partial<Record<VpnClientId, string>>> {
+): Partial<Record<VpnClientId, string>> {
   const redirects: Partial<Record<VpnClientId, string>> = {};
   for (const client of clientsForOs(os)) {
-    const importTarget = await buildClientImportTarget(env, client, subId);
-    redirects[client] = buildRedirectUrl(env, client, importTarget);
+    redirects[client] = buildRedirectUrl(env, client, subId);
   }
   return redirects;
 }
@@ -893,7 +891,7 @@ export async function handleClientBotUpdate(
       const defaultClient = defaultClientForOs(os);
       let redirects: Partial<Record<VpnClientId, string>>;
       try {
-        redirects = await buildConnectRedirects(env, os, subId);
+        redirects = buildConnectRedirects(env, os, subId);
       } catch (error) {
         const detail = error instanceof Error ? error.message : "import prep failed";
         console.error("buildConnectRedirects:", detail);

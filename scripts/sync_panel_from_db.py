@@ -108,7 +108,10 @@ def main():
     ).json()
 
     session, base = panel_session()
-    sub_base = os.environ.get("SUBSCRIPTION_BASE_URL", "https://fixvp.xyz:2096").rstrip("/")
+    sub_base = os.environ.get(
+        "SUBSCRIPTION_CLIENT_BASE_URL",
+        os.environ.get("SUBSCRIPTION_BASE_URL", "https://fixvp.xyz:2096"),
+    ).rstrip("/")
     sub_path = os.environ.get("SUBSCRIPTION_PATH", "/sub").rstrip("/")
     synced = 0
 

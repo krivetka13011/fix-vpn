@@ -18,17 +18,11 @@ import {
 import { sbRequest } from "./supabase";
 import { validateInitData, type TelegramUser } from "./telegram";
 import type { BotEnv } from "./env";
-import {
-  clientBotToken,
-  partnerBotToken,
-  subscriptionBaseUrl,
-  workerSubscriptionFetchBase,
-  xuiBaseUrl,
-} from "./env";
+import { clientBotToken, partnerBotToken, subscriptionBaseUrl, subscriptionClientBaseUrl, workerSubscriptionFetchBase, xuiBaseUrl } from "./env";
 import { handleClientBotUpdate } from "./bots/client-bot";
 import { handlePartnerBotUpdate } from "./bots/partner-bot";
 import { XuiApi } from "./xui";
-import { redirectHtml, type VpnClientId } from "./connect-links";
+import { redirectHtml, buildClientImportTarget, buildClientSubscriptionUrl, type VpnClientId } from "./connect-links";
 
 export interface ApiEnv extends BotEnv {
   TELEGRAM_BOT_TOKEN?: string;
@@ -101,6 +95,7 @@ export async function handleApiRequest(
     const encodedSubId = encodeURIComponent(subId);
     const upstreamBases = [
       workerSubscriptionFetchBase(env),
+      subscriptionClientBaseUrl(env),
       subscriptionBaseUrl(env),
     ].filter((base, index, list) => base && list.indexOf(base) === index);
     if (upstreamBases.length === 0) {
@@ -149,16 +144,32 @@ export async function handleApiRequest(
   }
 
   if (path.startsWith("/api/redirect/") && request.method === "GET") {
-    const client = path.slice("/api/redirect/".length) as VpnClientId;
-    const sub = new URL(request.url).searchParams.get("sub")?.trim();
-    if (!sub) {
-      return new Response("missing sub", { status: 400, headers: CORS });
-    }
+    const client = path.slice("/api/redirect/".length).replace(/\/$/, "") as VpnClientId;
     const allowed: VpnClientId[] = ["happ", "v2rayng", "hiddify", "shadowrocket"];
     if (!allowed.includes(client)) {
       return new Response("unknown client", { status: 404, headers: CORS });
     }
-    return new Response(redirectHtml(client, sub), {
+
+    const params = new URL(request.url).searchParams;
+    const sid = params.get("sid")?.trim();
+    const legacySub = params.get("sub")?.trim();
+    let importTarget = legacySub || "";
+    if (sid) {
+      try {
+        importTarget =
+          client === "happ"
+            ? await buildClientImportTarget(env, client, sid)
+            : buildClientSubscriptionUrl(env, sid);
+      } catch (error) {
+        console.error("redirect import prep:", error);
+        return new Response("import prep failed", { status: 502, headers: CORS });
+      }
+    }
+    if (!importTarget) {
+      return new Response("missing sid", { status: 400, headers: CORS });
+    }
+
+    return new Response(redirectHtml(client, importTarget), {
       headers: {
         "Content-Type": "text/html; charset=utf-8",
         "Cache-Control": "no-store",

@@ -1,5 +1,9 @@
 import type { BotEnv } from "./env";
-import { subscriptionBaseUrl, workerSubscriptionFetchBase } from "./env";
+import {
+  subscriptionBaseUrl,
+  subscriptionClientBaseUrl,
+  workerSubscriptionFetchBase,
+} from "./env";
 
 export type VpnClientId = "happ" | "v2rayng" | "hiddify" | "shadowrocket";
 
@@ -40,6 +44,12 @@ export function buildPanelSubscriptionUrl(env: BotEnv, subId: string): string {
   return `${base}${path}/${subId}`;
 }
 
+export function buildClientSubscriptionUrl(env: BotEnv, subId: string): string {
+  const base = subscriptionClientBaseUrl(env);
+  const path = (env.SUBSCRIPTION_PATH || "/sub").replace(/\/$/, "");
+  return `${base}${path}/${subId}`;
+}
+
 function subscriptionBodyLooksValid(body: string): boolean {
   const trimmed = body.trim();
   return (
@@ -57,6 +67,7 @@ export async function verifyPanelSubscription(
   const path = (env.SUBSCRIPTION_PATH || "/sub").replace(/\/$/, "");
   const encoded = encodeURIComponent(subId);
   const bases = [
+    subscriptionClientBaseUrl(env),
     workerSubscriptionFetchBase(env),
     subscriptionBaseUrl(env),
   ].filter((base, index, list) => base && list.indexOf(base) === index);
@@ -103,11 +114,21 @@ export async function buildClientImportTarget(
   client: VpnClientId,
   subId: string
 ): Promise<string> {
-  const panelUrl = buildPanelSubscriptionUrl(env, subId);
+  const clientUrl = buildClientSubscriptionUrl(env, subId);
   if (client === "happ") {
-    return encryptHappLink(panelUrl);
+    return encryptHappLink(clientUrl);
   }
-  return panelUrl;
+  return clientUrl;
+}
+
+export function buildRedirectUrl(
+  env: BotEnv,
+  client: VpnClientId,
+  subId: string
+): string {
+  const base = workerBaseUrl(env);
+  if (!base) throw new Error("WEBAPP_URL missing");
+  return `${base}/api/redirect/${client}?sid=${encodeURIComponent(subId)}`;
 }
 
 export function buildDeepLink(client: VpnClientId, importTarget: string): string {
@@ -126,16 +147,6 @@ export function buildDeepLink(client: VpnClientId, importTarget: string): string
     default:
       return `happ://add/${importTarget}`;
   }
-}
-
-export function buildRedirectUrl(
-  env: BotEnv,
-  client: VpnClientId,
-  importTarget: string
-): string {
-  const base = workerBaseUrl(env);
-  if (!base) throw new Error("WEBAPP_URL missing");
-  return `${base}/api/redirect/${client}?sub=${encodeURIComponent(importTarget)}`;
 }
 
 export function clientLabel(client: VpnClientId): string {

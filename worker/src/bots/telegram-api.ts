@@ -1,8 +1,19 @@
+import {
+  beginE2eTrace,
+  endE2eTrace,
+  isE2eDryRun,
+  recordE2eTrace,
+} from "../e2e-trace";
+
 export async function tgCall<T = Record<string, unknown>>(
   token: string,
   method: string,
   body: Record<string, unknown>
 ): Promise<T> {
+  recordE2eTrace(method, body);
+  if (isE2eDryRun()) {
+    return { ok: true, result: {} } as T & { ok?: boolean };
+  }
   const response = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

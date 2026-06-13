@@ -1,0 +1,64 @@
+name: Health monitor (Telegram alert)
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install deps
+        run: pip install requests
+
+      - name: Run smoke check
+        env:
+          WEBAPP_URL: https://fix-vpn.krivetkagames.workers.dev
+        run: python scripts/smoke_check.py
+
+      - name: E2E bot flow (dry-run)
+        continue-on-error: true
+        env:
+          WEBAPP_URL: https://fix-vpn.krivetkagames.workers.dev
+          E2E_TRACE_SECRET: ${{ secrets.E2E_TRACE_SECRET }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          CLIENT_BOT_TOKEN: ${{ secrets.CLIENT_BOT_TOKEN || secrets.TELEGRAM_BOT_TOKEN }}
+        run: |
+          if [ -z "$E2E_TRACE_SECRET" ]; then
+            echo "::warning::E2E_TRACE_SECRET not set — skip e2e_telegram.py"
+            exit 0
+          fi
+          printf '%s\n' \
+            "E2E_TRACE_SECRET=$E2E_TRACE_SECRET" \
+            "WEBAPP_URL=$WEBAPP_URL" \
+            "SUPABASE_URL=$SUPABASE_URL" \
+            "SUPABASE_SERVICE_ROLE_KEY=$SUPABASE_SERVICE_ROLE_KEY" \
+            "CLIENT_BOT_TOKEN=$CLIENT_BOT_TOKEN" \
+            > project_config.env
+          python scripts/e2e_telegram.py
+
+      - name: Alert Telegram on failure
+        if: failure()
+        env:
+          TOKEN: ${{ secrets.CLIENT_BOT_TOKEN || secrets.TELEGRAM_BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.SMOKE_NOTIFY_CHAT_ID || secrets.MANAGER_NOTIFICATION_CHAT_ID || '1159166497' }}
+        run: |
+          if [ -z "$TOKEN" ]; then
+            echo "::warning::No bot token — skip Telegram alert"
+            exit 0
+          fi
+          TEXT="FIX VPN: health check FAILED.%0A%0ARepo: https://github.com/krivetka13011/fix-vpn/actions"
+          curl -fsS -X POST "https://api.telegram.org/bot${TOKEN}/sendMessage" \
+            -d "chat_id=${CHAT_ID}" \
+            -d "text=${TEXT}"

@@ -108,6 +108,7 @@ jobs:
           put_secret MANAGER_NOTIFICATION_CHAT_ID "$MANAGER_NOTIFICATION_CHAT_ID"
           put_secret MANAGER_TELEGRAM_IDS "$MANAGER_TELEGRAM_IDS"
           put_secret TESTER_TELEGRAM_IDS "${{ secrets.TESTER_TELEGRAM_IDS }}"
+          put_secret E2E_TRACE_SECRET "${{ secrets.E2E_TRACE_SECRET }}"
           put_secret CLIENT_BOT_USERNAME "FIXVPNfast_bot"
           put_secret PARTNER_BOT_USERNAME "FIX_Partner_bot"
           put_secret PARTNER_DEFAULT_COMMISSION_PERCENT "50"

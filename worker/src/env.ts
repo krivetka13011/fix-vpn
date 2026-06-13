@@ -38,6 +38,8 @@ export interface BotEnv extends SupabaseEnv {
   TESTER_TELEGRAM_IDS?: string;
   XUI_WORKER_BASE_URL?: string;
   PANEL_ORIGIN_IP?: string;
+  /** Secret for X-Fix-Vpn-E2E header — enables webhook trace JSON (CI / agent tests). */
+  E2E_TRACE_SECRET?: string;
 }
 
 export const XUI_INBOUND_IDS_DEFAULT = [19, 20, 21, 24];

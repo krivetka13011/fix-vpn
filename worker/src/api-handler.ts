@@ -87,11 +87,30 @@ async function handleLegacyTelegramWebhook(
   request: Request,
   env: ApiEnv
 ): Promise<Response> {
+  const e2eSecret = env.E2E_TRACE_SECRET?.trim();
+  const e2eHeader = request.headers.get("X-Fix-Vpn-E2E")?.trim();
+  const tracing = Boolean(e2eSecret && e2eHeader && e2eHeader === e2eSecret);
+  const dry = tracing && request.headers.get("X-Fix-Vpn-E2E-Dry") === "1";
+
+  if (tracing) {
+    beginE2eTrace(dry);
+  }
+
   try {
     const update = await request.json();
     await handleClientBotUpdate(env, update);
   } catch (error) {
     console.error("client webhook:", error);
+    if (tracing) {
+      const trace = endE2eTrace();
+      return json({ ok: false, error: String(error), trace }, 500);
+    }
+    return new Response("error", { status: 500 });
+  }
+
+  if (tracing) {
+    const trace = endE2eTrace();
+    return json({ ok: true, trace });
   }
   return new Response("ok");
 }

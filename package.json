@@ -9,7 +9,10 @@
     "preview": "vite preview",
     "deploy": "npm run build && wrangler deploy",
     "cf:dev": "wrangler dev",
-    "bot:menu": "node scripts/set-menu-button.mjs"
+    "bot:menu": "node scripts/set-menu-button.mjs",
+    "verify:smoke": "python scripts/smoke_check.py",
+    "verify:e2e": "python scripts/e2e_telegram.py",
+    "verify": "python scripts/smoke_check.py && python scripts/e2e_telegram.py"
   },
   "dependencies": {
     "react": "^18.3.1",

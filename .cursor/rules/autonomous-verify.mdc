@@ -1,0 +1,28 @@
+---
+description: After bot/VPN/subscription changes — run E2E and fix until PASS before telling user it's ready.
+globs:
+  - worker/src/bots/**
+  - worker/src/api-handler.ts
+  - worker/src/miniapp-services.ts
+  - worker/src/connect-links.ts
+  - worker/src/subscription-rotate.ts
+  - scripts/**
+---
+
+# Автономная проверка FIX VPN
+
+После изменений бота, подписки, отвязки устройств или Happ:
+
+1. `npm run build`
+2. `python scripts/smoke_check.py` — Worker, Supabase, подписка
+3. `python scripts/e2e_telegram.py` — симуляция кнопок бота (нужен `E2E_TRACE_SECRET` в Worker и `project_config.env`)
+
+Не писать пользователю «готово / работает», пока оба скрипта не **PASS**.
+
+При FAIL — исправить, задеплоить, повторить проверку.
+
+E2E ловит фразы: «1–2 мин», «клиент не подготовлен», битый Happ redirect, невалидную подписку.
+
+Деплой: push в master. После деплоя снова прогнать smoke + e2e.
+
+Уведомление пользователю в Telegram (опционально): `python scripts/e2e_telegram.py --notify`

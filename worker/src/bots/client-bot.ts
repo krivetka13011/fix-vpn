@@ -38,6 +38,11 @@ import { managerTxnKeyboard, notifyManager } from "./manager";
 import { handleManagerPartnerCallback } from "./partner-bot";
 import { clearDeviceSwapState } from "../subscription-rotate";
 import {
+  DeviceResetCooldownError,
+  DEVICE_RESET_SUCCESS_NOTICE,
+  resetPanelDeviceBinding,
+} from "../device-reset";
+import {
   buildPanelSubscriptionUrlForUser,
   buildRedirectUrl,
   clientLabel,
@@ -220,7 +225,7 @@ function buildProfileKeyboard(
   }
 
   if (hasSlot) {
-    rows.push([{ text: "Сбросить все устройства", callback_data: "c:resetip" }]);
+    rows.push([{ text: "Сбросить привязку устройств", callback_data: "c:resetip" }]);
   }
 
   rows.push([{ text: "Назад", callback_data: "c:menu" }]);
@@ -643,21 +648,18 @@ async function resetDeviceBinding(
   const user = await getUserByTelegramId(env, tg.id);
   if (!user) return;
   await resolvePanelSubId(env, user, tg);
-  const sub = await getSubscription(env, user.id);
-  if (!sub?.client_email) {
-    await showProfile(env, chatId, tg, messageId, "<b>Нет активного клиента в панели.</b>");
-    return;
-  }
 
-  await clearVpnDeviceBindings(env, user.id);
-  await clearDeviceSwapState(env, user.id);
+  await resetPanelDeviceBinding(env, user.id, {
+    telegramId: tg.id,
+    isTester: user.is_tester,
+  });
 
   await showProfile(
     env,
     chatId,
     tg,
     messageId,
-    "<b>Все устройства сброшены.</b> Можно подключить VPN на новом устройстве."
+    `<b>${DEVICE_RESET_SUCCESS_NOTICE}</b>`
   );
 }
 
@@ -859,8 +861,24 @@ export async function handleClientBotUpdate(
       return;
     }
     if (data === "c:resetip") {
-      await answerCallback(token, cq.id, "Сбрасываем…");
-      await resetDeviceBinding(env, tg, chatId, messageId);
+      const user = await getUserByTelegramId(env, tg.id);
+      if (!user) {
+        await answerCallback(token, cq.id, "Пользователь не найден", { showAlert: true });
+        return;
+      }
+      try {
+        await answerCallback(token, cq.id, "Сбрасываем привязку…");
+        await resetDeviceBinding(env, tg, chatId, messageId);
+      } catch (error) {
+        if (error instanceof DeviceResetCooldownError) {
+          await answerCallback(token, cq.id, error.message, { showAlert: true });
+          return;
+        }
+        const message =
+          error instanceof Error ? error.message : "Не удалось сбросить привязку";
+        await showProfile(env, chatId, tg, messageId, `<b>${message}</b>`);
+        await answerCallback(token, cq.id);
+      }
       return;
     }
     if (data === "c:connect") {

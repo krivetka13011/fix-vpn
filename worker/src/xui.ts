@@ -28,6 +28,7 @@ const ALLOWED_PREFIXES = [
   "/panel/api/clients/add",
   "/panel/api/clients/update/",
   "/panel/api/clients/clearIps/",
+  "/panel/api/inbounds/clearClientIps/",
   "/panel/api/clients/ips/",
   "/panel/api/clients/onlines",
   "/panel/api/clients/lastOnline",
@@ -574,12 +575,23 @@ export class XuiApi {
   }
 
   async clearClientIps(email: string): Promise<void> {
-    const response = await this.request(
-      `/panel/api/clients/clearIps/${encodeURIComponent(email)}`,
-      { method: "POST", body: "{}" }
-    );
-    await this.parseResponse(response, "clearClientIps");
-    this.invalidateScan();
+    const encoded = encodeURIComponent(email);
+    const paths = [
+      `/panel/api/inbounds/clearClientIps/${encoded}`,
+      `/panel/api/clients/clearIps/${encoded}`,
+    ];
+    let lastError: Error | null = null;
+    for (const path of paths) {
+      try {
+        const response = await this.request(path, { method: "POST", body: "{}" });
+        await this.parseResponse(response, "clearClientIps");
+        this.invalidateScan();
+        return;
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+      }
+    }
+    throw lastError ?? new Error("clearClientIps failed");
   }
 
   async rotateClientSubId(

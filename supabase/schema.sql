@@ -32,6 +32,7 @@ create table if not exists subscriptions (
   is_trial boolean not null default false,
   extra_devices int not null default 0,
   panel_ip_clear_requested_at timestamptz,
+  last_device_reset timestamptz,
   pending_xray_sub_id text,
   panel_sub_rotate_requested_at timestamptz,
   purchased_at timestamptz,

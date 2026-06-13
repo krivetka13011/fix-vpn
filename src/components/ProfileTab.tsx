@@ -58,7 +58,7 @@ export function ProfileTab({ user, fallbackPhoto, onRefresh }: Props) {
     setHint(null);
     try {
       await resetDevices();
-      setHint("Привязки сброшены. Можно подключиться заново.");
+      setHint("Привязка сброшена. Можно подключить новый телефон. Следующий сброс — через 24 часа.");
       onRefresh();
     } catch (error) {
       setHint(error instanceof Error ? error.message : "Не удалось сбросить");
@@ -151,7 +151,7 @@ export function ProfileTab({ user, fallbackPhoto, onRefresh }: Props) {
               )}
               {sub.planType !== "personal" && (
                 <p className="profile-card-sub">
-                  Одновременно 1 устройство. Чтобы подключить другое — сбросьте привязки.
+                  Одновременно 1 устройство. Чтобы подключить другое — сбросьте привязку (раз в 24 ч).
                 </p>
               )}
               {devices.length === 0 ? (
@@ -179,7 +179,7 @@ export function ProfileTab({ user, fallbackPhoto, onRefresh }: Props) {
                   disabled={resetting}
                   onClick={handleResetDevices}
                 >
-                  {resetting ? "Сброс…" : "Сбросить привязки"}
+                  {resetting ? "Сброс…" : "Сбросить привязку устройств"}
                 </button>
               )}
             </div>

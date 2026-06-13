@@ -3,7 +3,6 @@ import { TARIFFS } from "./catalog";
 import { buildProtectedSubscriptionUrl, buildRedirectUrl, type VpnClientId } from "./connect-links";
 import { syncPanelSubIdForUser } from "./panel-sync";
 import {
-  clearVpnDeviceBindings,
   getSubscription,
   getUserByTelegramId,
   listVpnDeviceBindings,
@@ -14,7 +13,7 @@ import {
 import type { TelegramUser } from "./telegram";
 import { XuiApi, type PanelDeviceIp } from "./xui";
 import { subscriptionDeviceLimit } from "./device-limit";
-import { clearDeviceSwapState } from "./subscription-rotate";
+import { DeviceResetCooldownError, resetPanelDeviceBinding } from "./device-reset";
 
 const OS_LABELS: Record<string, string> = {
   android: "Android",
@@ -276,11 +275,17 @@ export async function buildMiniappConnectUrl(
 export async function resetMiniappDevices(env: BotEnv, tg: TelegramUser): Promise<void> {
   const user = await getUserByTelegramId(env, tg.id);
   if (!user) throw new Error("Пользователь не найден");
-  const sub = await getSubscription(env, user.id);
-  if (!sub?.client_email) throw new Error("Нет активного клиента в панели");
-
-  await clearVpnDeviceBindings(env, user.id);
-  await clearDeviceSwapState(env, user.id);
+  try {
+    await resetPanelDeviceBinding(env, user.id, {
+      telegramId: tg.id,
+      isTester: user.is_tester,
+    });
+  } catch (error) {
+    if (error instanceof DeviceResetCooldownError) {
+      throw error;
+    }
+    throw error instanceof Error ? error : new Error("Не удалось сбросить привязку");
+  }
 }
 
 export function subscriptionPeriodText(sub: {

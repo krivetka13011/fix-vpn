@@ -23,6 +23,10 @@ import { isPanelErrorBody, panelFetch } from "./panel-fetch";
 import { handleClientBotUpdate } from "./bots/client-bot";
 import { handlePartnerBotUpdate } from "./bots/partner-bot";
 import { beginE2eTrace, endE2eTrace } from "./e2e-trace";
+import {
+  DeviceResetCooldownError,
+  DEVICE_RESET_SUCCESS_NOTICE,
+} from "./device-reset";
 import { XuiApi } from "./xui";
 import { getSubscriptionBySubId } from "./repository";
 import {
@@ -460,8 +464,15 @@ export async function handleApiRequest(
       await resetMiniappDevices(env, tgUser);
       const bundle = await ensureUser(env, tgUser);
       const deviceInfo = await fetchMiniappDevices(env, bundle.user.id);
-      return json({ ok: true, devices: deviceInfo });
+      return json({
+        ok: true,
+        message: DEVICE_RESET_SUCCESS_NOTICE,
+        devices: deviceInfo,
+      });
     } catch (e) {
+      if (e instanceof DeviceResetCooldownError) {
+        return json({ error: e.message, cooldownMs: e.remainingMs }, 429);
+      }
       return json(
         { error: e instanceof Error ? e.message : "Reset failed" },
         400

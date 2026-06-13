@@ -35,6 +35,7 @@ export interface DbSubscription {
   extra_devices: number;
   purchased_at: string | null;
   panel_ip_clear_requested_at?: string | null;
+  last_device_reset?: string | null;
   pending_xray_sub_id?: string | null;
   panel_sub_rotate_requested_at?: string | null;
   updated_at: string;

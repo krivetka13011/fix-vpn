@@ -292,10 +292,16 @@ def clear_pending_panel_ips(sb: str, session: requests.Session, base: str) -> in
         if not email:
             continue
         response = session.post(
-            f"{base}/panel/api/clients/clearIps/{email}",
+            f"{base}/panel/api/inbounds/clearClientIps/{email}",
             json={},
             timeout=30,
         )
+        if not response.ok:
+            response = session.post(
+                f"{base}/panel/api/clients/clearIps/{email}",
+                json={},
+                timeout=30,
+            )
         if response.ok or "success" in response.text.lower():
             requests.patch(
                 sb + f"subscriptions?user_id=eq.{row['user_id']}",

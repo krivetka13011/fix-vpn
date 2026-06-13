@@ -777,6 +777,13 @@ export class XuiApi {
       String(params.telegramId);
 
     if (!existing) {
+      const recheck = await this.findClientByTelegramId(params.telegramId);
+      if (recheck) {
+        existing = recheck;
+      }
+    }
+
+    if (!existing) {
       const seedSubId =
         params.dbSubscription?.xray_sub_id?.trim() || randomSubId();
       const seedUuid = params.dbSubscription?.xray_uuid?.trim();
@@ -790,6 +797,7 @@ export class XuiApi {
       );
       this.invalidateScan();
       existing =
+        (await this.findClientByTelegramId(params.telegramId)) ||
         (await this.resolvePanelClientForTelegram(
           params.telegramId,
           params.dbSubscription,

@@ -12,6 +12,166 @@ import urllib3
 urllib3.disable_warnings()
 
 INBOUND_IDS = [19, 20, 21, 24]
+PROTECTED_EMAILS = {"lv", "max-mobile", "egor-mobile", "max-pc"}
+
+
+def dedupe_clients_index(clients):
+    """scan_clients returns one row per inbound — keep one row per client uuid."""
+    by_uuid = {}
+    for row in clients:
+        uid = str(row.get("uuid") or "").strip()
+        if not uid:
+            continue
+        if uid not in by_uuid:
+            by_uuid[uid] = row
+    return list(by_uuid.values())
+
+
+def find_all_panel_clients(clients, telegram_id, username):
+    tg = str(telegram_id)
+    hits = []
+    seen = set()
+    for row in clients:
+        uid = str(row.get("uuid") or "")
+        if uid in seen:
+            continue
+        if str(row.get("tgId") or "") == tg or str(row.get("email") or "") == tg:
+            hits.append(row)
+            seen.add(uid)
+        elif username and str(row.get("email") or "") == username:
+            hits.append(row)
+            seen.add(uid)
+    return hits
+
+
+def pick_canonical_client(candidates, db_row):
+    db_uuid = str((db_row or {}).get("xray_uuid") or "").strip()
+    db_sub = str((db_row or {}).get("xray_sub_id") or "").strip()
+    pending = str((db_row or {}).get("pending_xray_sub_id") or "").strip()
+    if db_uuid:
+        for client in candidates:
+            if str(client.get("uuid") or "") == db_uuid:
+                return client
+    if pending:
+        for client in candidates:
+            if str(client.get("subId") or "") == pending:
+                return client
+    if db_sub:
+        for client in candidates:
+            if str(client.get("subId") or "") == db_sub:
+                return client
+    return candidates[0]
+
+
+def delete_panel_client(session, base, email):
+    email = str(email or "").strip()
+    if not email or email in PROTECTED_EMAILS:
+        return False
+    response = session.post(
+        f"{base}/panel/api/clients/del/{email}",
+        json={},
+        timeout=30,
+    )
+    return response.ok or "success" in response.text.lower()
+
+
+def dedupe_panel_clients(sb, session, base, clients, rows):
+    unique = dedupe_clients_index(clients)
+    db_by_tg = {}
+    for row in rows:
+        user = row.get("users") or {}
+        tg_id = int(user.get("telegram_id") or 0)
+        if tg_id:
+            db_by_tg[str(tg_id)] = row
+
+    removed = 0
+    grouped = {}
+    for client in unique:
+        tg = str(client.get("tgId") or "").strip()
+        if not tg and str(client.get("email") or "").isdigit():
+            tg = str(client.get("email") or "")
+        if not tg:
+            continue
+        grouped.setdefault(tg, []).append(client)
+
+    for tg, hits in grouped.items():
+        if len(hits) <= 1:
+            continue
+        canonical = pick_canonical_client(hits, db_by_tg.get(tg))
+        for duplicate in hits:
+            if str(duplicate.get("uuid") or "") == str(canonical.get("uuid") or ""):
+                continue
+            email = str(duplicate.get("email") or "")
+            if delete_panel_client(session, base, email):
+                removed += 1
+                print("removed duplicate panel client", email, "tg", tg)
+    return removed
+
+
+def update_panel_client_sub_id(session, base, panel, new_sub_id, tg_id):
+    email = str(panel.get("email") or "").strip()
+    client = {
+        "id": panel.get("uuid"),
+        "email": email,
+        "subId": new_sub_id,
+        "limitIp": 0,
+        "expiryTime": 0,
+        "enable": True,
+        "tgId": int(tg_id or 0),
+        "totalGB": 0,
+        "flow": "",
+    }
+    response = session.post(
+        f"{base}/panel/api/clients/update/{email}",
+        json={"email": email, "inboundIds": INBOUND_IDS, "client": client},
+        timeout=30,
+    )
+    return response.ok or "success" in response.text.lower()
+
+
+def limit_ip_for_row(_row):
+    return 0
+
+
+def ensure_panel_client(session, base, clients, row, worker, sub_links_fn, panel_live_fn):
+    user = row.get("users") or {}
+    tg_id = int(user.get("telegram_id") or 0)
+    username = user.get("username")
+    unique = dedupe_clients_index(clients)
+    matches = find_all_panel_clients(unique, tg_id, username)
+
+    panel = pick_canonical_client(matches, row) if matches else None
+
+    if panel and not panel_live_fn(panel):
+        target_sub = (
+            str(row.get("pending_xray_sub_id") or "").strip()
+            or str(row.get("xray_sub_id") or "").strip()
+            or str(panel.get("subId") or "").strip()
+        )
+        if target_sub and target_sub != str(panel.get("subId") or ""):
+            if update_panel_client_sub_id(session, base, panel, target_sub, tg_id):
+                panel["subId"] = target_sub
+                print("repaired stale subId", tg_id, target_sub)
+
+    if panel:
+        return panel
+
+    email = str(tg_id)
+    sub_id = str(row.get("xray_sub_id") or "").strip() or random_sub_id()
+    client_uuid = str(row.get("xray_uuid") or "").strip() or str(uuid.uuid4())
+    add_panel_client(session, base, email, sub_id, client_uuid, tg_id, limit_ip_for_row(row))
+    refreshed = dedupe_clients_index(scan_clients(session, base))
+    panel = find_panel_client(refreshed, tg_id, username)
+    if not panel:
+        panel = {
+            "email": email,
+            "subId": sub_id,
+            "uuid": client_uuid,
+        }
+        print("created", tg_id, sub_id)
+    else:
+        print("found after create", tg_id, panel["subId"])
+    return panel
 
 
 def load_env(path="project_config.env"):
@@ -257,10 +417,6 @@ def sync_client_limits(sb: str, session: requests.Session, base: str, clients: l
     return synced
 
 
-def limit_ip_for_row(_row):
-    return 0
-
-
 def main():
     load_env()
     for name in ("SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "XUI_BASE_URL", "XUI_API_TOKEN"):
@@ -272,19 +428,25 @@ def main():
 
     rows = requests.get(
         sb
-        + "subscriptions?select=user_id,xray_sub_id,xray_uuid,plan_type,extra_devices,users!inner(telegram_id,username)",
+        + "subscriptions?select=user_id,xray_sub_id,xray_uuid,plan_type,extra_devices,pending_xray_sub_id,users!inner(telegram_id,username)",
         headers={**sb_headers("return=representation"), "Prefer": "return=representation"},
         timeout=30,
     ).json()
 
     session, base = panel_session()
     ip_cleared = clear_pending_panel_ips(sb, session, base)
-    clients = scan_clients(session, base)
+    clients = dedupe_clients_index(scan_clients(session, base))
+    dupes_removed = dedupe_panel_clients(sb, session, base, clients, rows)
+    if dupes_removed:
+        clients = dedupe_clients_index(scan_clients(session, base))
     sub_rotated = process_pending_sub_rotations(sb, session, base, clients, worker)
     limits_synced = sync_client_limits(sb, session, base, clients)
 
     if not rows:
-        print(f"no users, ip_clears {ip_cleared}, rotations {sub_rotated}, limits {limits_synced}")
+        print(
+            f"no users, ip_clears {ip_cleared}, dupes {dupes_removed}, "
+            f"rotations {sub_rotated}, limits {limits_synced}"
+        )
         return
 
     provisioned = 0
@@ -308,36 +470,15 @@ def main():
         tg_id = int(user.get("telegram_id") or 0)
         if not tg_id:
             continue
-        username = user.get("username")
         user_id = row["user_id"]
 
-        panel = find_panel_client(clients, tg_id, username)
-        if panel and not panel_live(panel):
-            print("stale panel row", tg_id, panel["subId"])
-            panel = None
+        panel = ensure_panel_client(
+            session, base, clients, row, worker, sub_links, panel_live
+        )
+        clients = dedupe_clients_index(scan_clients(session, base))
 
-        db_sub = str(row.get("xray_sub_id") or "").strip()
-        if not panel and db_sub:
-            for candidate in clients:
-                if candidate.get("email") in {"lv"}:
-                    continue
-                if candidate.get("subId") == db_sub and panel_live(candidate):
-                    panel = candidate
-                    break
-
-        if not panel:
-            sub_id = random_sub_id()
-            client_uuid = str(uuid.uuid4())
-            email = str(tg_id)
-            add_panel_client(session, base, email, sub_id, client_uuid, tg_id, limit_ip_for_row(row))
-            panel = {"email": email, "subId": sub_id, "uuid": client_uuid}
-            clients = scan_clients(session, base)
-            print("created", tg_id, sub_id)
-        else:
-            print("found", tg_id, panel["subId"])
-
-        sub_id = panel["subId"].strip()
-        client_uuid = panel["uuid"].strip()
+        sub_id = str(panel.get("subId") or "").strip()
+        client_uuid = str(panel.get("uuid") or "").strip()
         if not sub_id or not client_uuid:
             print("skip incomplete panel row", tg_id)
             continue
@@ -364,7 +505,8 @@ def main():
         provisioned += 1
 
     print(
-        f"provisioned {provisioned}/{len(rows)}, ip_clears {ip_cleared}, rotations {sub_rotated}, limits {limits_synced}"
+        f"provisioned {provisioned}/{len(rows)}, ip_clears {ip_cleared}, "
+        f"dupes {dupes_removed}, rotations {sub_rotated}, limits {limits_synced}"
     )
 
 

@@ -1,6 +1,7 @@
 import type { BotEnv } from "./env";
 import { TARIFFS } from "./catalog";
 import { buildProtectedSubscriptionUrl, buildRedirectUrl, type VpnClientId } from "./connect-links";
+import { syncPanelSubIdForUser } from "./panel-sync";
 import {
   clearVpnDeviceBindings,
   getSubscription,
@@ -102,48 +103,8 @@ export async function resolvePanelSubIdForUser(
 ): Promise<string | null> {
   const user = await upsertTelegramUser(env, tg);
   await ensureSubscriptionPeriod(env, user.id);
-  let sub = await getSubscription(env, user.id);
-  const lockedSubId = sub?.xray_sub_id?.trim();
-  const lockedUuid = sub?.xray_uuid?.trim();
-
-  if (lockedSubId && lockedUuid) {
-    try {
-      const xui = new XuiApi(env);
-      const panel = await xui.ensureLockedPanelClient(env, tg.id, sub);
-      await patchSubscription(env, user.id, {
-        client_email: panel.email,
-        xray_sub_id: lockedSubId,
-        xray_uuid: panel.primaryUuid,
-        subscription_url: buildProtectedSubscriptionUrl(env, lockedSubId),
-      });
-    } catch (error) {
-      console.error("miniapp resolvePanelSubId:", error);
-    }
-    return lockedSubId;
-  }
-
-  try {
-    const xui = new XuiApi(env);
-    await xui.syncPanelWithDb(env, user.id, tg.id, sub);
-    sub = (await getSubscription(env, user.id)) ?? sub;
-    const provision = await xui.ensureClientPrepared(env, {
-      userId: user.id,
-      username: user.username,
-      telegramId: tg.id,
-      dbSubscription: sub,
-    });
-    const subId = sub?.xray_sub_id?.trim() || provision.subId;
-    await patchSubscription(env, user.id, {
-      xray_uuid: provision.primaryUuid,
-      xray_sub_id: subId,
-      subscription_url: buildProtectedSubscriptionUrl(env, subId),
-      client_email: provision.email,
-    });
-    return subId;
-  } catch (error) {
-    console.error("miniapp ensureClient:", error);
-    return sub?.xray_sub_id?.trim() || null;
-  }
+  const sub = await getSubscription(env, user.id);
+  return syncPanelSubIdForUser(env, user.id, tg.id, user.username, sub);
 }
 
 export interface MiniappDeviceRow {

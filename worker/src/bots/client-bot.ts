@@ -36,13 +36,14 @@ import { BILLING_OPTIONS, calcPrice, periodLabel, type BillingMonths } from "./p
 import { managerTxnKeyboard, notifyManager } from "./manager";
 import { handleManagerPartnerCallback } from "./partner-bot";
 import {
-  buildProtectedSubscriptionUrl,
+  buildPanelSubscriptionUrlForUser,
   buildRedirectUrl,
   clientLabel,
   clientsForOs,
   defaultClientForOs,
   type VpnClientId,
 } from "../connect-links";
+import { syncPanelSubIdForUser } from "../panel-sync";
 
 type TgUpdate = {
   message?: {
@@ -299,7 +300,7 @@ async function persistProvision(
 }
 
 function buildSubscriptionUrl(env: BotEnv, subId: string): string {
-  return buildProtectedSubscriptionUrl(env, subId);
+  return buildPanelSubscriptionUrlForUser(env, subId);
 }
 
 function importInstructionsMessage(
@@ -383,33 +384,8 @@ async function resolvePanelSubId(
   user: Awaited<ReturnType<typeof upsertTelegramUser>>,
   tg: TelegramUser
 ): Promise<string | null> {
-  let sub = await getSubscription(env, user.id);
-  const lockedSubId = sub?.xray_sub_id?.trim();
-  const lockedUuid = sub?.xray_uuid?.trim();
-
-  if (lockedSubId && lockedUuid) {
-    try {
-      const xui = new XuiApi(env);
-      const panel = await xui.ensureLockedPanelClient(env, tg.id, sub);
-      await patchSubscription(env, user.id, {
-        client_email: panel.email,
-        xray_sub_id: lockedSubId,
-        xray_uuid: panel.primaryUuid,
-        subscription_url: buildSubscriptionUrl(env, lockedSubId),
-      });
-    } catch (error) {
-      console.error("resolvePanelSubId panel sync:", error);
-    }
-    return lockedSubId;
-  }
-
-  try {
-    await ensureVpnClientOnStart(env, user, tg);
-  } catch (error) {
-    console.error("resolvePanelSubId ensure:", error);
-  }
-  sub = await getSubscription(env, user.id);
-  return sub?.xray_sub_id?.trim() || null;
+  const sub = await getSubscription(env, user.id);
+  return syncPanelSubIdForUser(env, user.id, tg.id, user.username, sub);
 }
 
 async function ensureVpnClientOnStart(

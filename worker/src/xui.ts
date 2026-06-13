@@ -203,6 +203,106 @@ export class XuiApi {
     };
   }
 
+  async findClientBySubId(subId: string): Promise<{
+    email: string;
+    subId: string;
+    primaryUuid: string;
+  } | null> {
+    const needle = subId.trim();
+    if (!needle) return null;
+    const clients = await this.scanAllClients();
+    for (const client of clients) {
+      if (client.subId !== needle) continue;
+      return {
+        email: client.email,
+        subId: client.subId,
+        primaryUuid: client.primaryUuid,
+      };
+    }
+    return null;
+  }
+
+  async findClientByUuid(uuid: string): Promise<{
+    email: string;
+    subId: string;
+    primaryUuid: string;
+  } | null> {
+    const needle = uuid.trim();
+    if (!needle) return null;
+    const clients = await this.scanAllClients();
+    for (const client of clients) {
+      if (client.primaryUuid !== needle) continue;
+      return {
+        email: client.email,
+        subId: client.subId,
+        primaryUuid: client.primaryUuid,
+      };
+    }
+    return null;
+  }
+
+  async resolvePanelClientForTelegram(
+    telegramId: number,
+    db?: {
+      client_email?: string | null;
+      xray_sub_id?: string | null;
+      xray_uuid?: string | null;
+    } | null,
+    username?: string | null
+  ): Promise<{ email: string; subId: string; primaryUuid: string } | null> {
+    const canonicalEmail = this.buildClientEmail(username ?? null, telegramId);
+
+    const byTg = await this.findClientByTelegramId(telegramId);
+    if (byTg) return byTg;
+
+    const byCanonical = await this.findClientByEmail(canonicalEmail);
+    if (byCanonical) {
+      return {
+        email: byCanonical.email,
+        subId: byCanonical.subId,
+        primaryUuid: byCanonical.primaryUuid,
+      };
+    }
+
+    const dbEmail = db?.client_email?.trim();
+    if (dbEmail && dbEmail !== canonicalEmail) {
+      const byDbEmail = await this.findClientByEmail(dbEmail);
+      if (byDbEmail) {
+        return {
+          email: byDbEmail.email,
+          subId: byDbEmail.subId,
+          primaryUuid: byDbEmail.primaryUuid,
+        };
+      }
+    }
+
+    const usernameEmail = username?.trim();
+    if (usernameEmail && usernameEmail !== canonicalEmail) {
+      const byUsername = await this.findClientByEmail(usernameEmail);
+      if (byUsername) {
+        return {
+          email: byUsername.email,
+          subId: byUsername.subId,
+          primaryUuid: byUsername.primaryUuid,
+        };
+      }
+    }
+
+    const lockedUuid = db?.xray_uuid?.trim();
+    if (lockedUuid) {
+      const byUuid = await this.findClientByUuid(lockedUuid);
+      if (byUuid) return byUuid;
+    }
+
+    const lockedSubId = db?.xray_sub_id?.trim();
+    if (lockedSubId) {
+      const bySub = await this.findClientBySubId(lockedSubId);
+      if (bySub) return bySub;
+    }
+
+    return null;
+  }
+
   async findClientByEmail(email: string): Promise<{
     email: string;
     subId: string;
@@ -285,9 +385,7 @@ export class XuiApi {
     };
 
     try {
-      let panel =
-        (await this.getClientByEmailApi(email)) ||
-        (await this.findClientByTelegramId(telegramId));
+      let panel = await this.resolvePanelClientForTelegram(telegramId, db);
 
       if (!panel && lockedSubId && lockedUuid) {
         await this.addClientIfMissing(
@@ -299,23 +397,57 @@ export class XuiApi {
           lockedUuid
         );
         this.invalidateScan();
-        panel =
-          (await this.getClientByEmailApi(email)) ||
-          (await this.findClientByTelegramId(telegramId));
+        panel = await this.resolvePanelClientForTelegram(telegramId, db);
       }
 
       if (!panel?.subId?.trim() || !panel.primaryUuid) {
         return dbFallback();
       }
 
+      await this.rebindPanelClientEmail(panel, telegramId);
+
       return {
-        email: panel.email,
-        subId: lockedSubId || panel.subId,
-        primaryUuid: lockedUuid || panel.primaryUuid,
+        email: String(telegramId),
+        subId: panel.subId,
+        primaryUuid: panel.primaryUuid,
       };
     } catch (error) {
       console.error("ensureLockedPanelClient:", error);
       return dbFallback();
+    }
+  }
+
+  private async rebindPanelClientEmail(
+    panel: { email: string; subId: string; primaryUuid: string },
+    telegramId: number
+  ): Promise<void> {
+    const canonicalEmail = this.buildClientEmail(null, telegramId);
+    if (panel.email === canonicalEmail) return;
+
+    const response = await this.request(
+      `/panel/api/clients/update/${encodeURIComponent(panel.email)}`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          email: panel.email,
+          inboundIds: this.inboundIds,
+          client: this.buildClient(
+            canonicalEmail,
+            panel.subId,
+            telegramId,
+            0,
+            0,
+            true,
+            panel.primaryUuid
+          ),
+        }),
+      }
+    );
+    try {
+      await this.parseResponse(response, "rebindPanelClientEmail");
+      this.invalidateScan();
+    } catch (error) {
+      console.error("rebindPanelClientEmail:", error);
     }
   }
 
@@ -571,14 +703,19 @@ export class XuiApi {
       params.dbSubscription
     );
 
-    let existing = await this.resolveExistingClient(
+    let existing = await this.resolvePanelClientForTelegram(
       params.telegramId,
-      params.dbSubscription
+      params.dbSubscription,
+      params.username
     );
+    if (!existing) {
+      existing = await this.resolveExistingClient(
+        params.telegramId,
+        params.dbSubscription
+      );
+    }
     const email =
-      existing?.email ||
-      params.dbSubscription?.client_email?.trim() ||
-      this.buildClientEmail(params.username, params.telegramId);
+      String(params.telegramId);
 
     if (!existing) {
       const seedSubId =
@@ -594,19 +731,28 @@ export class XuiApi {
       );
       this.invalidateScan();
       existing =
+        (await this.resolvePanelClientForTelegram(
+          params.telegramId,
+          params.dbSubscription,
+          params.username
+        )) ||
         (await this.resolveExistingClient(
           params.telegramId,
           params.dbSubscription
-        )) || (await this.findClientByEmail(email)) || undefined;
+        )) ||
+        (await this.findClientByEmail(email)) ||
+        undefined;
     }
 
     if (!existing?.subId?.trim() || !existing.primaryUuid) {
       throw new Error("клиент в панели не найден");
     }
 
+    await this.rebindPanelClientEmail(existing, params.telegramId);
+
     return this.toProvisionResult(
       env,
-      existing.email,
+      String(params.telegramId),
       existing.subId,
       existing.primaryUuid
     );

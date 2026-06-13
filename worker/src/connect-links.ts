@@ -1,5 +1,6 @@
 import type { BotEnv } from "./env";
 import {
+  resolveVpnHost,
   subscriptionBaseUrl,
   subscriptionClientBaseUrl,
   workerSubscriptionFetchBase,
@@ -131,15 +132,41 @@ export async function encryptHappLink(subscriptionUrl: string): Promise<string> 
   return encrypted;
 }
 
-/** URL embedded in Happ crypt5 — must be fetchable on device with valid TLS (panel host, not Worker). */
-export function buildHappSubscriptionUrl(env: BotEnv, subId: string): string {
-  const clientBase = subscriptionClientBaseUrl(env);
+export async function panelSubscriptionIsLive(
+  env: BotEnv,
+  subId: string
+): Promise<boolean> {
+  if (!subId.trim()) return false;
   const path = (env.SUBSCRIPTION_PATH || "/sub").replace(/\/$/, "");
   const encoded = encodeURIComponent(subId);
-  if (clientBase) {
-    return `${clientBase}${path}/${encoded}`;
+  const bases = [
+    `https://${resolveVpnHost(env)}:2096`,
+    subscriptionClientBaseUrl(env),
+    subscriptionBaseUrl(env),
+  ].filter((base, index, list) => base && list.indexOf(base) === index);
+
+  for (const base of bases) {
+    try {
+      const response = await fetch(`${base}${path}/${encoded}`);
+      const body = await response.text();
+      if (response.ok && subscriptionBodyLooksValid(body)) return true;
+    } catch {
+      // try next base
+    }
   }
-  return buildProtectedSubscriptionUrl(env, subId);
+  return false;
+}
+
+/** URL embedded in Happ crypt5 — panel host with valid TLS (never raw IP). */
+export function buildHappSubscriptionUrl(env: BotEnv, subId: string): string {
+  const path = (env.SUBSCRIPTION_PATH || "/sub").replace(/\/$/, "");
+  const encoded = encodeURIComponent(subId);
+  const host = resolveVpnHost(env);
+  return `https://${host}:2096${path}/${encoded}`;
+}
+
+export function buildPanelSubscriptionUrlForUser(env: BotEnv, subId: string): string {
+  return buildHappSubscriptionUrl(env, subId);
 }
 
 export async function buildClientImportTarget(
@@ -148,6 +175,12 @@ export async function buildClientImportTarget(
   subId: string
 ): Promise<string> {
   if (client === "happ") {
+    const alive = await panelSubscriptionIsLive(env, subId);
+    if (!alive) {
+      throw new Error(
+        "Подписка в панели не найдена. Подождите минуту и повторите подключение."
+      );
+    }
     return encryptHappLink(buildHappSubscriptionUrl(env, subId));
   }
   return buildProtectedSubscriptionUrl(env, subId);

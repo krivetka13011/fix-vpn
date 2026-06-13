@@ -12,7 +12,7 @@ import {
   upsertVpnDeviceBinding,
 } from "./repository";
 import type { TelegramUser } from "./telegram";
-import { XuiApi } from "./xui";
+import { XuiApi, type PanelDeviceIp } from "./xui";
 
 const OS_LABELS: Record<string, string> = {
   android: "Android",
@@ -116,6 +116,89 @@ export interface MiniappDeviceRow {
   online: boolean;
 }
 
+export type DeviceBindingRow = {
+  os: string;
+  vpn_client: string;
+  label: string;
+};
+
+export type DeviceSlotStatus = {
+  limit: number;
+  panelIps: PanelDeviceIp[];
+  bindings: DeviceBindingRow[];
+  slotTaken: boolean;
+};
+
+export async function fetchDeviceSlotStatus(
+  env: BotEnv,
+  userId: string,
+  sub: Awaited<ReturnType<typeof getSubscription>>
+): Promise<DeviceSlotStatus> {
+  const limit = deviceLimitTotal(sub);
+  const bindings = await listVpnDeviceBindings(env, userId);
+  let panelIps: PanelDeviceIp[] = [];
+
+  if (sub?.client_email) {
+    try {
+      panelIps = await new XuiApi(env).getClientIps(sub.client_email);
+    } catch {
+      // panel unreachable from worker
+    }
+  }
+
+  const slotTaken =
+    panelIps.length >= limit || bindings.length >= limit;
+
+  return {
+    limit,
+    panelIps,
+    bindings: bindings.map((row) => ({
+      os: row.os,
+      vpn_client: row.vpn_client,
+      label: row.label,
+    })),
+    slotTaken,
+  };
+}
+
+export function isDifferentDeviceAttempt(
+  status: DeviceSlotStatus,
+  targetOs: string
+): boolean {
+  if (!status.slotTaken) return false;
+  if (status.bindings.length > 0) {
+    return !status.bindings.some((row) => row.os === targetOs);
+  }
+  return status.panelIps.length > 0;
+}
+
+export function deviceOccupiedMessage(
+  status: DeviceSlotStatus,
+  targetOs?: string
+): string {
+  const occupiedLines: string[] = [];
+  for (const row of status.bindings.slice(0, 2)) {
+    occupiedLines.push(`• ${row.label}`);
+  }
+  for (const row of status.panelIps.slice(0, 2)) {
+    const seen = row.seenAt ? ` (${row.seenAt})` : "";
+    occupiedLines.push(`• IP ${row.ip}${seen}`);
+  }
+  const occupied =
+    occupiedLines.length > 0 ? occupiedLines.join("\n") : "• другое устройство";
+
+  const replaceNote =
+    targetOs && isDifferentDeviceAttempt(status, targetOs)
+      ? "\n\nВы подключаете другое устройство — сначала отвяжите текущее."
+      : "";
+
+  return (
+    `На этом аккаунте уже привязано устройство. Одновременно работает только ${status.limit} (по IP в панели).\n\n` +
+    `Сейчас занято:\n${occupied}${replaceNote}\n\n` +
+    `Чтобы заменить: «Мой профиль» → «Мои устройства» → «Сбросить привязки», затем подключитесь снова.`
+  );
+}
+
 export async function fetchMiniappDevices(
   env: BotEnv,
   userId: string
@@ -128,6 +211,7 @@ export async function fetchMiniappDevices(
   const sub = await getSubscription(env, userId);
   const bindings = await listVpnDeviceBindings(env, userId);
   const limit = deviceLimitTotal(sub);
+  const slot = await fetchDeviceSlotStatus(env, userId, sub);
   let panelOnline = false;
 
   if (sub?.client_email) {
@@ -150,8 +234,8 @@ export async function fetchMiniappDevices(
   }));
 
   return {
-    used: bindings.length,
-    limit: limit >= 999 ? bindings.length || 1 : limit,
+    used: Math.max(bindings.length, slot.panelIps.length),
+    limit: limit >= 999 ? Math.max(bindings.length, slot.panelIps.length, 1) : limit,
     panelOnline,
     devices,
   };
@@ -177,6 +261,10 @@ export async function buildMiniappConnectUrl(
   const mappedClient = mapClient(client);
   const user = await getUserByTelegramId(env, tg.id);
   if (user) {
+    const slot = await fetchDeviceSlotStatus(env, user.id, sub);
+    if (isDifferentDeviceAttempt(slot, mappedOs)) {
+      throw new Error(deviceOccupiedMessage(slot, mappedOs));
+    }
     const label = `${OS_LABELS[mappedOs] || mappedOs} · ${CLIENT_LABELS[client] || client}`;
     await upsertVpnDeviceBinding(env, user.id, mappedOs, mappedClient, label);
   }

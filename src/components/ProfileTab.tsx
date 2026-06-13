@@ -149,6 +149,11 @@ export function ProfileTab({ user, fallbackPhoto, onRefresh }: Props) {
                   В панели есть активное подключение (по IP)
                 </p>
               )}
+              {sub.planType !== "personal" && (
+                <p className="profile-card-sub">
+                  Одновременно 1 устройство. Чтобы подключить другое — сбросьте привязки.
+                </p>
+              )}
               {devices.length === 0 ? (
                 <p className="profile-card-sub">
                   Подключитесь во вкладке «Помощь» — устройство появится здесь.
@@ -167,7 +172,7 @@ export function ProfileTab({ user, fallbackPhoto, onRefresh }: Props) {
                   ))}
                 </ul>
               )}
-              {devices.length > 0 && (
+              {(devices.length > 0 || devicesUsed > 0 || sub.panelOnline) && (
                 <button
                   type="button"
                   className="btn btn-ghost btn-pill device-reset-btn"

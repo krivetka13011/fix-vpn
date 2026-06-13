@@ -44,6 +44,11 @@ import {
   type VpnClientId,
 } from "../connect-links";
 import { syncPanelSubIdForUser } from "../panel-sync";
+import {
+  deviceOccupiedMessage,
+  fetchDeviceSlotStatus,
+  isDifferentDeviceAttempt,
+} from "../miniapp-services";
 
 type TgUpdate = {
   message?: {
@@ -248,7 +253,7 @@ async function buildDevicesText(
     `${lastOnlineLine}\n` +
     `<b>Известные устройства</b>\n${bindingLines}\n\n` +
     `<b>IP в панели</b>\n${formatPanelIpRows(panelIps)}\n\n` +
-    `Панель различает устройства по IP. ОС мы показываем, если вы подключались через бота.`
+    `Одновременно работает ${limit} устройство (по IP). Чтобы заменить — «Сбросить все привязки».`
   );
 }
 
@@ -515,18 +520,26 @@ async function activateTrial(env: BotEnv, tg: TelegramUser, chatId: number): Pro
       token,
       chatId,
       env.MSG_TRIAL_SUCCESS ||
-        "Пробный период активирован. Откройте «Подключить VPN» в меню."
+        "Пробный период активирован.\n\n" +
+          "На пробном тарифе одновременно работает <b>1 устройство</b> (1 IP). " +
+          "Чтобы подключить другое — сбросьте привязки в «Мой профиль» → «Мои устройства».\n\n" +
+          "Откройте «Подключить VPN» в меню."
     );
   } catch (error) {
     if (!tester) await releaseTrialClaim(env, tg.id);
     const detail = error instanceof Error ? error.message : "unknown";
     console.error("activateTrial:", detail);
+    const provisioning =
+      detail.includes("клиент не подготовлен") ||
+      detail.includes("подождите");
     await sendMessage(
       token,
       chatId,
       tester
         ? `Тест: ошибка активации — ${detail}`
-        : "Не удалось активировать пробный период. Попробуйте позже или напишите в поддержку."
+        : provisioning
+          ? "Аккаунт ещё готовится (обычно 1–2 минуты).\n\nНажмите /start, подождите и снова «Пробный период»."
+          : "Не удалось активировать пробный период. Попробуйте позже или напишите в поддержку."
     );
   }
 }
@@ -638,7 +651,7 @@ async function resetDeviceBinding(
     const text = await buildDevicesText(env, user.id, sub.client_email);
     const notice =
       `<b>Привязки сброшены</b>\n\n` +
-      `IP-ограничения в панели очищены. Клиент и ссылка подписки в панели не удаляются — повторное подключение использует ту же ссылку.\n\n` +
+      `IP-ограничения в панели очищены. Теперь можно подключить другое устройство через «Подключить VPN».\n\n` +
       text;
     if (messageId) {
       await editMessage(token, chatId, messageId, notice, devicesKeyboard());
@@ -866,7 +879,28 @@ export async function handleClientBotUpdate(
           { inline_keyboard: [[{ text: "Назад", callback_data: "c:menu" }]] }
         );
       } else {
-        await editMessage(token, chatId, messageId, "Выберите ОС:", connectOsKeyboard());
+        const slot = await fetchDeviceSlotStatus(env, user.id, sub);
+        const warning = slot.slotTaken
+          ? `<b>Устройство уже привязано</b>\n\n${deviceOccupiedMessage(slot)}\n\n`
+          : sub.is_trial
+            ? `<b>Пробный период</b>\nОдновременно работает 1 устройство. Сменить можно через «Мой профиль» → «Мои устройства».\n\n`
+            : "";
+        const osRows = connectOsKeyboard().inline_keyboard.slice(0, -1);
+        await editMessage(
+          token,
+          chatId,
+          messageId,
+          `${warning}Выберите ОС:`,
+          slot.slotTaken
+            ? {
+                inline_keyboard: [
+                  [{ text: "Мои устройства / сброс", callback_data: "c:devices" }],
+                  ...osRows,
+                  [{ text: "Назад", callback_data: "c:menu" }],
+                ],
+              }
+            : connectOsKeyboard()
+        );
       }
       await answerCallback(token, cq.id);
       return;
@@ -888,6 +922,14 @@ export async function handleClientBotUpdate(
           "Ссылка подписки временно недоступна. Удалите старую подписку в Happ и повторите через минуту.",
           { showAlert: true }
         );
+        return;
+      }
+
+      const slot = await fetchDeviceSlotStatus(env, user.id, sub);
+      if (isDifferentDeviceAttempt(slot, os)) {
+        await answerCallback(token, cq.id, deviceOccupiedMessage(slot, os), {
+          showAlert: true,
+        });
         return;
       }
 

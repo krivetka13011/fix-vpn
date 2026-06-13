@@ -63,7 +63,17 @@ export async function resetPanelDeviceBinding(
   }
 
   const xui = new XuiApi(env);
-  await xui.clearClientIps(sub.client_email.trim());
+  try {
+    await xui.clearClientIps(sub.client_email.trim());
+  } catch (panelError) {
+    console.error("resetPanelDeviceBinding panel:", panelError);
+    await patchSubscription(env, userId, {
+      panel_ip_clear_requested_at: new Date().toISOString(),
+    });
+    throw new Error(
+      "Панель временно недоступна с сервера. Сброс поставлен в очередь (обычно до 2 минут). Не нажимайте кнопку повторно."
+    );
+  }
 
   await clearVpnDeviceBindings(env, userId);
   await clearDeviceSwapState(env, userId);

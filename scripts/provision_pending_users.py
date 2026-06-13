@@ -5,6 +5,7 @@ import random
 import string
 import sys
 import uuid
+from datetime import datetime, timezone
 
 import requests
 import urllib3
@@ -306,7 +307,10 @@ def clear_pending_panel_ips(sb: str, session: requests.Session, base: str) -> in
             requests.patch(
                 sb + f"subscriptions?user_id=eq.{row['user_id']}",
                 headers=sb_headers(),
-                json={"panel_ip_clear_requested_at": None},
+                json={
+                    "panel_ip_clear_requested_at": None,
+                    "last_device_reset": datetime.now(timezone.utc).isoformat(),
+                },
                 timeout=30,
             )
             cleared += 1

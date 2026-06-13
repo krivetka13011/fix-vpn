@@ -140,8 +140,9 @@ export async function panelSubscriptionIsLive(
   const path = (env.SUBSCRIPTION_PATH || "/sub").replace(/\/$/, "");
   const encoded = encodeURIComponent(subId);
   const bases = [
-    `https://${resolveVpnHost(env)}:2096`,
+    workerSubscriptionFetchBase(env),
     subscriptionClientBaseUrl(env),
+    `https://${resolveVpnHost(env)}:2096`,
     subscriptionBaseUrl(env),
   ].filter((base, index, list) => base && list.indexOf(base) === index);
 

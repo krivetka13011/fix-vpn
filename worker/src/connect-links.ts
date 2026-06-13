@@ -178,9 +178,7 @@ export async function buildClientImportTarget(
   if (client === "happ") {
     const alive = await panelSubscriptionIsLive(env, subId);
     if (!alive) {
-      throw new Error(
-        "Подписка в панели не найдена. Подождите минуту и повторите подключение."
-      );
+      console.error("panelSubscriptionIsLive false for", subId);
     }
     return encryptHappLink(buildHappSubscriptionUrl(env, subId));
   }

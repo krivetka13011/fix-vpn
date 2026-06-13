@@ -118,6 +118,35 @@ def add_panel_client(session, base, email, sub_id, client_uuid, tg_id):
     raise RuntimeError(data)
 
 
+def clear_pending_panel_ips(sb: str, session: requests.Session, base: str) -> int:
+    pending = requests.get(
+        sb
+        + "subscriptions?panel_ip_clear_requested_at=not.is.null&select=user_id,client_email&client_email=not.is.null",
+        headers={**sb_headers("return=representation"), "Prefer": "return=representation"},
+        timeout=30,
+    ).json()
+    cleared = 0
+    for row in pending:
+        email = str(row.get("client_email") or "").strip()
+        if not email:
+            continue
+        response = session.post(
+            f"{base}/panel/api/clients/clearIps/{email}",
+            json={},
+            timeout=30,
+        )
+        if response.ok or "success" in response.text.lower():
+            requests.patch(
+                sb + f"subscriptions?user_id=eq.{row['user_id']}",
+                headers=sb_headers(),
+                json={"panel_ip_clear_requested_at": None},
+                timeout=30,
+            )
+            cleared += 1
+            print("cleared panel ips for", email)
+    return cleared
+
+
 def main():
     load_env()
     for name in ("SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "XUI_BASE_URL", "XUI_API_TOKEN"):
@@ -139,6 +168,7 @@ def main():
         return
 
     session, base = panel_session()
+    ip_cleared = clear_pending_panel_ips(sb, session, base)
     clients = scan_clients(session, base)
     provisioned = 0
 
@@ -216,7 +246,7 @@ def main():
         )
         provisioned += 1
 
-    print(f"provisioned {provisioned}/{len(rows)}")
+    print(f"provisioned {provisioned}/{len(rows)}, ip_clears {ip_cleared}")
 
 
 if __name__ == "__main__":

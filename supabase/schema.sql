@@ -31,6 +31,7 @@ create table if not exists subscriptions (
   client_email text,
   is_trial boolean not null default false,
   extra_devices int not null default 0,
+  panel_ip_clear_requested_at timestamptz,
   purchased_at timestamptz,
   updated_at timestamptz not null default now()
 );

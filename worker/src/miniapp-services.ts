@@ -195,7 +195,7 @@ export function deviceOccupiedMessage(
   return (
     `На этом аккаунте уже привязано устройство. Одновременно работает только ${status.limit} (по IP в панели).\n\n` +
     `Сейчас занято:\n${occupied}${replaceNote}\n\n` +
-    `Чтобы заменить: «Мой профиль» → «Мои устройства» → «Сбросить привязки», затем подключитесь снова.`
+    `Чтобы заменить: «Мой профиль» → нажмите устройство или «Сбросить все».`
   );
 }
 
@@ -234,8 +234,8 @@ export async function fetchMiniappDevices(
   }));
 
   return {
-    used: Math.max(bindings.length, slot.panelIps.length),
-    limit: limit >= 999 ? Math.max(bindings.length, slot.panelIps.length, 1) : limit,
+    used: slot.slotTaken ? Math.min(limit, 1) : 0,
+    limit: limit >= 999 ? Math.max(bindings.length, 1) : limit,
     panelOnline,
     devices,
   };
@@ -265,6 +265,9 @@ export async function buildMiniappConnectUrl(
     if (isDifferentDeviceAttempt(slot, mappedOs)) {
       throw new Error(deviceOccupiedMessage(slot, mappedOs));
     }
+    if (deviceLimitTotal(sub) <= 1) {
+      await clearVpnDeviceBindings(env, user.id);
+    }
     const label = `${OS_LABELS[mappedOs] || mappedOs} · ${CLIENT_LABELS[client] || client}`;
     await upsertVpnDeviceBinding(env, user.id, mappedOs, mappedClient, label);
   }
@@ -281,9 +284,16 @@ export async function resetMiniappDevices(env: BotEnv, tg: TelegramUser): Promis
   const sub = await getSubscription(env, user.id);
   if (!sub?.client_email) throw new Error("Нет активного клиента в панели");
 
-  const xui = new XuiApi(env);
-  await xui.clearClientIps(sub.client_email);
   await clearVpnDeviceBindings(env, user.id);
+  try {
+    const xui = new XuiApi(env);
+    await xui.clearClientIps(sub.client_email);
+    await patchSubscription(env, user.id, { panel_ip_clear_requested_at: null });
+  } catch {
+    await patchSubscription(env, user.id, {
+      panel_ip_clear_requested_at: new Date().toISOString(),
+    });
+  }
 }
 
 export function subscriptionPeriodText(sub: {

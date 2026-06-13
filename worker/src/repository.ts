@@ -611,6 +611,21 @@ export async function upsertVpnDeviceBinding(
   });
 }
 
+export async function deleteVpnDeviceBinding(
+  env: SupabaseEnv,
+  userId: string,
+  bindingId: string
+): Promise<void> {
+  await sbRequest(
+    env,
+    `vpn_device_bindings?id=eq.${encodeURIComponent(bindingId)}&user_id=eq.${userId}`,
+    {
+      method: "DELETE",
+      headers: { Prefer: "return=minimal" },
+    }
+  );
+}
+
 export async function clearVpnDeviceBindings(
   env: SupabaseEnv,
   userId: string

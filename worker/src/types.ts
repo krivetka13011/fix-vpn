@@ -34,6 +34,7 @@ export interface DbSubscription {
   is_trial?: boolean;
   extra_devices: number;
   purchased_at: string | null;
+  panel_ip_clear_requested_at?: string | null;
   updated_at: string;
 }
 

@@ -12,6 +12,7 @@ import {
   getTransaction,
   claimTrialByTelegramId,
   clearVpnDeviceBindings,
+  deleteVpnDeviceBinding,
   listVpnDeviceBindings,
   patchSubscription,
   patchTransaction,
@@ -185,86 +186,85 @@ async function recordDeviceConnect(
   os: string,
   vpnClient: VpnClientId
 ): Promise<void> {
-  const label = `${osLabel(os)} · ${clientLabel(vpnClient)}`;
+  const sub = await getSubscription(env, userId);
+  if (deviceLimitTotal(sub) <= 1) {
+    await clearVpnDeviceBindings(env, userId);
+  }
+  const label = `${deviceDisplayName(os, vpnClient)}`;
   await upsertVpnDeviceBinding(env, userId, os, vpnClient, label);
 }
 
-function formatPanelIpRows(ips: PanelDeviceIp[]): string {
-  if (ips.length === 0) return "Нет записанных IP в панели.";
-  return ips
-    .map((row, index) => {
-      const seen = row.seenAt ? ` · ${row.seenAt}` : "";
-      return `${index + 1}. <code>${row.ip}</code>${seen}`;
-    })
-    .join("\n");
+function deviceDisplayName(os: string, vpnClient: string): string {
+  const osNames: Record<string, string> = {
+    ios: "iPhone / iPad",
+    android: "Android",
+    windows: "Windows ПК",
+    macos: "Mac",
+  };
+  const osName = osNames[os] || osLabel(os);
+  return `${osName} · ${clientLabel(vpnClient as VpnClientId)}`;
 }
 
-async function buildDevicesText(
+function deviceSlotUsed(
+  limit: number,
+  bindingsCount: number,
+  panelIpsCount: number
+): number {
+  if (bindingsCount <= 0 && panelIpsCount <= 0) return 0;
+  return Math.min(limit, Math.max(bindingsCount, panelIpsCount, 1));
+}
+
+async function tryClearPanelIps(
   env: BotEnv,
   userId: string,
-  clientEmail: string | null | undefined
-): Promise<string> {
-  const sub = await getSubscription(env, userId);
-  const bindings = await listVpnDeviceBindings(env, userId);
-  const limit = deviceLimitTotal(sub);
-  const usedCount = Math.max(bindings.length, 0);
-  let online = false;
-  let panelIps: PanelDeviceIp[] = [];
-  let lastOnlineMs = 0;
-
-  if (clientEmail) {
-    try {
-      const xui = new XuiApi(env);
-      const [ips, onlineEmails, lastOnlineMap] = await Promise.all([
-        xui.getClientIps(clientEmail),
-        xui.getOnlineClientEmails(),
-        xui.getLastOnlineByEmail(),
-      ]);
-      panelIps = ips;
-      online = onlineEmails.includes(clientEmail);
-      lastOnlineMs = lastOnlineMap[clientEmail] || 0;
-    } catch (error) {
-      console.error("buildDevicesText:", error);
-    }
+  clientEmail: string
+): Promise<{ ok: boolean; detail?: string }> {
+  try {
+    const xui = new XuiApi(env);
+    await xui.clearClientIps(clientEmail);
+    await patchSubscription(env, userId, { panel_ip_clear_requested_at: null });
+    return { ok: true };
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : "unknown";
+    await patchSubscription(env, userId, {
+      panel_ip_clear_requested_at: new Date().toISOString(),
+    });
+    return { ok: false, detail };
   }
-
-  const bindingLines =
-    bindings.length > 0
-      ? bindings
-          .map((row, index) => {
-            return (
-              `${index + 1}. <b>${row.label}</b>\n` +
-              `   Последний вход: ${formatDateTime(row.last_seen_at)}`
-            );
-          })
-          .join("\n\n")
-      : "Пока нет устройств, подключённых через бота.\nВыберите «Подключить VPN» и укажите ОС — мы запомним её здесь.";
-
-  const lastOnlineLine =
-    lastOnlineMs > 0
-      ? `Последняя активность в панели: ${formatDateTime(lastOnlineMs)}\n`
-      : online
-        ? "В панели есть активное подключение.\n"
-        : "";
-
-  return (
-    `<b>Устройства</b>\n\n` +
-    `Слоты: ${usedCount} / ${limit}\n` +
-    `${lastOnlineLine}\n` +
-    `<b>Известные устройства</b>\n${bindingLines}\n\n` +
-    `<b>IP в панели</b>\n${formatPanelIpRows(panelIps)}\n\n` +
-    `Одновременно работает ${limit} устройство (по IP). Чтобы заменить — «Сбросить все привязки».`
-  );
 }
 
-function devicesKeyboard(): Record<string, unknown> {
-  return {
-    inline_keyboard: [
-      [{ text: "Обновить список", callback_data: "c:devices" }],
-      [{ text: "Сбросить все привязки", callback_data: "c:resetip" }],
-      [{ text: "Назад в профиль", callback_data: "c:profile" }],
-    ],
-  };
+function buildProfileKeyboard(
+  bindings: Awaited<ReturnType<typeof listVpnDeviceBindings>>,
+  panelIps: PanelDeviceIp[],
+  hasSlot: boolean
+): Record<string, unknown> {
+  const rows: Array<Array<{ text: string; callback_data: string }>> = [];
+
+  for (const row of bindings) {
+    rows.push([
+      {
+        text: `✕ ${row.label || deviceDisplayName(row.os, row.vpn_client)}`,
+        callback_data: `c:unbind:${row.id}`,
+      },
+    ]);
+  }
+
+  if (panelIps.length > 0 && bindings.length === 0) {
+    const ip = panelIps[0].ip;
+    rows.push([
+      {
+        text: `✕ Подключение · ${ip}`,
+        callback_data: "c:resetip",
+      },
+    ]);
+  }
+
+  if (hasSlot) {
+    rows.push([{ text: "Сбросить все устройства", callback_data: "c:resetip" }]);
+  }
+
+  rows.push([{ text: "Назад", callback_data: "c:menu" }]);
+  return { inline_keyboard: rows };
 }
 
 async function persistProvision(
@@ -521,8 +521,8 @@ async function activateTrial(env: BotEnv, tg: TelegramUser, chatId: number): Pro
       chatId,
       env.MSG_TRIAL_SUCCESS ||
         "Пробный период активирован.\n\n" +
-          "На пробном тарифе одновременно работает <b>1 устройство</b> (1 IP). " +
-          "Чтобы подключить другое — сбросьте привязки в «Мой профиль» → «Мои устройства».\n\n" +
+          "На пробном тарифе одновременно работает <b>1 устройство</b>. " +
+          "Сменить — «Мой профиль» → нажмите устройство или «Сбросить все».\n\n" +
           "Откройте «Подключить VPN» в меню."
     );
   } catch (error) {
@@ -595,78 +595,110 @@ async function showProfile(
   env: BotEnv,
   chatId: number,
   tg: TelegramUser,
-  messageId: number
+  messageId: number,
+  notice?: string
 ): Promise<void> {
   const token = clientBotToken(env)!;
   const user = await upsertTelegramUser(env, tg);
   const sub = await getSubscription(env, user.id);
+  const bindings = await listVpnDeviceBindings(env, user.id);
+  const limit = deviceLimitTotal(sub);
+  let panelIps: PanelDeviceIp[] = [];
+
+  if (sub?.client_email) {
+    try {
+      panelIps = await new XuiApi(env).getClientIps(sub.client_email);
+    } catch (error) {
+      console.error("showProfile panel ips:", error);
+    }
+  }
+
+  const used = deviceSlotUsed(limit, bindings.length, panelIps.length);
+  const hasSlot = used > 0;
   const status = sub?.status || "none";
   const period = formatSubscriptionPeriod(sub?.starts_at, sub?.ends_at, sub?.plan_label);
+  const statusLabel =
+    status === "active"
+      ? sub?.is_trial
+        ? "пробный период"
+        : "активна"
+      : status === "expired"
+        ? "истекла"
+        : "нет подписки";
+
+  const deviceLine = hasSlot
+    ? `Устройство: <b>${used} из ${limit}</b> · занято`
+    : `Устройство: <b>свободно</b> (${limit} слот)`;
+
+  const hint = hasSlot
+    ? "Нажмите устройство ниже, чтобы отвязать. Можно подключить другое после отвязки."
+    : "Подключите VPN в главном меню — устройство появится здесь.";
+
   const text =
+    (notice ? `${notice}\n\n` : "") +
     `<b>Мой профиль</b>\n\n` +
-    `Статус: ${status === "active" ? (sub?.is_trial ? "пробный период" : "активна") : status === "expired" ? "истекла" : "нет подписки"}\n` +
+    `Статус: ${statusLabel}\n` +
     `Период: ${period}\n` +
-    `Устройства: ${deviceLimitTotal(sub)} слот(ов)\n\n` +
-    `Ключи и UUID в чате не показываем.`;
-  await editMessage(token, chatId, messageId, text, {
-    inline_keyboard: [
-      [{ text: "Мои устройства", callback_data: "c:devices" }],
-      [{ text: "Назад", callback_data: "c:menu" }],
-    ],
-  });
+    `${deviceLine}\n\n` +
+    hint;
+
+  await editMessage(token, chatId, messageId, text, buildProfileKeyboard(bindings, panelIps, hasSlot));
 }
 
-async function showDevices(
+async function unbindSingleDevice(
   env: BotEnv,
-  chatId: number,
   tg: TelegramUser,
-  messageId: number
+  chatId: number,
+  messageId: number,
+  bindingId: string
 ): Promise<void> {
   const token = clientBotToken(env)!;
-  const user = await upsertTelegramUser(env, tg);
+  const user = await getUserByTelegramId(env, tg.id);
+  if (!user) return;
   const sub = await getSubscription(env, user.id);
-  const text = await buildDevicesText(env, user.id, sub?.client_email);
-  await editMessage(token, chatId, messageId, text, devicesKeyboard());
+
+  await deleteVpnDeviceBinding(env, user.id, bindingId);
+
+  let panelNote = "";
+  if (sub?.client_email) {
+    const left = await listVpnDeviceBindings(env, user.id);
+    if (left.length === 0 || deviceLimitTotal(sub) <= 1) {
+      const cleared = await tryClearPanelIps(env, user.id, sub.client_email);
+      panelNote = cleared.ok
+        ? "Устройство отвязано."
+        : "Устройство отвязано в боте. Очистка IP в панели займёт до 5 минут — затем подключите новое.";
+    } else {
+      panelNote = "Устройство отвязано.";
+    }
+  } else {
+    panelNote = "Устройство отвязано.";
+  }
+
+  await showProfile(env, chatId, tg, messageId, `<b>${panelNote}</b>`);
 }
 
 async function resetDeviceBinding(
   env: BotEnv,
   tg: TelegramUser,
   chatId: number,
-  messageId?: number
+  messageId: number
 ): Promise<void> {
-  const token = clientBotToken(env)!;
   const user = await getUserByTelegramId(env, tg.id);
   if (!user) return;
   await resolvePanelSubId(env, user, tg);
   const sub = await getSubscription(env, user.id);
   if (!sub?.client_email) {
-    await sendMessage(token, chatId, "Нет активного клиента в панели.");
+    await showProfile(env, chatId, tg, messageId, "<b>Нет активного клиента в панели.</b>");
     return;
   }
-  try {
-    const xui = new XuiApi(env);
-    await xui.clearClientIps(sub.client_email);
-    await clearVpnDeviceBindings(env, user.id);
-    const text = await buildDevicesText(env, user.id, sub.client_email);
-    const notice =
-      `<b>Привязки сброшены</b>\n\n` +
-      `IP-ограничения в панели очищены. Теперь можно подключить другое устройство через «Подключить VPN».\n\n` +
-      text;
-    if (messageId) {
-      await editMessage(token, chatId, messageId, notice, devicesKeyboard());
-    } else {
-      await sendMessage(token, chatId, notice, devicesKeyboard());
-    }
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : "unknown";
-    console.error("resetDeviceBinding:", detail);
-    await sendMessage(
-      token,
-      chatId,
-      `Не удалось сбросить привязки: ${detail}\nПопробуйте позже.`
-    );
-  }
+
+  await clearVpnDeviceBindings(env, user.id);
+  const cleared = await tryClearPanelIps(env, user.id, sub.client_email);
+  const notice = cleared.ok
+    ? "<b>Все устройства сброшены.</b> Можно подключить VPN на новом устройстве."
+    : "<b>Привязки в боте сброшены.</b> Очистка IP в панели займёт до 5 минут — затем подключите новое устройство.";
+
+  await showProfile(env, chatId, tg, messageId, notice);
 }
 
 export async function handleManagerClientCallback(
@@ -851,18 +883,23 @@ export async function handleClientBotUpdate(
       await answerCallback(token, cq.id);
       return;
     }
-    if (data === "c:profile") {
+    if (data === "c:profile" || data === "c:devices") {
       await showProfile(env, chatId, tg, messageId);
       await answerCallback(token, cq.id);
       return;
     }
-    if (data === "c:devices") {
-      await answerCallback(token, cq.id, "Обновляем список…");
-      await showDevices(env, chatId, tg, messageId);
+    if (data.startsWith("c:unbind:")) {
+      const bindingId = data.slice("c:unbind:".length).trim();
+      if (!bindingId) {
+        await answerCallback(token, cq.id, "Устройство не найдено", { showAlert: true });
+        return;
+      }
+      await answerCallback(token, cq.id, "Отвязываем…");
+      await unbindSingleDevice(env, tg, chatId, messageId, bindingId);
       return;
     }
     if (data === "c:resetip") {
-      await answerCallback(token, cq.id, "Сбрасываем привязки…");
+      await answerCallback(token, cq.id, "Сбрасываем…");
       await resetDeviceBinding(env, tg, chatId, messageId);
       return;
     }
@@ -883,7 +920,7 @@ export async function handleClientBotUpdate(
         const warning = slot.slotTaken
           ? `<b>Устройство уже привязано</b>\n\n${deviceOccupiedMessage(slot)}\n\n`
           : sub.is_trial
-            ? `<b>Пробный период</b>\nОдновременно работает 1 устройство. Сменить можно через «Мой профиль» → «Мои устройства».\n\n`
+            ? `<b>Пробный период</b>\nОдновременно 1 устройство. Сменить — «Мой профиль».\n\n`
             : "";
         const osRows = connectOsKeyboard().inline_keyboard.slice(0, -1);
         await editMessage(
@@ -894,7 +931,7 @@ export async function handleClientBotUpdate(
           slot.slotTaken
             ? {
                 inline_keyboard: [
-                  [{ text: "Мои устройства / сброс", callback_data: "c:devices" }],
+                  [{ text: "Мой профиль · отвязать", callback_data: "c:profile" }],
                   ...osRows,
                   [{ text: "Назад", callback_data: "c:menu" }],
                 ],

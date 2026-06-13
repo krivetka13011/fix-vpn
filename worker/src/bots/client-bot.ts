@@ -36,6 +36,7 @@ import {
 import { BILLING_OPTIONS, calcPrice, periodLabel, type BillingMonths } from "./pricing";
 import { managerTxnKeyboard, notifyManager } from "./manager";
 import { handleManagerPartnerCallback } from "./partner-bot";
+import { clearDeviceSwapState } from "../subscription-rotate";
 import {
   buildPanelSubscriptionUrlForUser,
   buildRedirectUrl,
@@ -45,13 +46,6 @@ import {
   type VpnClientId,
 } from "../connect-links";
 import { syncPanelSubIdForUser } from "../panel-sync";
-import {
-  deviceOccupiedMessage,
-  fetchDeviceSlotStatus,
-  isDifferentDeviceAttempt,
-} from "../miniapp-services";
-import { subscriptionDeviceLimit } from "../device-limit";
-import { isSubRotatePending, rotateSubscriptionAccess } from "../subscription-rotate";
 
 type TgUpdate = {
   message?: {
@@ -178,27 +172,6 @@ function formatDateTime(isoOrMs: string | number): string {
   return `${pad(date.getDate())}.${pad(date.getMonth() + 1)}.${date.getFullYear()} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
-function deviceLimitLabel(sub: Awaited<ReturnType<typeof getSubscription>>): string {
-  const limit = subscriptionDeviceLimit(sub);
-  if (limit === 0) return "без ограничений";
-  return String(limit);
-}
-
-async function recordDeviceConnect(
-  env: BotEnv,
-  userId: string,
-  os: string,
-  vpnClient: VpnClientId
-): Promise<void> {
-  const sub = await getSubscription(env, userId);
-  const limit = subscriptionDeviceLimit(sub);
-  if (limit > 0 && limit <= 1) {
-    await clearVpnDeviceBindings(env, userId);
-  }
-  const label = `${deviceDisplayName(os, vpnClient)}`;
-  await upsertVpnDeviceBinding(env, userId, os, vpnClient, label);
-}
-
 function deviceDisplayName(os: string, vpnClient: string): string {
   const osNames: Record<string, string> = {
     ios: "iPhone / iPad",
@@ -210,20 +183,14 @@ function deviceDisplayName(os: string, vpnClient: string): string {
   return `${osName} · ${clientLabel(vpnClient as VpnClientId)}`;
 }
 
-function deviceSlotUsed(
-  limit: number,
-  bindingsCount: number,
-  panelIpsCount: number
-): number {
-  if (bindingsCount <= 0 && panelIpsCount <= 0) return 0;
-  return Math.min(limit, Math.max(bindingsCount, panelIpsCount, 1));
-}
-
-function rotateNotice(pending: boolean): string {
-  if (pending) {
-    return "Ссылка подписки обновляется (1–2 мин). Удалите старый Encrypted в Happ и импортируйте заново через бота.";
-  }
-  return "Ссылка подписки обновлена. Удалите старый Encrypted в Happ и подключите заново через бота.";
+async function recordDeviceConnect(
+  env: BotEnv,
+  userId: string,
+  os: string,
+  vpnClient: VpnClientId
+): Promise<void> {
+  const label = `${deviceDisplayName(os, vpnClient)}`;
+  await upsertVpnDeviceBinding(env, userId, os, vpnClient, label);
 }
 
 function buildProfileKeyboard(
@@ -599,8 +566,14 @@ async function showProfile(
   const token = clientBotToken(env)!;
   const user = await upsertTelegramUser(env, tg);
   const sub = await getSubscription(env, user.id);
+  if (
+    sub?.panel_sub_rotate_requested_at ||
+    sub?.pending_xray_sub_id ||
+    sub?.panel_ip_clear_requested_at
+  ) {
+    await clearDeviceSwapState(env, user.id);
+  }
   const bindings = await listVpnDeviceBindings(env, user.id);
-  const limit = subscriptionDeviceLimit(sub);
   let panelIps: PanelDeviceIp[] = [];
 
   if (sub?.client_email) {
@@ -611,9 +584,8 @@ async function showProfile(
     }
   }
 
-  const used = limit === 0 ? bindings.length : deviceSlotUsed(limit, bindings.length, 0);
+  const used = bindings.length;
   const hasSlot = used > 0;
-  const rotatePending = isSubRotatePending(sub);
   const status = sub?.status || "none";
   const period = formatSubscriptionPeriod(sub?.starts_at, sub?.ends_at, sub?.plan_label);
   const statusLabel =
@@ -625,18 +597,13 @@ async function showProfile(
         ? "истекла"
         : "нет подписки";
 
-  const limitLabel = deviceLimitLabel(sub);
   const deviceLine = hasSlot
-    ? `Устройство: <b>${used} из ${limitLabel}</b> · занято`
-    : rotatePending
-      ? `Устройство: <b>новая ссылка готовится</b> (1–2 мин)`
-      : limit === 0
-        ? `Устройство: <b>свободно</b>`
-        : `Устройство: <b>свободно</b> (${limitLabel} слот)`;
+    ? `Устройства: <b>${used}</b> · привязано`
+    : `Устройство: <b>свободно</b>`;
 
   const hint = hasSlot
-    ? "Нажмите устройство ниже, чтобы отвязать. После отвязки ссылка обновится — импортируйте заново в Happ."
-    : "Подключите VPN в главном меню — устройство появится здесь. В панели один клиент на аккаунт.";
+    ? "Нажмите устройство ниже, чтобы отвязать. Можно подключить другое без ожидания."
+    : "Подключите VPN в главном меню — устройство появится здесь.";
 
   const text =
     (notice ? `${notice}\n\n` : "") +
@@ -662,17 +629,9 @@ async function unbindSingleDevice(
   const sub = await getSubscription(env, user.id);
 
   await deleteVpnDeviceBinding(env, user.id, bindingId);
+  await clearDeviceSwapState(env, user.id);
 
-  let panelNote = "Устройство отвязано.";
-  if (sub?.client_email) {
-    const left = await listVpnDeviceBindings(env, user.id);
-    if (left.length === 0) {
-      const rotated = await rotateSubscriptionAccess(env, user.id, sub);
-      panelNote = rotateNotice(rotated.pending);
-    }
-  }
-
-  await showProfile(env, chatId, tg, messageId, `<b>${panelNote}</b>`);
+  await showProfile(env, chatId, tg, messageId, "<b>Устройство отвязано. Можно подключить другое.</b>");
 }
 
 async function resetDeviceBinding(
@@ -691,12 +650,15 @@ async function resetDeviceBinding(
   }
 
   await clearVpnDeviceBindings(env, user.id);
-  const rotated = await rotateSubscriptionAccess(env, user.id, sub);
-  const notice = rotated.pending
-    ? `<b>Все устройства сброшены.</b> ${rotateNotice(true)}`
-    : `<b>Все устройства сброшены.</b> ${rotateNotice(false)}`;
+  await clearDeviceSwapState(env, user.id);
 
-  await showProfile(env, chatId, tg, messageId, notice);
+  await showProfile(
+    env,
+    chatId,
+    tg,
+    messageId,
+    "<b>Все устройства сброшены.</b> Можно подключить VPN на новом устройстве."
+  );
 }
 
 export async function handleManagerClientCallback(
@@ -914,29 +876,14 @@ export async function handleClientBotUpdate(
           { inline_keyboard: [[{ text: "Назад", callback_data: "c:menu" }]] }
         );
       } else {
-        const slot = await fetchDeviceSlotStatus(env, user.id, sub);
-        const warning = slot.slotTaken
-          ? `<b>Устройство уже привязано</b>\n\n${deviceOccupiedMessage(slot)}\n\n`
-          : isSubRotatePending(sub)
-            ? `<b>Смена устройства</b>\nГотовится новая ссылка (1–2 мин). Удалите старый Encrypted в Happ.\n\n`
-            : sub.is_trial
-              ? `<b>Пробный период</b>\n1 устройство в боте. Сменить: «Мой профиль» → отвязать → новый импорт в Happ.\n\n`
-              : "";
+        const warning = "";
         const osRows = connectOsKeyboard().inline_keyboard.slice(0, -1);
         await editMessage(
           token,
           chatId,
           messageId,
           `${warning}Выберите ОС:`,
-          slot.slotTaken
-            ? {
-                inline_keyboard: [
-                  [{ text: "Мой профиль · отвязать", callback_data: "c:profile" }],
-                  ...osRows,
-                  [{ text: "Назад", callback_data: "c:menu" }],
-                ],
-              }
-            : connectOsKeyboard()
+          connectOsKeyboard()
         );
       }
       await answerCallback(token, cq.id);
@@ -951,16 +898,6 @@ export async function handleClientBotUpdate(
         return;
       }
 
-      if (isSubRotatePending(sub)) {
-        await answerCallback(
-          token,
-          cq.id,
-          "Готовится новая ссылка (1–2 мин). Удалите старый Encrypted в Happ и повторите.",
-          { showAlert: true }
-        );
-        return;
-      }
-
       const subId = await resolvePanelSubId(env, user, tg);
       if (!subId) {
         await answerCallback(
@@ -969,14 +906,6 @@ export async function handleClientBotUpdate(
           "Ссылка подписки временно недоступна. Удалите старую подписку в Happ и повторите через минуту.",
           { showAlert: true }
         );
-        return;
-      }
-
-      const slot = await fetchDeviceSlotStatus(env, user.id, sub);
-      if (isDifferentDeviceAttempt(slot, os)) {
-        await answerCallback(token, cq.id, deviceOccupiedMessage(slot, os), {
-          showAlert: true,
-        });
         return;
       }
 

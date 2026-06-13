@@ -14,7 +14,7 @@ import {
 import type { TelegramUser } from "./telegram";
 import { XuiApi, type PanelDeviceIp } from "./xui";
 import { subscriptionDeviceLimit } from "./device-limit";
-import { isSubRotatePending, rotateSubscriptionAccess } from "./subscription-rotate";
+import { clearDeviceSwapState } from "./subscription-rotate";
 
 const OS_LABELS: Record<string, string> = {
   android: "Android",
@@ -145,7 +145,7 @@ export async function fetchDeviceSlotStatus(
   }
 
   const unlimited = limit === 0;
-  const slotTaken = !unlimited && bindings.length >= limit;
+  const slotTaken = false;
 
   return {
     limit,
@@ -249,11 +249,6 @@ export async function buildMiniappConnectUrl(
   if (sub?.status !== "active") {
     throw new Error("Сначала активируйте подписку или пробный период");
   }
-  if (isSubRotatePending(sub)) {
-    throw new Error(
-      "Готовится новая ссылка (1–2 мин). Удалите старый Encrypted в Happ и повторите."
-    );
-  }
 
   const subId = await resolvePanelSubIdForUser(env, tg);
   if (!subId) {
@@ -267,9 +262,6 @@ export async function buildMiniappConnectUrl(
     const slot = await fetchDeviceSlotStatus(env, user.id, sub);
     if (isDifferentDeviceAttempt(slot, mappedOs)) {
       throw new Error(deviceOccupiedMessage(slot, mappedOs));
-    }
-    if (subscriptionDeviceLimit(sub) <= 1) {
-      await clearVpnDeviceBindings(env, user.id);
     }
     const label = `${OS_LABELS[mappedOs] || mappedOs} · ${CLIENT_LABELS[client] || client}`;
     await upsertVpnDeviceBinding(env, user.id, mappedOs, mappedClient, label);
@@ -288,12 +280,7 @@ export async function resetMiniappDevices(env: BotEnv, tg: TelegramUser): Promis
   if (!sub?.client_email) throw new Error("Нет активного клиента в панели");
 
   await clearVpnDeviceBindings(env, user.id);
-  const rotated = await rotateSubscriptionAccess(env, user.id, sub);
-  if (rotated.pending) {
-    throw new Error(
-      "Привязки сброшены. Новая ссылка готовится (1–2 мин) — удалите старый Encrypted в Happ и импортируйте заново."
-    );
-  }
+  await clearDeviceSwapState(env, user.id);
 }
 
 export function subscriptionPeriodText(sub: {

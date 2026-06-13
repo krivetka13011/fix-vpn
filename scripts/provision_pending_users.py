@@ -308,6 +308,24 @@ def clear_pending_panel_ips(sb: str, session: requests.Session, base: str) -> in
     return cleared
 
 
+def clear_stuck_swap_flags(sb: str) -> int:
+    response = requests.patch(
+        sb
+        + "subscriptions?or=(panel_sub_rotate_requested_at.not.is.null,panel_ip_clear_requested_at.not.is.null,pending_xray_sub_id.not.is.null)",
+        headers=sb_headers(),
+        json={
+            "panel_sub_rotate_requested_at": None,
+            "panel_ip_clear_requested_at": None,
+            "pending_xray_sub_id": None,
+        },
+        timeout=30,
+    )
+    cleared = len(response.json()) if response.ok else 0
+    if cleared:
+        print("cleared stuck swap flags", cleared)
+    return cleared
+
+
 def process_pending_sub_rotations(sb: str, session: requests.Session, base: str, clients: list, worker: str) -> int:
     pending = requests.get(
         sb
@@ -434,6 +452,7 @@ def main():
     ).json()
 
     session, base = panel_session()
+    flags_cleared = clear_stuck_swap_flags(sb)
     ip_cleared = clear_pending_panel_ips(sb, session, base)
     clients = dedupe_clients_index(scan_clients(session, base))
     dupes_removed = dedupe_panel_clients(sb, session, base, clients, rows)
@@ -444,7 +463,7 @@ def main():
 
     if not rows:
         print(
-            f"no users, ip_clears {ip_cleared}, dupes {dupes_removed}, "
+            f"no users, flags {flags_cleared}, ip_clears {ip_cleared}, dupes {dupes_removed}, "
             f"rotations {sub_rotated}, limits {limits_synced}"
         )
         return
@@ -505,7 +524,7 @@ def main():
         provisioned += 1
 
     print(
-        f"provisioned {provisioned}/{len(rows)}, ip_clears {ip_cleared}, "
+        f"provisioned {provisioned}/{len(rows)}, flags {flags_cleared}, ip_clears {ip_cleared}, "
         f"dupes {dupes_removed}, rotations {sub_rotated}, limits {limits_synced}"
     )
 

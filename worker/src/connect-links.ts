@@ -91,6 +91,19 @@ export function buildProtectedSubscriptionUrl(env: BotEnv, subId: string): strin
   return `${base}/api/sub/${encodeURIComponent(subId)}`;
 }
 
+export function applyLockedSubscriptionBody(body: string): string {
+  const trimmed = body.trim();
+  if (!trimmed) return "#hide-settings: 1\n";
+  if (/^#hide-settings\s*:/im.test(trimmed)) return trimmed;
+  return `#hide-settings: 1\n${trimmed}`;
+}
+
+export const LOCKED_SUBSCRIPTION_HEADERS: Record<string, string> = {
+  "hide-settings": "1",
+  "Profile-Update-Interval": "60",
+  "Content-Disposition": 'attachment; filename="FIX VPN"',
+};
+
 export async function encryptHappLink(subscriptionUrl: string): Promise<string> {
   const response = await fetch(HAPP_CRYPTO_API, {
     method: "POST",
@@ -114,11 +127,11 @@ export async function buildClientImportTarget(
   client: VpnClientId,
   subId: string
 ): Promise<string> {
-  const clientUrl = buildClientSubscriptionUrl(env, subId);
+  const protectedUrl = buildProtectedSubscriptionUrl(env, subId);
   if (client === "happ") {
-    return encryptHappLink(clientUrl);
+    return encryptHappLink(protectedUrl);
   }
-  return clientUrl;
+  return protectedUrl;
 }
 
 export function buildRedirectUrl(
@@ -165,40 +178,6 @@ export function redirectHtml(client: VpnClientId, importTarget: string): string 
   const deepLink = buildDeepLink(client, importTarget);
   const safeDeep = deepLink.replace(/"/g, "&quot;");
   const label = clientLabel(client);
-  const locked = client === "happ" || isHappEncryptedLink(importTarget);
-
-  if (locked) {
-    return `<!DOCTYPE html>
-<html lang="ru">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>FIX VPN · ${label}</title>
-  <style>
-    body { font-family: system-ui, sans-serif; background: #0b1220; color: #e8eefc; display: grid; place-items: center; min-height: 100vh; margin: 0; padding: 24px; text-align: center; }
-    .card { max-width: 420px; width: 100%; }
-    .btn { display: block; width: 100%; box-sizing: border-box; margin: 10px 0; padding: 14px 18px; border-radius: 12px; border: 0; font-size: 17px; font-weight: 600; cursor: pointer; text-decoration: none; background: #3d7eff; color: #fff; }
-    .hint { color: #9db0d0; font-size: 14px; line-height: 1.5; }
-  </style>
-</head>
-<body>
-  <div class="card">
-    <p>Импорт подписки в <b>${label}</b></p>
-    <p class="hint">Подписка защищена: ссылку и настройки серверов нельзя просмотреть или изменить после импорта.</p>
-    <a class="btn" id="open-app" href="${safeDeep}">Открыть ${label}</a>
-  </div>
-  <script>
-    (function () {
-      var deepLink = ${JSON.stringify(deepLink)};
-      var isAndroid = /Android/i.test(navigator.userAgent);
-      if (!isAndroid) {
-        setTimeout(function () { window.location.replace(deepLink); }, 120);
-      }
-    })();
-  </script>
-</body>
-</html>`;
-  }
 
   return `<!DOCTYPE html>
 <html lang="ru">
@@ -216,7 +195,7 @@ export function redirectHtml(client: VpnClientId, importTarget: string): string 
 <body>
   <div class="card">
     <p>Импорт подписки в <b>${label}</b></p>
-    <p class="hint">Нажмите кнопку ниже, чтобы открыть ${label}. Настройки серверов защищены от случайного редактирования.</p>
+    <p class="hint">Подписка защищена: ссылку и настройки серверов нельзя просмотреть или изменить после импорта.</p>
     <a class="btn" id="open-app" href="${safeDeep}">Открыть ${label}</a>
   </div>
   <script>

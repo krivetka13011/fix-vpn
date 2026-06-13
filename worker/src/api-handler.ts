@@ -22,7 +22,14 @@ import { clientBotToken, partnerBotToken, subscriptionBaseUrl, subscriptionClien
 import { handleClientBotUpdate } from "./bots/client-bot";
 import { handlePartnerBotUpdate } from "./bots/partner-bot";
 import { XuiApi } from "./xui";
-import { redirectHtml, buildClientImportTarget, buildClientSubscriptionUrl, type VpnClientId } from "./connect-links";
+import { getSubscriptionBySubId } from "./repository";
+import {
+  applyLockedSubscriptionBody,
+  buildClientImportTarget,
+  LOCKED_SUBSCRIPTION_HEADERS,
+  redirectHtml,
+  type VpnClientId,
+} from "./connect-links";
 
 export interface ApiEnv extends BotEnv {
   TELEGRAM_BOT_TOKEN?: string;
@@ -91,6 +98,27 @@ export async function handleApiRequest(
     if (!subId || subId.includes("/")) {
       return new Response("bad sub", { status: 400, headers: CORS });
     }
+
+    const lockedHeaders: Record<string, string> = {
+      "Content-Type": "text/plain; charset=utf-8",
+      "Cache-Control": "no-store",
+      ...LOCKED_SUBSCRIPTION_HEADERS,
+      ...CORS,
+    };
+
+    try {
+      const cached = await getSubscriptionBySubId(env, subId);
+      const payload = cached?.subscription_payload_cache?.trim();
+      if (payload && payload.length > 100) {
+        return new Response(applyLockedSubscriptionBody(payload), {
+          status: 200,
+          headers: lockedHeaders,
+        });
+      }
+    } catch (error) {
+      console.error("subscription cache:", error);
+    }
+
     const subPath = (env.SUBSCRIPTION_PATH || "/sub").replace(/\/$/, "");
     const encodedSubId = encodeURIComponent(subId);
     const upstreamBases = [
@@ -99,7 +127,7 @@ export async function handleApiRequest(
       subscriptionBaseUrl(env),
     ].filter((base, index, list) => base && list.indexOf(base) === index);
     if (upstreamBases.length === 0) {
-      return new Response("subscription upstream missing", { status: 503, headers: CORS });
+      return new Response("subscription cache missing", { status: 503, headers: CORS });
     }
     try {
       let upstreamRes: Response | null = null;
@@ -116,22 +144,18 @@ export async function handleApiRequest(
       if (!upstreamRes) {
         return new Response("subscription upstream failed", { status: 502, headers: CORS });
       }
-      const body = await upstreamRes.text();
+      const body = applyLockedSubscriptionBody(await upstreamRes.text());
       const headers: Record<string, string> = {
+        ...lockedHeaders,
         "Content-Type":
           upstreamRes.headers.get("Content-Type") || "text/plain; charset=utf-8",
-        "hide-settings": "1",
-        "Cache-Control": "no-store",
-        ...CORS,
       };
       for (const name of [
         "Profile-Title",
-        "Profile-Update-Interval",
         "Subscription-Userinfo",
         "Profile-Web-Page-Url",
         "Support-Url",
         "Announce",
-        "Content-Disposition",
       ]) {
         const value = upstreamRes.headers.get(name);
         if (value) headers[name] = value;
@@ -156,10 +180,7 @@ export async function handleApiRequest(
     let importTarget = legacySub || "";
     if (sid) {
       try {
-        importTarget =
-          client === "happ"
-            ? await buildClientImportTarget(env, client, sid)
-            : buildClientSubscriptionUrl(env, sid);
+        importTarget = await buildClientImportTarget(env, client, sid);
       } catch (error) {
         console.error("redirect import prep:", error);
         return new Response("import prep failed", { status: 502, headers: CORS });

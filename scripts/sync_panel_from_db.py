@@ -113,7 +113,9 @@ def main():
         os.environ.get("SUBSCRIPTION_BASE_URL", "https://fixvp.xyz:2096"),
     ).rstrip("/")
     sub_path = os.environ.get("SUBSCRIPTION_PATH", "/sub").rstrip("/")
+    webapp = os.environ.get("WEBAPP_URL", "https://fix-vpn.krivetkagames.workers.dev").rstrip("/")
     synced = 0
+    cached = 0
 
     for row in rows:
         email = str(row.get("client_email") or "").strip()
@@ -128,12 +130,23 @@ def main():
             add_panel_client(session, base, email, sub_id, client_uuid, tg_id)
             existing = panel_has_email(session, base, email) or {"subId": sub_id, "uuid": client_uuid}
             synced += 1
-        sub_url = f"{sub_base}{sub_path}/{existing['subId']}"
+        protected_url = f"{webapp}/api/sub/{existing['subId']}"
+        fetch_url = f"{sub_base}{sub_path}/{existing['subId']}"
+        payload_cache = None
+        try:
+            response = requests.get(fetch_url, timeout=20, verify=False)
+            if response.ok and len(response.text.strip()) > 100:
+                payload_cache = response.text
+                cached += 1
+        except Exception as error:
+            print(f"cache fetch failed for {existing['subId']}: {error}", file=sys.stderr)
         patch = {
             "xray_sub_id": existing["subId"],
             "xray_uuid": existing["uuid"],
-            "subscription_url": sub_url,
+            "subscription_url": protected_url,
         }
+        if payload_cache:
+            patch["subscription_payload_cache"] = payload_cache
         requests.patch(
             sb_base + f"subscriptions?user_id=eq.{row['user_id']}",
             headers={**sb_headers(), "Prefer": "return=minimal"},
@@ -141,7 +154,7 @@ def main():
             timeout=30,
         )
 
-    print(f"synced {synced} panel clients, checked {len(rows)} subscriptions")
+    print(f"synced {synced} panel clients, cached {cached} payloads, checked {len(rows)} subscriptions")
 
 
 if __name__ == "__main__":

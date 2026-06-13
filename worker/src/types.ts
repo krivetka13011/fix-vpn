@@ -29,6 +29,7 @@ export interface DbSubscription {
   xray_uuid?: string | null;
   xray_sub_id?: string | null;
   subscription_url?: string | null;
+  subscription_payload_cache?: string | null;
   client_email?: string | null;
   is_trial?: boolean;
   extra_devices: number;

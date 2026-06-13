@@ -28,5 +28,7 @@ jobs:
           XUI_BASE_URL: ${{ secrets.XUI_BASE_URL || 'https://fixvp.xyz:54596/LXZo7cOhasXWon5uQu' }}
           XUI_API_TOKEN: ${{ secrets.XUI_API_TOKEN }}
           SUBSCRIPTION_BASE_URL: ${{ secrets.SUBSCRIPTION_BASE_URL || 'https://fixvp.xyz:2096' }}
+          SUBSCRIPTION_CLIENT_BASE_URL: ${{ secrets.SUBSCRIPTION_CLIENT_BASE_URL || 'https://31.76.2.248:2096' }}
           SUBSCRIPTION_PATH: /sub
+          WEBAPP_URL: ${{ secrets.WEBAPP_URL || 'https://fix-vpn.krivetkagames.workers.dev' }}
         run: python scripts/sync_panel_from_db.py

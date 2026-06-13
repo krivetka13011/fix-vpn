@@ -1,5 +1,5 @@
 import type { BotEnv } from "../env";
-import { clientBotToken, isTesterAccount, subscriptionBaseUrl, subscriptionClientBaseUrl } from "../env";
+import { clientBotToken, isTesterAccount } from "../env";
 import {
   addPartnerBalance,
   clearSession,
@@ -36,6 +36,7 @@ import { BILLING_OPTIONS, calcPrice, periodLabel, type BillingMonths } from "./p
 import { managerTxnKeyboard, notifyManager } from "./manager";
 import { handleManagerPartnerCallback } from "./partner-bot";
 import {
+  buildProtectedSubscriptionUrl,
   buildRedirectUrl,
   clientLabel,
   clientsForOs,
@@ -296,9 +297,7 @@ async function persistProvision(
 }
 
 function buildSubscriptionUrl(env: BotEnv, subId: string): string {
-  const base = subscriptionClientBaseUrl(env) || subscriptionBaseUrl(env);
-  const path = (env.SUBSCRIPTION_PATH || "/sub").replace(/\/$/, "");
-  return `${base}${path}/${subId}`;
+  return buildProtectedSubscriptionUrl(env, subId);
 }
 
 function importInstructionsMessage(
@@ -306,14 +305,13 @@ function importInstructionsMessage(
   vpnClient: VpnClientId,
   openUrl: string
 ): { text: string; markup: Record<string, unknown> } {
-  const locked = vpnClient === "happ";
   return {
-    text: locked
-      ? `<b>Импорт в Happ (${osLabel(os)})</b>\n\n` +
-        `Нажмите кнопку ниже. Подписка защищена: ссылку и настройки серверов нельзя просмотреть или изменить.\n\n` +
-        `Удалите старые подписки «Encrypted» в Happ, затем нажмите кнопку снова.`
-      : `<b>Импорт в ${clientLabel(vpnClient)} (${osLabel(os)})</b>\n\n` +
-        `Нажмите кнопку ниже. Настройки серверов защищены от случайного редактирования.`,
+    text:
+      `<b>Импорт в ${clientLabel(vpnClient)} (${osLabel(os)})</b>\n\n` +
+      `Нажмите кнопку ниже. Подписка защищена: ссылку и настройки серверов нельзя просмотреть или изменить.\n\n` +
+      (vpnClient === "happ"
+        ? `Удалите старые подписки «Encrypted» в Happ, затем нажмите кнопку снова.`
+        : `Удалите старую подписку FIX VPN в ${clientLabel(vpnClient)}, затем импортируйте заново.`),
     markup: {
       inline_keyboard: [
         [{ text: `Открыть ${clientLabel(vpnClient)}`, url: openUrl }],
@@ -913,7 +911,7 @@ export async function handleClientBotUpdate(
           ? `Нажмите <b>${clientLabel(defaultClient)}</b> ниже.\n` +
             `Ссылка подписки скрыта и защищена — импорт только через кнопку.\n\n`
           : `Открываем <b>${clientLabel(defaultClient)}</b>.\n` +
-            `Ссылка подписки скрыта — импорт через кнопку ниже.\n\n`) +
+            `Ссылка подписки скрыта — импорт только через кнопку ниже.\n\n`) +
         `Если приложение не открылось — выберите клиент ниже:`;
 
       try {

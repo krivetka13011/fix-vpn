@@ -27,6 +27,7 @@ create table if not exists subscriptions (
   xray_uuid text,
   xray_sub_id text,
   subscription_url text,
+  subscription_payload_cache text,
   client_email text,
   is_trial boolean not null default false,
   extra_devices int not null default 0,

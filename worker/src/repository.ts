@@ -105,6 +105,19 @@ export async function getSubscription(
   return rows[0] ?? null;
 }
 
+export async function getSubscriptionBySubId(
+  env: SupabaseEnv,
+  subId: string
+): Promise<DbSubscription | null> {
+  const rows = await sbJson<DbSubscription[]>(
+    await sbRequest(
+      env,
+      `subscriptions?xray_sub_id=eq.${encodeURIComponent(subId)}&select=*&limit=1`
+    )
+  );
+  return rows[0] ?? null;
+}
+
 export async function patchSubscription(
   env: SupabaseEnv,
   userId: string,

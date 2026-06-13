@@ -50,7 +50,8 @@ import {
   fetchDeviceSlotStatus,
   isDifferentDeviceAttempt,
 } from "../miniapp-services";
-import { isPanelIpClearPending, subscriptionDeviceLimit } from "../device-limit";
+import { subscriptionDeviceLimit } from "../device-limit";
+import { isSubRotatePending, rotateSubscriptionAccess } from "../subscription-rotate";
 
 type TgUpdate = {
   message?: {
@@ -218,23 +219,11 @@ function deviceSlotUsed(
   return Math.min(limit, Math.max(bindingsCount, panelIpsCount, 1));
 }
 
-async function tryClearPanelIps(
-  env: BotEnv,
-  userId: string,
-  clientEmail: string
-): Promise<{ ok: boolean; detail?: string }> {
-  try {
-    const xui = new XuiApi(env);
-    await xui.clearClientIps(clientEmail);
-    await patchSubscription(env, userId, { panel_ip_clear_requested_at: null });
-    return { ok: true };
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : "unknown";
-    await patchSubscription(env, userId, {
-      panel_ip_clear_requested_at: new Date().toISOString(),
-    });
-    return { ok: false, detail };
+function rotateNotice(pending: boolean): string {
+  if (pending) {
+    return "Ссылка подписки обновляется (1–2 мин). Удалите старый Encrypted в Happ и импортируйте заново через бота.";
   }
+  return "Ссылка подписки обновлена. Удалите старый Encrypted в Happ и подключите заново через бота.";
 }
 
 function buildProfileKeyboard(
@@ -613,9 +602,8 @@ async function showProfile(
   const bindings = await listVpnDeviceBindings(env, user.id);
   const limit = subscriptionDeviceLimit(sub);
   let panelIps: PanelDeviceIp[] = [];
-  const ipClearPending = isPanelIpClearPending(sub);
 
-  if (!ipClearPending && sub?.client_email) {
+  if (sub?.client_email) {
     try {
       panelIps = await new XuiApi(env).getClientIps(sub.client_email);
     } catch (error) {
@@ -623,8 +611,9 @@ async function showProfile(
     }
   }
 
-  const used = limit === 0 ? bindings.length : deviceSlotUsed(limit, bindings.length, panelIps.length);
+  const used = limit === 0 ? bindings.length : deviceSlotUsed(limit, bindings.length, 0);
   const hasSlot = used > 0;
+  const rotatePending = isSubRotatePending(sub);
   const status = sub?.status || "none";
   const period = formatSubscriptionPeriod(sub?.starts_at, sub?.ends_at, sub?.plan_label);
   const statusLabel =
@@ -639,8 +628,8 @@ async function showProfile(
   const limitLabel = deviceLimitLabel(sub);
   const deviceLine = hasSlot
     ? `Устройство: <b>${used} из ${limitLabel}</b> · занято`
-    : ipClearPending
-      ? `Устройство: <b>освобождается</b> (подождите 1–2 мин)`
+    : rotatePending
+      ? `Устройство: <b>новая ссылка готовится</b> (1–2 мин)`
       : limit === 0
         ? `Устройство: <b>свободно</b>`
         : `Устройство: <b>свободно</b> (${limitLabel} слот)`;
@@ -674,19 +663,13 @@ async function unbindSingleDevice(
 
   await deleteVpnDeviceBinding(env, user.id, bindingId);
 
-  let panelNote = "";
+  let panelNote = "Устройство отвязано.";
   if (sub?.client_email) {
     const left = await listVpnDeviceBindings(env, user.id);
-    if (left.length === 0 || subscriptionDeviceLimit(sub) <= 1) {
-      const cleared = await tryClearPanelIps(env, user.id, sub.client_email);
-      panelNote = cleared.ok
-        ? "Устройство отвязано."
-        : "Устройство отвязано в боте. Очистка IP в панели займёт до 5 минут — затем подключите новое.";
-    } else {
-      panelNote = "Устройство отвязано.";
+    if (left.length === 0) {
+      const rotated = await rotateSubscriptionAccess(env, user.id, sub);
+      panelNote = rotateNotice(rotated.pending);
     }
-  } else {
-    panelNote = "Устройство отвязано.";
   }
 
   await showProfile(env, chatId, tg, messageId, `<b>${panelNote}</b>`);
@@ -708,10 +691,10 @@ async function resetDeviceBinding(
   }
 
   await clearVpnDeviceBindings(env, user.id);
-  const cleared = await tryClearPanelIps(env, user.id, sub.client_email);
-  const notice = cleared.ok
-    ? "<b>Все устройства сброшены.</b> Можно подключить VPN на новом устройстве."
-    : "<b>Привязки в боте сброшены.</b> Очистка IP в панели займёт до 5 минут — затем подключите новое устройство.";
+  const rotated = await rotateSubscriptionAccess(env, user.id, sub);
+  const notice = rotated.pending
+    ? `<b>Все устройства сброшены.</b> ${rotateNotice(true)}`
+    : `<b>Все устройства сброшены.</b> ${rotateNotice(false)}`;
 
   await showProfile(env, chatId, tg, messageId, notice);
 }
@@ -934,8 +917,8 @@ export async function handleClientBotUpdate(
         const slot = await fetchDeviceSlotStatus(env, user.id, sub);
         const warning = slot.slotTaken
           ? `<b>Устройство уже привязано</b>\n\n${deviceOccupiedMessage(slot)}\n\n`
-          : isPanelIpClearPending(sub)
-            ? `<b>Смена устройства</b>\nIP в панели очищается (1–2 мин). Можно подключать новое устройство.\n\n`
+          : isSubRotatePending(sub)
+            ? `<b>Смена устройства</b>\nГотовится новая ссылка (1–2 мин). Удалите старый Encrypted в Happ.\n\n`
             : sub.is_trial
               ? `<b>Пробный период</b>\nОдновременно 1 устройство. Сменить — «Мой профиль».\n\n`
               : "";
@@ -965,6 +948,16 @@ export async function handleClientBotUpdate(
       const sub = await getSubscription(env, user.id);
       if (sub?.status !== "active") {
         await answerCallback(token, cq.id, "Сначала активируйте подписку", { showAlert: true });
+        return;
+      }
+
+      if (isSubRotatePending(sub)) {
+        await answerCallback(
+          token,
+          cq.id,
+          "Готовится новая ссылка (1–2 мин). Удалите старый Encrypted в Happ и повторите.",
+          { showAlert: true }
+        );
         return;
       }
 

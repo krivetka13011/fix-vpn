@@ -13,7 +13,8 @@ import {
 } from "./repository";
 import type { TelegramUser } from "./telegram";
 import { XuiApi, type PanelDeviceIp } from "./xui";
-import { isPanelIpClearPending, subscriptionDeviceLimit } from "./device-limit";
+import { subscriptionDeviceLimit } from "./device-limit";
+import { isSubRotatePending, rotateSubscriptionAccess } from "./subscription-rotate";
 
 const OS_LABELS: Record<string, string> = {
   android: "Android",
@@ -134,9 +135,8 @@ export async function fetchDeviceSlotStatus(
   const limit = subscriptionDeviceLimit(sub);
   const bindings = await listVpnDeviceBindings(env, userId);
   let panelIps: PanelDeviceIp[] = [];
-  const ipClearPending = isPanelIpClearPending(sub);
 
-  if (!ipClearPending && sub?.client_email) {
+  if (sub?.client_email) {
     try {
       panelIps = await new XuiApi(env).getClientIps(sub.client_email);
     } catch {
@@ -145,10 +145,7 @@ export async function fetchDeviceSlotStatus(
   }
 
   const unlimited = limit === 0;
-  const slotTaken =
-    !unlimited &&
-    !ipClearPending &&
-    (panelIps.length >= limit || bindings.length >= limit);
+  const slotTaken = !unlimited && bindings.length >= limit;
 
   return {
     limit,
@@ -167,10 +164,7 @@ export function isDifferentDeviceAttempt(
   targetOs: string
 ): boolean {
   if (!status.slotTaken) return false;
-  if (status.bindings.length > 0) {
-    return !status.bindings.some((row) => row.os === targetOs);
-  }
-  return status.panelIps.length > 0;
+  return !status.bindings.some((row) => row.os === targetOs);
 }
 
 export function deviceOccupiedMessage(
@@ -194,7 +188,7 @@ export function deviceOccupiedMessage(
       : "";
 
   return (
-    `На этом аккаунте уже привязано устройство. Одновременно работает только ${status.limit} (по IP в панели).\n\n` +
+    `На этом аккаунте уже привязано устройство. Одновременно доступно ${status.limit}.\n\n` +
     `Сейчас занято:\n${occupied}${replaceNote}\n\n` +
     `Чтобы заменить: «Мой профиль» → нажмите устройство или «Сбросить все».`
   );
@@ -255,6 +249,11 @@ export async function buildMiniappConnectUrl(
   if (sub?.status !== "active") {
     throw new Error("Сначала активируйте подписку или пробный период");
   }
+  if (isSubRotatePending(sub)) {
+    throw new Error(
+      "Готовится новая ссылка (1–2 мин). Удалите старый Encrypted в Happ и повторите."
+    );
+  }
 
   const subId = await resolvePanelSubIdForUser(env, tg);
   if (!subId) {
@@ -289,14 +288,11 @@ export async function resetMiniappDevices(env: BotEnv, tg: TelegramUser): Promis
   if (!sub?.client_email) throw new Error("Нет активного клиента в панели");
 
   await clearVpnDeviceBindings(env, user.id);
-  try {
-    const xui = new XuiApi(env);
-    await xui.clearClientIps(sub.client_email);
-    await patchSubscription(env, user.id, { panel_ip_clear_requested_at: null });
-  } catch {
-    await patchSubscription(env, user.id, {
-      panel_ip_clear_requested_at: new Date().toISOString(),
-    });
+  const rotated = await rotateSubscriptionAccess(env, user.id, sub);
+  if (rotated.pending) {
+    throw new Error(
+      "Привязки сброшены. Новая ссылка готовится (1–2 мин) — удалите старый Encrypted в Happ и импортируйте заново."
+    );
   }
 }
 

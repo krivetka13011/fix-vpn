@@ -89,7 +89,7 @@ export class XuiApi {
     this.baseUrls = xuiBaseUrlCandidates(env);
     this.token = env.XUI_API_TOKEN;
     this.inboundIds = parseIdList(env.XUI_INBOUND_IDS);
-    this.limitIp = Number(env.XUI_CLIENT_LIMIT_IP || "1");
+    this.limitIp = Number(env.XUI_CLIENT_LIMIT_IP || "0");
   }
 
   private headers(): HeadersInit {
@@ -580,6 +580,25 @@ export class XuiApi {
     );
     await this.parseResponse(response, "clearClientIps");
     this.invalidateScan();
+  }
+
+  async rotateClientSubId(
+    email: string,
+    uuid: string,
+    newSubId: string,
+    telegramId: number
+  ): Promise<void> {
+    const client = this.buildClient(
+      email,
+      newSubId,
+      telegramId,
+      0,
+      0,
+      true,
+      uuid,
+      0
+    );
+    await this.updateClient(client);
   }
 
   async getClientIps(email: string): Promise<PanelDeviceIp[]> {

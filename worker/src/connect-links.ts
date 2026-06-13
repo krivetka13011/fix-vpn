@@ -216,6 +216,14 @@ export function applyLockedSubscriptionBody(body: string): string {
   return trimmed.replace(/^#hide-settings\s*:\s*1\s*\n?/im, "");
 }
 
+/** Hide server list in Happ/Hiddify clients (body comment, safe on Windows). */
+export function applyHiddenSubscriptionBody(body: string): string {
+  const normalized = applyLockedSubscriptionBody(body).trim();
+  if (!normalized) return "";
+  if (/^#hide-settings\s*:/im.test(normalized)) return normalized;
+  return `#hide-settings: 1\n${normalized}`;
+}
+
 export const LOCKED_SUBSCRIPTION_HEADERS: Record<string, string> = {
   "hide-settings": "1",
   "Profile-Update-Interval": "1",

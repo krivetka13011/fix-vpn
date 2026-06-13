@@ -148,6 +148,68 @@ def clear_pending_panel_ips(sb: str, session: requests.Session, base: str) -> in
     return cleared
 
 
+def process_pending_sub_rotations(sb: str, session: requests.Session, base: str, clients: list, worker: str) -> int:
+    pending = requests.get(
+        sb
+        + "subscriptions?pending_xray_sub_id=not.is.null&select=user_id,client_email,pending_xray_sub_id,xray_uuid,users!inner(telegram_id)&client_email=not.is.null",
+        headers={**sb_headers("return=representation"), "Prefer": "return=representation"},
+        timeout=30,
+    ).json()
+    by_email = {str(c.get("email") or ""): c for c in clients}
+    rotated = 0
+    for row in pending:
+        email = str(row.get("client_email") or "").strip()
+        new_sub_id = str(row.get("pending_xray_sub_id") or "").strip()
+        if not email or not new_sub_id:
+            continue
+        panel = by_email.get(email)
+        tg_id = int((row.get("users") or {}).get("telegram_id") or 0)
+        client = {
+            "id": (panel or {}).get("uuid") or row.get("xray_uuid"),
+            "email": (panel or {}).get("email") or email,
+            "subId": new_sub_id,
+            "limitIp": 0,
+            "expiryTime": 0,
+            "enable": True,
+            "tgId": tg_id,
+            "totalGB": 0,
+            "flow": "",
+        }
+        response = session.post(
+            f"{base}/panel/api/clients/update/{email}",
+            json={"email": email, "inboundIds": INBOUND_IDS, "client": client},
+            timeout=30,
+        )
+        if not (response.ok or "success" in response.text.lower()):
+            print("rotate failed", email, response.text[:200])
+            continue
+        links = []
+        try:
+            links = session.get(f"{base}/panel/api/clients/subLinks/{new_sub_id}", timeout=30).json().get("obj") or []
+        except Exception:
+            pass
+        patch = {
+            "xray_sub_id": new_sub_id,
+            "subscription_url": f"{worker}/api/sub/{new_sub_id}",
+            "pending_xray_sub_id": None,
+            "panel_sub_rotate_requested_at": None,
+            "panel_ip_clear_requested_at": None,
+        }
+        if links:
+            patch["subscription_payload_cache"] = "\n".join(
+                str(line).strip() for line in links if str(line).strip()
+            )
+        requests.patch(
+            sb + f"subscriptions?user_id=eq.{row['user_id']}",
+            headers=sb_headers(),
+            json=patch,
+            timeout=30,
+        )
+        rotated += 1
+        print("rotated subId", email, new_sub_id)
+    return rotated
+
+
 def sync_client_limits(sb: str, session: requests.Session, base: str, clients: list) -> int:
     rows = requests.get(
         sb
@@ -169,9 +231,7 @@ def sync_client_limits(sb: str, session: requests.Session, base: str, clients: l
         panel = by_email.get(email) or by_tg.get(tg_id)
         if not panel:
             continue
-        plan = str(row.get("plan_type") or "basic")
-        extra = int(row.get("extra_devices") or 0)
-        limit_ip = 0 if plan == "personal" else 1 + extra
+        limit_ip = 0
         if int(panel.get("limitIp") or -1) == limit_ip:
             continue
         client = {
@@ -197,10 +257,8 @@ def sync_client_limits(sb: str, session: requests.Session, base: str, clients: l
     return synced
 
 
-def limit_ip_for_row(row):
-    plan = str(row.get("plan_type") or "basic")
-    extra = int(row.get("extra_devices") or 0)
-    return 0 if plan == "personal" else 1 + extra
+def limit_ip_for_row(_row):
+    return 0
 
 
 def main():
@@ -222,10 +280,11 @@ def main():
     session, base = panel_session()
     ip_cleared = clear_pending_panel_ips(sb, session, base)
     clients = scan_clients(session, base)
+    sub_rotated = process_pending_sub_rotations(sb, session, base, clients, worker)
     limits_synced = sync_client_limits(sb, session, base, clients)
 
     if not rows:
-        print(f"no users, ip_clears {ip_cleared}, limits {limits_synced}")
+        print(f"no users, ip_clears {ip_cleared}, rotations {sub_rotated}, limits {limits_synced}")
         return
 
     provisioned = 0
@@ -305,7 +364,7 @@ def main():
         provisioned += 1
 
     print(
-        f"provisioned {provisioned}/{len(rows)}, ip_clears {ip_cleared}, limits {limits_synced}"
+        f"provisioned {provisioned}/{len(rows)}, ip_clears {ip_cleared}, rotations {sub_rotated}, limits {limits_synced}"
     )
 
 

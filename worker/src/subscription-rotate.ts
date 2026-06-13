@@ -6,9 +6,19 @@ export async function clearDeviceSwapState(
   env: BotEnv,
   userId: string
 ): Promise<void> {
-  await patchSubscription(env, userId, {
-    pending_xray_sub_id: null,
-    panel_sub_rotate_requested_at: null,
-    panel_ip_clear_requested_at: null,
-  });
+  try {
+    await patchSubscription(env, userId, {
+      pending_xray_sub_id: null,
+      panel_sub_rotate_requested_at: null,
+      panel_ip_clear_requested_at: null,
+    });
+  } catch (error) {
+    try {
+      await patchSubscription(env, userId, {
+        panel_ip_clear_requested_at: null,
+      });
+    } catch {
+      console.error("clearDeviceSwapState:", error);
+    }
+  }
 }

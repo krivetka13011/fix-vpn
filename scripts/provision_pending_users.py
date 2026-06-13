@@ -309,33 +309,53 @@ def clear_pending_panel_ips(sb: str, session: requests.Session, base: str) -> in
 
 
 def clear_stuck_swap_flags(sb: str) -> int:
-    response = requests.patch(
-        sb
-        + "subscriptions?or=(panel_sub_rotate_requested_at.not.is.null,panel_ip_clear_requested_at.not.is.null,pending_xray_sub_id.not.is.null)",
-        headers=sb_headers(),
-        json={
-            "panel_sub_rotate_requested_at": None,
-            "panel_ip_clear_requested_at": None,
-            "pending_xray_sub_id": None,
-        },
-        timeout=30,
-    )
-    cleared = len(response.json()) if response.ok else 0
+    cleared = 0
+    for query, body in (
+        ("panel_ip_clear_requested_at=not.is.null", {"panel_ip_clear_requested_at": None}),
+        (
+            "or=(panel_sub_rotate_requested_at.not.is.null,pending_xray_sub_id.not.is.null)",
+            {
+                "panel_sub_rotate_requested_at": None,
+                "pending_xray_sub_id": None,
+            },
+        ),
+    ):
+        try:
+            response = requests.patch(
+                sb + f"subscriptions?{query}",
+                headers={**sb_headers("return=representation"), "Prefer": "return=representation"},
+                json=body,
+                timeout=30,
+            )
+            if response.ok:
+                payload = response.json()
+                if isinstance(payload, list):
+                    cleared += len(payload)
+        except Exception as error:
+            print("clear_stuck_swap_flags warn:", query, error)
     if cleared:
         print("cleared stuck swap flags", cleared)
     return cleared
 
 
 def process_pending_sub_rotations(sb: str, session: requests.Session, base: str, clients: list, worker: str) -> int:
-    pending = requests.get(
-        sb
-        + "subscriptions?pending_xray_sub_id=not.is.null&select=user_id,client_email,pending_xray_sub_id,xray_uuid,users!inner(telegram_id)&client_email=not.is.null",
-        headers={**sb_headers("return=representation"), "Prefer": "return=representation"},
-        timeout=30,
-    ).json()
+    try:
+        pending = requests.get(
+            sb
+            + "subscriptions?pending_xray_sub_id=not.is.null&select=user_id,client_email,pending_xray_sub_id,xray_uuid,users!inner(telegram_id)&client_email=not.is.null",
+            headers={**sb_headers("return=representation"), "Prefer": "return=representation"},
+            timeout=30,
+        )
+        if not pending.ok:
+            return 0
+        pending_rows = pending.json()
+    except Exception as error:
+        print("process_pending_sub_rotations skip:", error)
+        return 0
+
     by_email = {str(c.get("email") or ""): c for c in clients}
     rotated = 0
-    for row in pending:
+    for row in pending_rows:
         email = str(row.get("client_email") or "").strip()
         new_sub_id = str(row.get("pending_xray_sub_id") or "").strip()
         if not email or not new_sub_id:
@@ -446,7 +466,7 @@ def main():
 
     rows = requests.get(
         sb
-        + "subscriptions?select=user_id,xray_sub_id,xray_uuid,plan_type,extra_devices,pending_xray_sub_id,users!inner(telegram_id,username)",
+        + "subscriptions?select=user_id,xray_sub_id,xray_uuid,plan_type,extra_devices,pending_xray_sub_id,subscription_payload_cache,status,users!inner(telegram_id,username)",
         headers={**sb_headers("return=representation"), "Prefer": "return=representation"},
         timeout=30,
     ).json()
@@ -513,8 +533,8 @@ def main():
             patch["subscription_payload_cache"] = "\n".join(
                 str(line).strip() for line in links if str(line).strip()
             )
-        elif str(row.get("xray_sub_id") or "") != sub_id:
-            patch["subscription_payload_cache"] = None
+        elif not str(row.get("subscription_payload_cache") or "").strip():
+            print("warn empty cache", tg_id, sub_id)
         requests.patch(
             sb + f"subscriptions?user_id=eq.{user_id}",
             headers=sb_headers(),

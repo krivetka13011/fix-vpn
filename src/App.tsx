@@ -53,9 +53,12 @@ function emptySubscription(): UserProfile["subscription"] {
     startsAt: null,
     endsAt: null,
     purchasedAt: null,
-    vpnKey: null,
     extraDevices: 0,
     deviceTotal: null,
+    canConnect: false,
+    devicesUsed: 0,
+    devicesMax: 1,
+    devices: [],
   };
 }
 
@@ -65,7 +68,6 @@ function devFallbackUser(): UserProfile | null {
   const name = [tg.first_name, tg.last_name].filter(Boolean).join(" ");
   return {
     id: tg.id,
-    publicId: "local-preview",
     displayName: name || tg.username || "Пользователь",
     username: tg.username ?? null,
     photoUrl: tg.photo_url ?? null,
@@ -149,7 +151,7 @@ export default function App() {
           <PlansTab catalog={catalog} onPurchased={load} />
         )}
         {tab === "profile" && (
-          <ProfileTab user={user} fallbackPhoto={tgPhoto} />
+          <ProfileTab user={user} fallbackPhoto={tgPhoto} onRefresh={load} />
         )}
       </main>
       <TabBar active={tab} onChange={setTab} />

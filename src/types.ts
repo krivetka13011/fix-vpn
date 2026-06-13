@@ -4,6 +4,15 @@ export type SubscriptionStatus = "none" | "active" | "expired";
 export type DevicePlatform = "android" | "ios" | "windows" | "mac";
 export type VpnClientId = "happ" | "v2raytun" | "hiddify";
 
+export interface DeviceBinding {
+  id: string;
+  label: string;
+  os: string;
+  client: string;
+  lastSeenAt: string;
+  online: boolean;
+}
+
 export interface Subscription {
   status: SubscriptionStatus;
   planType: PlanType | null;
@@ -12,9 +21,15 @@ export interface Subscription {
   startsAt: string | null;
   endsAt: string | null;
   purchasedAt: string | null;
-  vpnKey: string | null;
   extraDevices: number;
   deviceTotal: number | null;
+  isTrial?: boolean;
+  canConnect?: boolean;
+  periodText?: string | null;
+  devicesUsed?: number;
+  devicesMax?: number;
+  panelOnline?: boolean;
+  devices?: DeviceBinding[];
 }
 
 export interface UserAddon {
@@ -28,7 +43,6 @@ export interface UserAddon {
 
 export interface UserProfile {
   id: number;
-  publicId: string;
   displayName: string;
   username: string | null;
   photoUrl: string | null;

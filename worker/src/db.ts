@@ -249,7 +249,6 @@ export function bundleToApiUser(bundle: UserBundle) {
       : (TARIFFS.basic.includedDevices ?? 1) + sub.extra_devices;
   return {
     id: user.telegram_id,
-    publicId: user.id,
     displayName: user.display_name,
     username: user.username,
     photoUrl: user.photo_url,
@@ -261,7 +260,6 @@ export function bundleToApiUser(bundle: UserBundle) {
       startsAt: sub.starts_at,
       endsAt: sub.ends_at,
       purchasedAt: sub.purchased_at,
-      vpnKey: sub.vpn_key,
       extraDevices: sub.extra_devices,
       deviceTotal,
     },

@@ -24,10 +24,21 @@ import { handlePartnerBotUpdate } from "./bots/partner-bot";
 import { XuiApi } from "./xui";
 import { getSubscriptionBySubId } from "./repository";
 import {
+  buildMiniappConnectUrl,
+  canConnectSubscription,
+  fetchMiniappDevices,
+  resetMiniappDevices,
+  resolvePanelSubIdForUser,
+  subscriptionPeriodText,
+  type MiniappClient,
+  type MiniappPlatform,
+} from "./miniapp-services";
+import {
   applyLockedSubscriptionBody,
   buildClientImportTarget,
   LOCKED_SUBSCRIPTION_HEADERS,
   redirectHtml,
+  subscriptionUserinfoHeader,
   type VpnClientId,
 } from "./connect-links";
 
@@ -110,9 +121,12 @@ export async function handleApiRequest(
       const cached = await getSubscriptionBySubId(env, subId);
       const payload = cached?.subscription_payload_cache?.trim();
       if (payload && payload.length > 100) {
+        const headers: Record<string, string> = { ...lockedHeaders };
+        const userinfo = subscriptionUserinfoHeader(cached.ends_at);
+        if (userinfo) headers["Subscription-Userinfo"] = userinfo;
         return new Response(applyLockedSubscriptionBody(payload), {
           status: 200,
-          headers: lockedHeaders,
+          headers,
         });
       }
     } catch (error) {
@@ -316,11 +330,67 @@ export async function handleApiRequest(
   if (path === "/api/me" && request.method === "GET") {
     try {
       const bundle = await ensureUser(env, tgUser);
-      return json({ user: bundleToApiUser(bundle) });
+      await resolvePanelSubIdForUser(env, tgUser);
+      const fresh = await ensureUser(env, tgUser);
+      const deviceInfo = await fetchMiniappDevices(env, fresh.user.id);
+      const sub = fresh.subscription;
+      const base = bundleToApiUser(fresh);
+      return json({
+        user: {
+          ...base,
+          subscription: {
+            ...base.subscription,
+            isTrial: Boolean(sub.is_trial),
+            canConnect: canConnectSubscription(sub),
+            periodText: subscriptionPeriodText(sub),
+            devicesUsed: deviceInfo.used,
+            devicesMax: deviceInfo.limit,
+            panelOnline: deviceInfo.panelOnline,
+            devices: deviceInfo.devices,
+          },
+        },
+      });
     } catch (e) {
       return json(
         { error: e instanceof Error ? e.message : "Database error" },
         500
+      );
+    }
+  }
+
+  if (path === "/api/connect" && request.method === "GET") {
+    try {
+      const params = new URL(request.url).searchParams;
+      const platform = params.get("platform")?.trim() as MiniappPlatform | null;
+      const client = params.get("client")?.trim() as MiniappClient | null;
+      const allowedPlatforms: MiniappPlatform[] = ["android", "ios", "windows", "mac"];
+      const allowedClients: MiniappClient[] = ["happ", "v2raytun", "hiddify"];
+      if (!platform || !allowedPlatforms.includes(platform)) {
+        return json({ error: "Invalid platform" }, 400);
+      }
+      if (!client || !allowedClients.includes(client)) {
+        return json({ error: "Invalid client" }, 400);
+      }
+      const result = await buildMiniappConnectUrl(env, tgUser, platform, client);
+      return json({ ok: true, ...result });
+    } catch (e) {
+      return json(
+        { error: e instanceof Error ? e.message : "Connect failed" },
+        400
+      );
+    }
+  }
+
+  if (path === "/api/devices/reset" && request.method === "POST") {
+    try {
+      await resetMiniappDevices(env, tgUser);
+      const bundle = await ensureUser(env, tgUser);
+      const deviceInfo = await fetchMiniappDevices(env, bundle.user.id);
+      return json({ ok: true, devices: deviceInfo });
+    } catch (e) {
+      return json(
+        { error: e instanceof Error ? e.message : "Reset failed" },
+        400
       );
     }
   }

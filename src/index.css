@@ -879,6 +879,74 @@ body {
   color: var(--slate);
 }
 
+.online-hint {
+  margin-top: 6px;
+  font-size: 0.78rem;
+  color: var(--silver-dim);
+}
+
+.device-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.device-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(93, 94, 95, 0.12);
+}
+
+.device-row strong,
+.device-row-title {
+  display: block;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.device-row span,
+.device-row-sub {
+  display: block;
+  font-size: 0.78rem;
+  color: var(--slate);
+}
+
+.device-status {
+  font-size: 0.78rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.device-status.online {
+  color: #4ade80;
+}
+
+.device-status.offline {
+  color: var(--silver-dim);
+}
+
+.device-reset-btn {
+  margin-top: 12px;
+  width: 100%;
+  padding: 10px 14px;
+  border: 1px solid rgba(93, 94, 95, 0.35);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text);
+  font-size: 0.88rem;
+  cursor: pointer;
+}
+
+.device-reset-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .profile-card-icon {
   color: var(--silver-dim);
   opacity: 0.85;

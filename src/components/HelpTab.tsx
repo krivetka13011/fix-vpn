@@ -1,7 +1,8 @@
 import { useState } from "react";
 import type { Catalog, DevicePlatform, UserProfile, VpnClientId } from "../types";
+import { fetchConnect } from "../api/client";
 import { CLIENTS, installUrl, PLATFORMS } from "../data/helpLinks";
-import { copyText, openSupportChat, openTelegramLink } from "../utils/copy";
+import { openSupportChat, openTelegramLink } from "../utils/copy";
 
 interface Props {
   catalog: Catalog;
@@ -15,11 +16,11 @@ const FAQ = [
   },
   {
     q: "Подключение не удаётся?",
-    a: "Проверьте ключ в профиле, обновите подписку и попробуйте другой клиент (Happ, v2rayTun, Hiddify).",
+    a: "Удалите старую подписку в клиенте и нажмите «Подключиться» снова. Ссылка останется той же.",
   },
   {
     q: "Куда писать в поддержку?",
-    a: "Напишите @Fixvpnmng — ответим на вопросы по оплате, ключам и настройке.",
+    a: "Напишите @Fixvpnmng — ответим на вопросы по оплате и настройке.",
   },
 ];
 
@@ -40,8 +41,10 @@ export function HelpTab({ catalog, user }: Props) {
   const [platform, setPlatform] = useState<DevicePlatform | null>(null);
   const [client, setClient] = useState<VpnClientId | null>(null);
   const [hint, setHint] = useState<string | null>(null);
+  const [connecting, setConnecting] = useState(false);
   const [openFaq, setOpenFaq] = useState<number | null>(null);
-  const key = user.subscription.vpnKey;
+
+  const canConnect = user.subscription.canConnect ?? user.subscription.status === "active";
 
   function handleInstall() {
     if (!platform || !client) {
@@ -52,18 +55,37 @@ export function HelpTab({ catalog, user }: Props) {
     setHint(null);
   }
 
-  function handleConnect() {
+  async function handleConnect() {
     if (!platform || !client) {
       setHint("Выберите устройство и клиент");
       return;
     }
-    if (!key) {
-      setHint("Сначала оформите подписку во вкладке «Тарифы»");
+    if (!canConnect) {
+      setHint(
+        user.subscription.status === "active"
+          ? "Подписка синхронизируется. Подождите минуту и повторите."
+          : "Сначала активируйте пробный период в боте или оформите подписку."
+      );
       return;
     }
-    copyText(key);
-    setHint("Ключ скопирован — вставьте в клиент и включите VPN");
-    window.Telegram?.WebApp?.HapticFeedback?.impactOccurred("medium");
+
+    setConnecting(true);
+    setHint(null);
+    try {
+      const result = await fetchConnect(platform, client);
+      const tg = window.Telegram?.WebApp;
+      if (tg?.openLink) {
+        tg.openLink(result.redirectUrl);
+      } else {
+        window.location.href = result.redirectUrl;
+      }
+      setHint("Открываем импорт подписки в клиент…");
+      tg?.HapticFeedback?.impactOccurred("medium");
+    } catch (error) {
+      setHint(error instanceof Error ? error.message : "Не удалось подключиться");
+    } finally {
+      setConnecting(false);
+    }
   }
 
   return (
@@ -77,6 +99,15 @@ export function HelpTab({ catalog, user }: Props) {
       </section>
 
       <div className="stack">
+        {!canConnect && user.subscription.status === "active" && (
+          <p className="toast">Подписка активна — идёт подготовка ссылки для подключения.</p>
+        )}
+        {user.subscription.status !== "active" && (
+          <p className="toast">
+            Для подключения активируйте пробный период в боте или оформите подписку.
+          </p>
+        )}
+
         <div>
           <p className="section-label">Выберите устройство</p>
           <div className="chip-scroll">
@@ -128,9 +159,14 @@ export function HelpTab({ catalog, user }: Props) {
           <span className="material-symbols-outlined">download</span>
           Установить клиент
         </button>
-        <button type="button" className="btn btn-fill" onClick={handleConnect}>
+        <button
+          type="button"
+          className="btn btn-fill"
+          disabled={connecting}
+          onClick={handleConnect}
+        >
           <span className="material-symbols-outlined">bolt</span>
-          Подключиться
+          {connecting ? "Подключение…" : "Подключиться"}
         </button>
 
         {hint && <p className="toast">{hint}</p>}
@@ -165,59 +201,6 @@ export function HelpTab({ catalog, user }: Props) {
             </span>
           </button>
         </div>
-
-        <button
-          type="button"
-          className="support-card"
-          onClick={() => openSupportChat(catalog.supportTelegramUsername)}
-        >
-          <span className="client-row-left">
-            <span className="support-card-icon">
-              <span className="material-symbols-outlined">support_agent</span>
-            </span>
-            <span>
-              <span className="support-card-title">Связаться с поддержкой</span>
-              <span className="support-card-sub">
-                Ответим на любые вопросы 24/7
-              </span>
-            </span>
-          </span>
-          <span className="material-symbols-outlined">arrow_forward_ios</span>
-        </button>
-
-        <button
-          type="button"
-          className="support-card"
-          onClick={() => openTelegramLink(catalog.telegramChannelUrl)}
-        >
-          <span className="client-row-left">
-            <span className="support-card-icon">
-              <span className="material-symbols-outlined filled">send</span>
-            </span>
-            <span>
-              <span className="support-card-title">Telegram-канал</span>
-              <span className="support-card-sub">
-                Новости, обновления и акции
-              </span>
-            </span>
-          </span>
-          <span className="material-symbols-outlined">arrow_forward_ios</span>
-        </button>
-
-        {key && (
-          <div className="glass-panel" style={{ padding: 18 }}>
-            <p className="section-label">VPN-ключ</p>
-            <div className="key-box">{key}</div>
-            <button
-              type="button"
-              className="btn btn-ghost btn-pill"
-              style={{ marginTop: 12 }}
-              onClick={() => copyText(key)}
-            >
-              Скопировать
-            </button>
-          </div>
-        )}
 
         <div>
           <p className="section-label accent">Частые вопросы</p>

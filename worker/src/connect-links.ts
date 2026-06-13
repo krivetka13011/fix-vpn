@@ -104,6 +104,16 @@ export const LOCKED_SUBSCRIPTION_HEADERS: Record<string, string> = {
   "Content-Disposition": 'attachment; filename="FIX VPN"',
 };
 
+export function subscriptionUserinfoHeader(
+  endsAt: string | null | undefined
+): string | null {
+  if (!endsAt) return null;
+  const end = new Date(`${endsAt}T23:59:59`);
+  if (Number.isNaN(end.getTime())) return null;
+  const expire = Math.floor(end.getTime() / 1000);
+  return `upload=0; download=0; total=0; expire=${expire}`;
+}
+
 export async function encryptHappLink(subscriptionUrl: string): Promise<string> {
   const response = await fetch(HAPP_CRYPTO_API, {
     method: "POST",

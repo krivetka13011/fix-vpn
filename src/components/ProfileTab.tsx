@@ -1,18 +1,34 @@
 import type { UserProfile } from "../types";
 import { formatRuDate } from "../utils/copy";
+import { resetDevices } from "../api/client";
+import { useState } from "react";
 
 interface Props {
   user: UserProfile;
   fallbackPhoto?: string;
+  onRefresh: () => void;
 }
 
-export function ProfileTab({ user, fallbackPhoto }: Props) {
+function formatDateTime(iso: string): string {
+  return new Date(iso).toLocaleString("ru-RU", {
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+export function ProfileTab({ user, fallbackPhoto, onRefresh }: Props) {
   const sub = user.subscription;
   const photo = user.photoUrl ?? fallbackPhoto;
   const isActive = sub.status === "active";
+  const [resetting, setResetting] = useState(false);
+  const [hint, setHint] = useState<string | null>(null);
 
   const statusLabel = isActive
-    ? "Активна"
+    ? sub.isTrial
+      ? "Пробный период"
+      : "Активна"
     : sub.status === "expired"
       ? "Истекла"
       : "Неактивна";
@@ -25,25 +41,31 @@ export function ProfileTab({ user, fallbackPhoto }: Props) {
         ? "Базовый"
         : "—");
 
-  const devicesLabel =
-    sub.planType === "personal"
-      ? "Безлимит"
-      : sub.deviceTotal != null
-        ? `${sub.deviceTotal} шт.`
-        : "1 шт.";
+  const periodText =
+    sub.periodText ||
+    (sub.startsAt && sub.endsAt
+      ? `${formatRuDate(sub.startsAt)} — ${formatRuDate(sub.endsAt)}`
+      : sub.endsAt
+        ? `до ${formatRuDate(sub.endsAt)}`
+        : null);
 
-  const devicesUsed =
-    sub.planType === "personal"
-      ? 1
-      : Math.min(sub.deviceTotal ?? 1, 5);
+  const devicesUsed = sub.devicesUsed ?? 0;
+  const devicesMax = sub.deviceTotal ?? sub.devicesMax ?? 1;
+  const devices = sub.devices ?? [];
 
-  const devicesMax = sub.planType === "personal" ? 5 : Math.max(sub.deviceTotal ?? 1, 1);
-
-  const expiryLabel = isActive
-    ? `До ${formatRuDate(sub.endsAt)}`
-    : sub.status === "expired"
-      ? `Закончилась ${formatRuDate(sub.endsAt)}`
-      : "Нет подписки";
+  async function handleResetDevices() {
+    setResetting(true);
+    setHint(null);
+    try {
+      await resetDevices();
+      setHint("Привязки сброшены. Можно подключиться заново.");
+      onRefresh();
+    } catch (error) {
+      setHint(error instanceof Error ? error.message : "Не удалось сбросить");
+    } finally {
+      setResetting(false);
+    }
+  }
 
   return (
     <>
@@ -71,7 +93,7 @@ export function ProfileTab({ user, fallbackPhoto }: Props) {
         {isActive && (
           <div className="profile-status-line">
             <span className="status-dot" aria-hidden />
-            Сеть защищена
+            {sub.canConnect ? "Можно подключаться" : "Синхронизация подписки…"}
           </div>
         )}
       </section>
@@ -83,6 +105,9 @@ export function ProfileTab({ user, fallbackPhoto }: Props) {
             <div>
               <p className="profile-card-label">Текущий тариф</p>
               <p className="profile-card-value large">{tariffName}</p>
+              {sub.planLabel && (
+                <p className="profile-card-sub">{sub.planLabel}</p>
+              )}
             </div>
             <span className="material-symbols-outlined filled profile-card-icon">
               workspace_premium
@@ -93,11 +118,13 @@ export function ProfileTab({ user, fallbackPhoto }: Props) {
         <div className="glass-panel profile-card">
           <div className="profile-card-top">
             <div>
-              <p className="profile-card-label">Срок действия</p>
-              <p className="profile-card-value">{expiryLabel}</p>
-              {sub.startsAt && (
+              <p className="profile-card-label">Период подписки</p>
+              <p className="profile-card-value">
+                {periodText || (isActive ? "Активна" : "Нет подписки")}
+              </p>
+              {sub.billingMonths != null && sub.billingMonths > 0 && (
                 <p className="profile-card-sub">
-                  с {formatRuDate(sub.startsAt)}
+                  Оплачено: {sub.billingMonths} мес.
                 </p>
               )}
             </div>
@@ -111,50 +138,54 @@ export function ProfileTab({ user, fallbackPhoto }: Props) {
           <div className="profile-card-top">
             <div style={{ flex: 1 }}>
               <p className="profile-card-label">Устройства</p>
-              <div className="profile-card-row">
-                <p className="profile-card-value">
-                  {devicesUsed}{" "}
-                  <span style={{ color: "var(--slate)", fontWeight: 400 }}>
-                    / {devicesMax} активны
-                  </span>
+              <p className="profile-card-value">
+                {devicesUsed}{" "}
+                <span style={{ color: "var(--slate)", fontWeight: 400 }}>
+                  / {sub.planType === "personal" ? "∞" : devicesMax} слотов
+                </span>
+              </p>
+              {sub.panelOnline && (
+                <p className="profile-card-sub online-hint">
+                  В панели есть активное подключение (по IP)
                 </p>
-              </div>
-              <p className="profile-card-sub">{devicesLabel}</p>
-              <div className="progress-track">
-                <div
-                  className="progress-fill"
-                  style={{
-                    width: `${Math.min(100, (devicesUsed / devicesMax) * 100)}%`,
-                  }}
-                />
-              </div>
+              )}
+              {devices.length === 0 ? (
+                <p className="profile-card-sub">
+                  Подключитесь во вкладке «Помощь» — устройство появится здесь.
+                </p>
+              ) : (
+                <ul className="device-list">
+                  {devices.map((device) => (
+                    <li key={device.id} className="device-row">
+                      <div>
+                        <span className="device-row-title">{device.label}</span>
+                        <span className="device-row-sub">
+                          Последний вход: {formatDateTime(device.lastSeenAt)}
+                        </span>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {devices.length > 0 && (
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-pill device-reset-btn"
+                  disabled={resetting}
+                  onClick={handleResetDevices}
+                >
+                  {resetting ? "Сброс…" : "Сбросить привязки"}
+                </button>
+              )}
             </div>
             <span className="material-symbols-outlined profile-card-icon">
               devices
             </span>
           </div>
         </div>
-
-        {sub.vpnKey && (
-          <div className="glass-panel profile-card">
-            <p className="profile-card-label">VPN-ключ</p>
-            <div className="key-box">{sub.vpnKey}</div>
-          </div>
-        )}
-
-        <div className="glass-panel profile-card">
-          <div className="profile-card-row">
-            <div>
-              <p className="profile-card-label">Telegram ID</p>
-              <p className="profile-card-value">{user.id}</p>
-            </div>
-            <div style={{ textAlign: "right" }}>
-              <p className="profile-card-label">Публичный ID</p>
-              <p className="profile-card-value">{user.publicId}</p>
-            </div>
-          </div>
-        </div>
       </div>
+
+      {hint && <p className="toast">{hint}</p>}
     </>
   );
 }

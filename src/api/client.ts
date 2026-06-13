@@ -49,6 +49,18 @@ export function purchasePlan(payload: {
   });
 }
 
+export function fetchConnect(
+  platform: string,
+  client: string
+): Promise<{ ok: boolean; redirectUrl: string; subId: string }> {
+  const params = new URLSearchParams({ platform, client });
+  return api(`/api/connect?${params.toString()}`);
+}
+
+export function resetDevices(): Promise<{ ok: boolean }> {
+  return api("/api/devices/reset", { method: "POST", body: "{}" });
+}
+
 export function purchaseDevices(extraDevices: number): Promise<{
   ok: boolean;
   message: string;

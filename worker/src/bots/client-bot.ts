@@ -226,18 +226,20 @@ async function buildDevicesText(
     bindings.length > 0
       ? bindings
           .map((row, index) => {
-            const status = online && index === 0 ? "в сети" : "не в сети";
             return (
               `${index + 1}. <b>${row.label}</b>\n` +
-              `   Последний вход из бота: ${formatDateTime(row.last_seen_at)}\n` +
-              `   Статус: ${status}`
+              `   Последний вход: ${formatDateTime(row.last_seen_at)}`
             );
           })
           .join("\n\n")
       : "Пока нет устройств, подключённых через бота.\nВыберите «Подключить VPN» и укажите ОС — мы запомним её здесь.";
 
   const lastOnlineLine =
-    lastOnlineMs > 0 ? `Последняя активность в панели: ${formatDateTime(lastOnlineMs)}\n` : "";
+    lastOnlineMs > 0
+      ? `Последняя активность в панели: ${formatDateTime(lastOnlineMs)}\n`
+      : online
+        ? "В панели есть активное подключение.\n"
+        : "";
 
   return (
     `<b>Устройства</b>\n\n` +
@@ -573,6 +575,23 @@ async function handleTesterReset(
   );
 }
 
+function formatSubscriptionPeriod(
+  startsAt: string | null | undefined,
+  endsAt: string | null | undefined,
+  planLabel: string | null | undefined
+): string {
+  const fmt = (iso: string) =>
+    new Date(`${iso}T12:00:00`).toLocaleDateString("ru-RU", {
+      day: "numeric",
+      month: "long",
+      year: "numeric",
+    });
+  if (startsAt && endsAt) return `${fmt(startsAt)} — ${fmt(endsAt)}`;
+  if (endsAt) return `до ${fmt(endsAt)}`;
+  if (planLabel) return planLabel;
+  return "—";
+}
+
 async function showProfile(
   env: BotEnv,
   chatId: number,
@@ -583,11 +602,11 @@ async function showProfile(
   const user = await upsertTelegramUser(env, tg);
   const sub = await getSubscription(env, user.id);
   const status = sub?.status || "none";
-  const ends = sub?.ends_at ? `до ${sub.ends_at}` : "—";
+  const period = formatSubscriptionPeriod(sub?.starts_at, sub?.ends_at, sub?.plan_label);
   const text =
     `<b>Мой профиль</b>\n\n` +
-    `Статус: ${status === "active" ? "активна" : status === "expired" ? "истекла" : "нет подписки"}\n` +
-    `Подписка: ${sub?.plan_label || "—"} ${ends}\n` +
+    `Статус: ${status === "active" ? (sub?.is_trial ? "пробный период" : "активна") : status === "expired" ? "истекла" : "нет подписки"}\n` +
+    `Период: ${period}\n` +
     `Устройства: ${deviceLimitTotal(sub)} слот(ов)\n\n` +
     `Ключи и UUID в чате не показываем.`;
   await editMessage(token, chatId, messageId, text, {

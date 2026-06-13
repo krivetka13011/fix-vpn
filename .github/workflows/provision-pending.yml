@@ -1,0 +1,44 @@
+name: Provision pending VPN clients
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  provision:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install deps
+        run: pip install requests
+
+      - name: Provision users without panel binding
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          XUI_BASE_URL: ${{ secrets.XUI_BASE_URL || 'https://fixvp.xyz:54596/LXZo7cOhasXWon5uQu' }}
+          XUI_API_TOKEN: ${{ secrets.XUI_API_TOKEN }}
+          XUI_CLIENT_LIMIT_IP: "1"
+          WEBAPP_URL: https://fix-vpn.krivetkagames.workers.dev
+        run: python scripts/provision_pending_users.py
+
+      - name: Refresh subscription caches
+        continue-on-error: true
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          XUI_BASE_URL: ${{ secrets.XUI_BASE_URL || 'https://fixvp.xyz:54596/LXZo7cOhasXWon5uQu' }}
+          XUI_API_TOKEN: ${{ secrets.XUI_API_TOKEN }}
+          SUBSCRIPTION_BASE_URL: ${{ secrets.SUBSCRIPTION_BASE_URL || 'https://fixvp.xyz:2096' }}
+          SUBSCRIPTION_CLIENT_BASE_URL: ${{ secrets.SUBSCRIPTION_CLIENT_BASE_URL || 'https://fixvp.xyz:2096' }}
+          SUBSCRIPTION_PATH: "/sub"
+        run: python scripts/refresh_subscription_caches.py

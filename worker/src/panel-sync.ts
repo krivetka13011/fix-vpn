@@ -1,7 +1,6 @@
 import type { BotEnv } from "./env";
 import {
   buildPanelSubscriptionUrlForUser,
-  panelSubscriptionIsLive,
 } from "./connect-links";
 import { patchSubscription } from "./repository";
 import type { DbSubscription } from "./types";
@@ -16,9 +15,6 @@ async function syncFromDbBinding(
   const subId = sub?.xray_sub_id?.trim();
   const uuid = sub?.xray_uuid?.trim();
   if (!subId || !uuid) return null;
-
-  const live = await panelSubscriptionIsLive(env, subId);
-  if (!live) return null;
 
   const panelUrl = buildPanelSubscriptionUrlForUser(env, subId);
   await patchSubscription(env, userId, {
@@ -64,26 +60,7 @@ export async function syncPanelSubIdForUser(
   }
 
   const lockedSubId = sub?.xray_sub_id?.trim() || "";
-  let subId = panel.subId.trim();
-  if (lockedSubId) {
-    const lockedLive = await panelSubscriptionIsLive(env, lockedSubId);
-    if (lockedLive) {
-      subId = lockedSubId;
-    }
-  }
-
-  const live = await panelSubscriptionIsLive(env, subId);
-  if (!live) {
-    const panelLive = await panelSubscriptionIsLive(env, panel.subId);
-    if (!panelLive) {
-      const fromDb = await syncFromDbBinding(env, userId, telegramId, sub);
-      if (fromDb) return fromDb;
-      console.error("syncPanelSubId: panel subscription dead", panel.subId);
-      return null;
-    }
-    subId = panel.subId;
-  }
-
+  const subId = lockedSubId || panel.subId.trim();
   const panelUrl = buildPanelSubscriptionUrlForUser(env, subId);
   await patchSubscription(env, userId, {
     client_email: String(telegramId),

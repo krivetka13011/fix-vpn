@@ -478,6 +478,7 @@ async function activateTrial(env: BotEnv, tg: TelegramUser, chatId: number): Pro
   const expiryMs = expiryMsFromDays(trialDays);
 
   try {
+    await ensureVpnClientOnStart(env, claimed, tg);
     let sub = await getSubscription(env, claimed.id);
     let panelSubId = await resolvePanelSubId(env, claimed, tg);
     sub = await getSubscription(env, claimed.id);
@@ -487,7 +488,11 @@ async function activateTrial(env: BotEnv, tg: TelegramUser, chatId: number): Pro
     }
 
     if (!panelSubId || !sub?.xray_sub_id || !sub?.xray_uuid) {
-      throw new Error("клиент не подготовлен — нажмите /start ещё раз");
+      throw new Error(
+        tester
+          ? "клиент не подготовлен — подождите 1–2 минуты и нажмите «Пробный период» снова"
+          : "клиент не подготовлен — нажмите /start ещё раз через 1–2 минуты"
+      );
     }
 
     const subscriptionUrl =
@@ -970,13 +975,14 @@ export async function handleClientBotUpdate(
     } else {
       user = await upsertTelegramUser(env, tg);
     }
-    await showMainMenu(env, chatId, tg);
     try {
+      await ensureVpnClientOnStart(env, user, tg);
       const sub = await getSubscription(env, user.id);
       await syncPanelSubIdForUser(env, user.id, tg.id, user.username, sub);
     } catch (error) {
       console.error("start panel sync:", error);
     }
+    await showMainMenu(env, chatId, tg);
     return;
   }
 

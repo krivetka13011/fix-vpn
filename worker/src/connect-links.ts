@@ -93,15 +93,14 @@ export function buildProtectedSubscriptionUrl(env: BotEnv, subId: string): strin
 
 export function applyLockedSubscriptionBody(body: string): string {
   const trimmed = body.trim();
-  if (!trimmed) return "#hide-settings: 1\n";
-  if (/^#hide-settings\s*:/im.test(trimmed)) return trimmed;
-  return `#hide-settings: 1\n${trimmed}`;
+  if (!trimmed) return "";
+  return trimmed.replace(/^#hide-settings\s*:\s*1\s*\n?/im, "");
 }
 
 export const LOCKED_SUBSCRIPTION_HEADERS: Record<string, string> = {
   "hide-settings": "1",
   "Profile-Update-Interval": "60",
-  "Content-Disposition": 'attachment; filename="FIX VPN"',
+  "Profile-Title": "base64:8J+Up0ZJWCBWUE4=",
 };
 
 export function subscriptionUserinfoHeader(
@@ -132,16 +131,26 @@ export async function encryptHappLink(subscriptionUrl: string): Promise<string> 
   return encrypted;
 }
 
+/** URL embedded in Happ crypt5 — must be fetchable on device with valid TLS (panel host, not Worker). */
+export function buildHappSubscriptionUrl(env: BotEnv, subId: string): string {
+  const clientBase = subscriptionClientBaseUrl(env);
+  const path = (env.SUBSCRIPTION_PATH || "/sub").replace(/\/$/, "");
+  const encoded = encodeURIComponent(subId);
+  if (clientBase) {
+    return `${clientBase}${path}/${encoded}`;
+  }
+  return buildProtectedSubscriptionUrl(env, subId);
+}
+
 export async function buildClientImportTarget(
   env: BotEnv,
   client: VpnClientId,
   subId: string
 ): Promise<string> {
-  const protectedUrl = buildProtectedSubscriptionUrl(env, subId);
   if (client === "happ") {
-    return encryptHappLink(protectedUrl);
+    return encryptHappLink(buildHappSubscriptionUrl(env, subId));
   }
-  return protectedUrl;
+  return buildProtectedSubscriptionUrl(env, subId);
 }
 
 export function buildRedirectUrl(

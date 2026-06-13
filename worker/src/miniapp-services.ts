@@ -13,6 +13,7 @@ import {
 } from "./repository";
 import type { TelegramUser } from "./telegram";
 import { XuiApi, type PanelDeviceIp } from "./xui";
+import { isPanelIpClearPending, subscriptionDeviceLimit } from "./device-limit";
 
 const OS_LABELS: Record<string, string> = {
   android: "Android",
@@ -46,10 +47,6 @@ function mapClient(client: string): VpnClientId {
   return "happ";
 }
 
-function deviceLimitTotal(sub: { extra_devices?: number; plan_type?: string | null } | null): number {
-  if (sub?.plan_type === "personal") return 999;
-  return 1 + Number(sub?.extra_devices || 0);
-}
 
 function formatPeriod(startsAt: string | null, endsAt: string | null): string | null {
   if (!startsAt && !endsAt) return null;
@@ -134,11 +131,12 @@ export async function fetchDeviceSlotStatus(
   userId: string,
   sub: Awaited<ReturnType<typeof getSubscription>>
 ): Promise<DeviceSlotStatus> {
-  const limit = deviceLimitTotal(sub);
+  const limit = subscriptionDeviceLimit(sub);
   const bindings = await listVpnDeviceBindings(env, userId);
   let panelIps: PanelDeviceIp[] = [];
+  const ipClearPending = isPanelIpClearPending(sub);
 
-  if (sub?.client_email) {
+  if (!ipClearPending && sub?.client_email) {
     try {
       panelIps = await new XuiApi(env).getClientIps(sub.client_email);
     } catch {
@@ -146,8 +144,11 @@ export async function fetchDeviceSlotStatus(
     }
   }
 
+  const unlimited = limit === 0;
   const slotTaken =
-    panelIps.length >= limit || bindings.length >= limit;
+    !unlimited &&
+    !ipClearPending &&
+    (panelIps.length >= limit || bindings.length >= limit);
 
   return {
     limit,
@@ -210,7 +211,7 @@ export async function fetchMiniappDevices(
 }> {
   const sub = await getSubscription(env, userId);
   const bindings = await listVpnDeviceBindings(env, userId);
-  const limit = deviceLimitTotal(sub);
+  const limit = subscriptionDeviceLimit(sub);
   const slot = await fetchDeviceSlotStatus(env, userId, sub);
   let panelOnline = false;
 
@@ -234,8 +235,11 @@ export async function fetchMiniappDevices(
   }));
 
   return {
-    used: slot.slotTaken ? Math.min(limit, 1) : 0,
-    limit: limit >= 999 ? Math.max(bindings.length, 1) : limit,
+    used:
+      limit === 0
+        ? bindings.length
+        : Math.min(limit, Math.max(bindings.length, slot.panelIps.length)),
+    limit,
     panelOnline,
     devices,
   };
@@ -265,7 +269,7 @@ export async function buildMiniappConnectUrl(
     if (isDifferentDeviceAttempt(slot, mappedOs)) {
       throw new Error(deviceOccupiedMessage(slot, mappedOs));
     }
-    if (deviceLimitTotal(sub) <= 1) {
+    if (subscriptionDeviceLimit(sub) <= 1) {
       await clearVpnDeviceBindings(env, user.id);
     }
     const label = `${OS_LABELS[mappedOs] || mappedOs} · ${CLIENT_LABELS[client] || client}`;

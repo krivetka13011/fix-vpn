@@ -511,13 +511,14 @@ export class XuiApi {
     expiryMs: number,
     totalGb: number,
     enable: boolean,
-    existingUuid?: string
+    existingUuid?: string,
+    limitIp?: number
   ): XuiClientRecord {
     return {
       id: existingUuid || crypto.randomUUID(),
       email,
       subId,
-      limitIp: this.limitIp,
+      limitIp: limitIp ?? this.limitIp,
       expiryTime: expiryMs,
       enable,
       tgId: telegramId,

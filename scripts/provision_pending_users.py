@@ -74,6 +74,7 @@ def scan_clients(session, base):
                     "tgId": client.get("tgId"),
                     "subId": str(client.get("subId") or ""),
                     "uuid": str(client.get("id") or ""),
+                    "limitIp": int(client.get("limitIp") or 0),
                 }
             )
     return found
@@ -93,12 +94,12 @@ def find_panel_client(clients, telegram_id, username):
     return None
 
 
-def add_panel_client(session, base, email, sub_id, client_uuid, tg_id):
+def add_panel_client(session, base, email, sub_id, client_uuid, tg_id, limit_ip=1):
     client = {
         "id": client_uuid,
         "email": email,
         "subId": sub_id,
-        "limitIp": int(os.environ.get("XUI_CLIENT_LIMIT_IP", "1")),
+        "limitIp": limit_ip,
         "expiryTime": 0,
         "enable": True,
         "tgId": tg_id,
@@ -147,6 +148,61 @@ def clear_pending_panel_ips(sb: str, session: requests.Session, base: str) -> in
     return cleared
 
 
+def sync_client_limits(sb: str, session: requests.Session, base: str, clients: list) -> int:
+    rows = requests.get(
+        sb
+        + "subscriptions?status=eq.active&select=user_id,client_email,plan_type,extra_devices,xray_uuid,xray_sub_id,users!inner(telegram_id)&client_email=not.is.null",
+        headers={**sb_headers("return=representation"), "Prefer": "return=representation"},
+        timeout=30,
+    ).json()
+    by_email = {str(c.get("email") or ""): c for c in clients}
+    by_tg = {}
+    for c in clients:
+        tg = str(c.get("tgId") or "")
+        if tg:
+            by_tg[tg] = c
+
+    synced = 0
+    for row in rows:
+        email = str(row.get("client_email") or "").strip()
+        tg_id = str((row.get("users") or {}).get("telegram_id") or "")
+        panel = by_email.get(email) or by_tg.get(tg_id)
+        if not panel:
+            continue
+        plan = str(row.get("plan_type") or "basic")
+        extra = int(row.get("extra_devices") or 0)
+        limit_ip = 0 if plan == "personal" else 1 + extra
+        if int(panel.get("limitIp") or -1) == limit_ip:
+            continue
+        client = {
+            "id": panel.get("uuid") or row.get("xray_uuid"),
+            "email": panel.get("email") or email,
+            "subId": panel.get("subId") or row.get("xray_sub_id"),
+            "limitIp": limit_ip,
+            "expiryTime": 0,
+            "enable": True,
+            "tgId": int(tg_id or 0),
+            "totalGB": 0,
+            "flow": "",
+        }
+        update_email = panel.get("email") or email
+        response = session.post(
+            f"{base}/panel/api/clients/update/{update_email}",
+            json={"email": update_email, "inboundIds": INBOUND_IDS, "client": client},
+            timeout=30,
+        )
+        if response.ok or "success" in response.text.lower():
+            synced += 1
+            print("sync limitIp", update_email, limit_ip)
+    return synced
+
+
+def limit_ip_for_row(row):
+    plan = str(row.get("plan_type") or "basic")
+    extra = int(row.get("extra_devices") or 0)
+    return 0 if plan == "personal" else 1 + extra
+
+
 def main():
     load_env()
     for name in ("SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "XUI_BASE_URL", "XUI_API_TOKEN"):
@@ -158,18 +214,20 @@ def main():
 
     rows = requests.get(
         sb
-        + "subscriptions?select=user_id,xray_sub_id,xray_uuid,users!inner(telegram_id,username)",
+        + "subscriptions?select=user_id,xray_sub_id,xray_uuid,plan_type,extra_devices,users!inner(telegram_id,username)",
         headers={**sb_headers("return=representation"), "Prefer": "return=representation"},
         timeout=30,
     ).json()
 
-    if not rows:
-        print("no users")
-        return
-
     session, base = panel_session()
     ip_cleared = clear_pending_panel_ips(sb, session, base)
     clients = scan_clients(session, base)
+    limits_synced = sync_client_limits(sb, session, base, clients)
+
+    if not rows:
+        print(f"no users, ip_clears {ip_cleared}, limits {limits_synced}")
+        return
+
     provisioned = 0
 
     def panel_live(row):
@@ -212,7 +270,7 @@ def main():
             sub_id = random_sub_id()
             client_uuid = str(uuid.uuid4())
             email = str(tg_id)
-            add_panel_client(session, base, email, sub_id, client_uuid, tg_id)
+            add_panel_client(session, base, email, sub_id, client_uuid, tg_id, limit_ip_for_row(row))
             panel = {"email": email, "subId": sub_id, "uuid": client_uuid}
             clients = scan_clients(session, base)
             print("created", tg_id, sub_id)
@@ -246,7 +304,9 @@ def main():
         )
         provisioned += 1
 
-    print(f"provisioned {provisioned}/{len(rows)}, ip_clears {ip_cleared}")
+    print(
+        f"provisioned {provisioned}/{len(rows)}, ip_clears {ip_cleared}, limits {limits_synced}"
+    )
 
 
 if __name__ == "__main__":

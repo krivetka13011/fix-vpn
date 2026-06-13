@@ -37,9 +37,9 @@ import {
 import {
   buildClientImportTarget,
   fetchPanelSubscriptionBody,
-  LOCKED_SUBSCRIPTION_HEADERS,
   normalizeSubscriptionBody,
   redirectHtml,
+  SUBSCRIPTION_RESPONSE_HEADERS,
   subscriptionUserinfoHeader,
   type VpnClientId,
 } from "./connect-links";
@@ -115,7 +115,7 @@ export async function handleApiRequest(
     const lockedHeaders: Record<string, string> = {
       "Content-Type": "text/plain; charset=utf-8",
       "Cache-Control": "no-store",
-      ...LOCKED_SUBSCRIPTION_HEADERS,
+      ...SUBSCRIPTION_RESPONSE_HEADERS,
       ...CORS,
     };
 
@@ -129,34 +129,27 @@ export async function handleApiRequest(
     const live = await fetchPanelSubscriptionBody(env, subId);
     if (live?.body) {
       const headers: Record<string, string> = { ...lockedHeaders, ...live.headers };
+      delete headers["hide-settings"];
       const userinfo = subscriptionUserinfoHeader(dbSub?.ends_at ?? null);
       if (userinfo) headers["Subscription-Userinfo"] = userinfo;
       return new Response(live.body, { status: 200, headers });
     }
 
-    let allowCache = true;
     try {
-      const links = await new XuiApi(env).getClientSubLinks(subId);
-      if (links.length === 0) {
-        allowCache = false;
+      const cached = dbSub?.subscription_payload_cache?.trim();
+      if (
+        cached &&
+        cached.length > 100 &&
+        dbSub?.status === "active"
+      ) {
+        const body = normalizeSubscriptionBody(cached);
+        const headers: Record<string, string> = { ...lockedHeaders };
+        const userinfo = subscriptionUserinfoHeader(dbSub?.ends_at ?? null);
+        if (userinfo) headers["Subscription-Userinfo"] = userinfo;
+        return new Response(body, { status: 200, headers });
       }
     } catch (error) {
-      console.error("subscription subLinks probe:", error);
-    }
-
-    if (allowCache) {
-      try {
-        const cached = dbSub?.subscription_payload_cache?.trim();
-        if (cached && cached.length > 100) {
-          const body = normalizeSubscriptionBody(cached);
-          const headers: Record<string, string> = { ...lockedHeaders };
-          const userinfo = subscriptionUserinfoHeader(dbSub?.ends_at ?? null);
-          if (userinfo) headers["Subscription-Userinfo"] = userinfo;
-          return new Response(body, { status: 200, headers });
-        }
-      } catch (error) {
-        console.error("subscription cache:", error);
-      }
+      console.error("subscription cache:", error);
     }
 
     const subPath = (env.SUBSCRIPTION_PATH || "/sub").replace(/\/$/, "");

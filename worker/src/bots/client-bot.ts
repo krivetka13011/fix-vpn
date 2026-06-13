@@ -50,6 +50,7 @@ import {
   fetchDeviceSlotStatus,
   isDifferentDeviceAttempt,
 } from "../miniapp-services";
+import { isPanelIpClearPending, subscriptionDeviceLimit } from "../device-limit";
 
 type TgUpdate = {
   message?: {
@@ -176,8 +177,10 @@ function formatDateTime(isoOrMs: string | number): string {
   return `${pad(date.getDate())}.${pad(date.getMonth() + 1)}.${date.getFullYear()} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
-function deviceLimitTotal(sub: { extra_devices?: number } | null | undefined): number {
-  return 1 + Number(sub?.extra_devices || 0);
+function deviceLimitLabel(sub: Awaited<ReturnType<typeof getSubscription>>): string {
+  const limit = subscriptionDeviceLimit(sub);
+  if (limit === 0) return "без ограничений";
+  return String(limit);
 }
 
 async function recordDeviceConnect(
@@ -187,7 +190,8 @@ async function recordDeviceConnect(
   vpnClient: VpnClientId
 ): Promise<void> {
   const sub = await getSubscription(env, userId);
-  if (deviceLimitTotal(sub) <= 1) {
+  const limit = subscriptionDeviceLimit(sub);
+  if (limit > 0 && limit <= 1) {
     await clearVpnDeviceBindings(env, userId);
   }
   const label = `${deviceDisplayName(os, vpnClient)}`;
@@ -313,12 +317,17 @@ function importInstructionsMessage(
   vpnClient: VpnClientId,
   openUrl: string
 ): { text: string; markup: Record<string, unknown> } {
+  const happCleanup =
+    os === "windows"
+      ? `В Happ слева удалите <b>все</b> старые подписки «Encrypted» — обновление старой подписки на ПК не работает.\nЗатем нажмите кнопку ниже для нового импорта.`
+      : `Удалите старые подписки «Encrypted» в Happ, затем нажмите кнопку снова.`;
+
   return {
     text:
       `<b>Импорт в ${clientLabel(vpnClient)} (${osLabel(os)})</b>\n\n` +
       `Нажмите кнопку ниже. Подписка защищена: ссылку и настройки серверов нельзя просмотреть или изменить.\n\n` +
       (vpnClient === "happ"
-        ? `Удалите старые подписки «Encrypted» в Happ, затем нажмите кнопку снова.`
+        ? happCleanup
         : `Удалите старую подписку FIX VPN в ${clientLabel(vpnClient)}, затем импортируйте заново.`),
     markup: {
       inline_keyboard: [
@@ -602,10 +611,11 @@ async function showProfile(
   const user = await upsertTelegramUser(env, tg);
   const sub = await getSubscription(env, user.id);
   const bindings = await listVpnDeviceBindings(env, user.id);
-  const limit = deviceLimitTotal(sub);
+  const limit = subscriptionDeviceLimit(sub);
   let panelIps: PanelDeviceIp[] = [];
+  const ipClearPending = isPanelIpClearPending(sub);
 
-  if (sub?.client_email) {
+  if (!ipClearPending && sub?.client_email) {
     try {
       panelIps = await new XuiApi(env).getClientIps(sub.client_email);
     } catch (error) {
@@ -613,7 +623,7 @@ async function showProfile(
     }
   }
 
-  const used = deviceSlotUsed(limit, bindings.length, panelIps.length);
+  const used = limit === 0 ? bindings.length : deviceSlotUsed(limit, bindings.length, panelIps.length);
   const hasSlot = used > 0;
   const status = sub?.status || "none";
   const period = formatSubscriptionPeriod(sub?.starts_at, sub?.ends_at, sub?.plan_label);
@@ -626,9 +636,14 @@ async function showProfile(
         ? "истекла"
         : "нет подписки";
 
+  const limitLabel = deviceLimitLabel(sub);
   const deviceLine = hasSlot
-    ? `Устройство: <b>${used} из ${limit}</b> · занято`
-    : `Устройство: <b>свободно</b> (${limit} слот)`;
+    ? `Устройство: <b>${used} из ${limitLabel}</b> · занято`
+    : ipClearPending
+      ? `Устройство: <b>освобождается</b> (подождите 1–2 мин)`
+      : limit === 0
+        ? `Устройство: <b>свободно</b>`
+        : `Устройство: <b>свободно</b> (${limitLabel} слот)`;
 
   const hint = hasSlot
     ? "Нажмите устройство ниже, чтобы отвязать. Можно подключить другое после отвязки."
@@ -662,7 +677,7 @@ async function unbindSingleDevice(
   let panelNote = "";
   if (sub?.client_email) {
     const left = await listVpnDeviceBindings(env, user.id);
-    if (left.length === 0 || deviceLimitTotal(sub) <= 1) {
+    if (left.length === 0 || subscriptionDeviceLimit(sub) <= 1) {
       const cleared = await tryClearPanelIps(env, user.id, sub.client_email);
       panelNote = cleared.ok
         ? "Устройство отвязано."
@@ -919,9 +934,11 @@ export async function handleClientBotUpdate(
         const slot = await fetchDeviceSlotStatus(env, user.id, sub);
         const warning = slot.slotTaken
           ? `<b>Устройство уже привязано</b>\n\n${deviceOccupiedMessage(slot)}\n\n`
-          : sub.is_trial
-            ? `<b>Пробный период</b>\nОдновременно 1 устройство. Сменить — «Мой профиль».\n\n`
-            : "";
+          : isPanelIpClearPending(sub)
+            ? `<b>Смена устройства</b>\nIP в панели очищается (1–2 мин). Можно подключать новое устройство.\n\n`
+            : sub.is_trial
+              ? `<b>Пробный период</b>\nОдновременно 1 устройство. Сменить — «Мой профиль».\n\n`
+              : "";
         const osRows = connectOsKeyboard().inline_keyboard.slice(0, -1);
         await editMessage(
           token,

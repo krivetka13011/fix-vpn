@@ -222,6 +222,12 @@ export const LOCKED_SUBSCRIPTION_HEADERS: Record<string, string> = {
   "Profile-Title": "base64:8J+Up0ZJWCBWUE4=",
 };
 
+/** Headers for /api/sub — без hide-settings (ломает refresh в Happ на Windows). */
+export const SUBSCRIPTION_RESPONSE_HEADERS: Record<string, string> = {
+  "Profile-Update-Interval": "1",
+  "Profile-Title": "base64:8J+Up0ZJWCBWUE4=",
+};
+
 export function subscriptionUserinfoHeader(
   endsAt: string | null | undefined
 ): string | null {

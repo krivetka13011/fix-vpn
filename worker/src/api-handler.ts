@@ -25,7 +25,7 @@ import { handlePartnerBotUpdate } from "./bots/partner-bot";
 import { beginE2eTrace, endE2eTrace } from "./e2e-trace";
 import {
   DeviceResetCooldownError,
-  DEVICE_RESET_SUCCESS_NOTICE,
+  DeviceResetPendingError,
 } from "./device-reset";
 import { XuiApi } from "./xui";
 import { getSubscriptionBySubId } from "./repository";
@@ -461,17 +461,20 @@ export async function handleApiRequest(
 
   if (path === "/api/devices/reset" && request.method === "POST") {
     try {
-      await resetMiniappDevices(env, tgUser);
+      const message = await resetMiniappDevices(env, tgUser);
       const bundle = await ensureUser(env, tgUser);
       const deviceInfo = await fetchMiniappDevices(env, bundle.user.id);
       return json({
         ok: true,
-        message: DEVICE_RESET_SUCCESS_NOTICE,
+        message,
         devices: deviceInfo,
       });
     } catch (e) {
       if (e instanceof DeviceResetCooldownError) {
         return json({ error: e.message, cooldownMs: e.remainingMs }, 429);
+      }
+      if (e instanceof DeviceResetPendingError) {
+        return json({ error: e.message }, 409);
       }
       return json(
         { error: e instanceof Error ? e.message : "Reset failed" },

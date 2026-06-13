@@ -5,10 +5,12 @@ import {
   getSubscription,
   patchSubscription,
 } from "./repository";
-import { clearDeviceSwapState } from "./subscription-rotate";
+import { clearStuckRotationFlags } from "./subscription-rotate";
 import { XuiApi } from "./xui";
 
 export const DEVICE_RESET_COOLDOWN_MS = 24 * 60 * 60 * 1000;
+const PANEL_CLEAR_PENDING_MS = 5 * 60 * 1000;
+const PANEL_CLEAR_TRY_TIMEOUT_MS = 5000;
 
 export function deviceResetCooldownRemaining(
   lastReset: string | null | undefined
@@ -39,46 +41,102 @@ export class DeviceResetCooldownError extends Error {
   }
 }
 
-export const DEVICE_RESET_SUCCESS_NOTICE =
-  "Привязка устройств успешно сброшена! Теперь вы можете подключить новый телефон. Обратите внимание: следующий сброс будет доступен ровно через 24 часа.";
+export class DeviceResetPendingError extends Error {
+  constructor() {
+    super("Сброс уже выполняется. Подождите 1–2 минуты и обновите профиль.");
+    this.name = "DeviceResetPendingError";
+  }
+}
 
-export async function resetPanelDeviceBinding(
+export const DEVICE_RESET_SUCCESS_NOTICE =
+  "Привязка устройств успешно сброшена! Теперь вы можете подключить новый телефон. Следующий сброс — через 24 часа.";
+
+export const DEVICE_RESET_QUEUED_NOTICE =
+  "Сброс IP в панели выполняется (обычно до 2 минут). Можно подключать новое устройство после обновления профиля.";
+
+function panelClearPending(sub: {
+  panel_ip_clear_requested_at?: string | null;
+}): boolean {
+  const raw = sub.panel_ip_clear_requested_at;
+  if (!raw) return false;
+  return Date.now() - new Date(raw).getTime() < PANEL_CLEAR_PENDING_MS;
+}
+
+export async function clearPanelClientIps(
   env: BotEnv,
   userId: string,
-  options?: { bypassCooldown?: boolean; telegramId?: number; isTester?: boolean }
-): Promise<void> {
+  clientEmail: string,
+  options?: { enforceCooldown?: boolean; bypassCooldown?: boolean; telegramId?: number; isTester?: boolean }
+): Promise<"cleared" | "queued"> {
   const sub = await getSubscription(env, userId);
-  if (!sub?.client_email?.trim()) {
-    throw new Error("Нет активного клиента в панели");
-  }
+  if (!sub) throw new Error("Подписка не найдена");
+
+  const email = clientEmail.trim();
+  if (!email) throw new Error("Нет активного клиента в панели");
 
   const bypass =
     options?.bypassCooldown ||
     (options?.telegramId != null &&
       isTesterAccount(env, options.telegramId, options.isTester));
 
-  const remaining = deviceResetCooldownRemaining(sub.last_device_reset);
-  if (!bypass && remaining > 0) {
-    throw new DeviceResetCooldownError(remaining);
+  if (options?.enforceCooldown && !bypass) {
+    const remaining = deviceResetCooldownRemaining(sub.last_device_reset);
+    if (remaining > 0) throw new DeviceResetCooldownError(remaining);
   }
 
-  const xui = new XuiApi(env);
-  try {
-    await xui.clearClientIps(sub.client_email.trim());
-  } catch (panelError) {
-    console.error("resetPanelDeviceBinding panel:", panelError);
-    await patchSubscription(env, userId, {
-      panel_ip_clear_requested_at: new Date().toISOString(),
-    });
-    throw new Error(
-      "Панель временно недоступна с сервера. Сброс поставлен в очередь (обычно до 2 минут). Не нажимайте кнопку повторно."
-    );
+  if (panelClearPending(sub)) {
+    throw new DeviceResetPendingError();
   }
 
   await clearVpnDeviceBindings(env, userId);
-  await clearDeviceSwapState(env, userId);
+
+  const xui = new XuiApi(env);
+  const cleared = await xui.tryClearClientIps(email, PANEL_CLEAR_TRY_TIMEOUT_MS);
+  const now = new Date().toISOString();
+
+  if (cleared) {
+    await patchSubscription(env, userId, {
+      last_device_reset: options?.enforceCooldown ? now : sub.last_device_reset,
+      panel_ip_clear_requested_at: null,
+    });
+    await clearStuckRotationFlags(env, userId);
+    return "cleared";
+  }
+
   await patchSubscription(env, userId, {
-    last_device_reset: new Date().toISOString(),
-    panel_ip_clear_requested_at: null,
+    panel_ip_clear_requested_at: now,
+    ...(options?.enforceCooldown ? { last_device_reset: now } : {}),
   });
+  return "queued";
+}
+
+export async function resetPanelDeviceBinding(
+  env: BotEnv,
+  userId: string,
+  options?: { bypassCooldown?: boolean; telegramId?: number; isTester?: boolean }
+): Promise<"cleared" | "queued"> {
+  const sub = await getSubscription(env, userId);
+  if (!sub?.client_email?.trim()) {
+    throw new Error("Нет активного клиента в панели");
+  }
+
+  return clearPanelClientIps(env, userId, sub.client_email, {
+    enforceCooldown: true,
+    bypassCooldown: options?.bypassCooldown,
+    telegramId: options?.telegramId,
+    isTester: options?.isTester,
+  });
+}
+
+export async function unbindPanelClientIp(
+  env: BotEnv,
+  userId: string,
+  clientEmail: string | null | undefined
+): Promise<"cleared" | "queued" | "skipped"> {
+  if (!clientEmail?.trim()) return "skipped";
+  return clearPanelClientIps(env, userId, clientEmail, { enforceCooldown: false });
+}
+
+export function deviceResetNotice(mode: "cleared" | "queued"): string {
+  return mode === "cleared" ? DEVICE_RESET_SUCCESS_NOTICE : DEVICE_RESET_QUEUED_NOTICE;
 }

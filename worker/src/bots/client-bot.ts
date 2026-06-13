@@ -36,11 +36,13 @@ import {
 import { BILLING_OPTIONS, calcPrice, periodLabel, type BillingMonths } from "./pricing";
 import { managerTxnKeyboard, notifyManager } from "./manager";
 import { handleManagerPartnerCallback } from "./partner-bot";
-import { clearDeviceSwapState } from "../subscription-rotate";
+import { clearStuckRotationFlags } from "../subscription-rotate";
 import {
   DeviceResetCooldownError,
-  DEVICE_RESET_SUCCESS_NOTICE,
+  DeviceResetPendingError,
+  deviceResetNotice,
   resetPanelDeviceBinding,
+  unbindPanelClientIp,
 } from "../device-reset";
 import {
   buildPanelSubscriptionUrlForUser,
@@ -571,26 +573,27 @@ async function showProfile(
   const token = clientBotToken(env)!;
   const user = await upsertTelegramUser(env, tg);
   const sub = await getSubscription(env, user.id);
-  if (
-    sub?.panel_sub_rotate_requested_at ||
-    sub?.pending_xray_sub_id ||
-    sub?.panel_ip_clear_requested_at
-  ) {
-    await clearDeviceSwapState(env, user.id);
+  if (sub?.panel_sub_rotate_requested_at || sub?.pending_xray_sub_id) {
+    await clearStuckRotationFlags(env, user.id);
   }
   const bindings = await listVpnDeviceBindings(env, user.id);
   let panelIps: PanelDeviceIp[] = [];
 
   if (sub?.client_email) {
     try {
-      panelIps = await new XuiApi(env).getClientIps(sub.client_email);
+      panelIps = await Promise.race([
+        new XuiApi(env).getClientIps(sub.client_email),
+        new Promise<PanelDeviceIp[]>((resolve) => {
+          setTimeout(() => resolve([]), 3000);
+        }),
+      ]);
     } catch (error) {
       console.error("showProfile panel ips:", error);
     }
   }
 
   const used = bindings.length;
-  const hasSlot = used > 0;
+  const hasSlot = used > 0 || panelIps.length > 0;
   const status = sub?.status || "none";
   const period = formatSubscriptionPeriod(sub?.starts_at, sub?.ends_at, sub?.plan_label);
   const statusLabel =
@@ -603,12 +606,15 @@ async function showProfile(
         : "нет подписки";
 
   const deviceLine = hasSlot
-    ? `Устройства: <b>${used}</b> · привязано`
+    ? `Устройства: <b>${Math.max(used, panelIps.length)}</b> · привязано`
     : `Устройство: <b>свободно</b>`;
 
-  const hint = hasSlot
-    ? "Нажмите устройство ниже, чтобы отвязать. Можно подключить другое без ожидания."
-    : "Подключите VPN в главном меню — устройство появится здесь.";
+  const pendingClear = Boolean(sub?.panel_ip_clear_requested_at);
+  const hint = pendingClear
+    ? "Сброс IP в панели выполняется (до 2 мин). Затем подключите VPN на новом устройстве."
+    : hasSlot
+      ? "Нажмите «Сбросить привязку устройств» для смены телефона (раз в 24 ч)."
+      : "Подключите VPN в главном меню — устройство появится здесь.";
 
   const text =
     (notice ? `${notice}\n\n` : "") +
@@ -628,15 +634,27 @@ async function unbindSingleDevice(
   messageId: number,
   bindingId: string
 ): Promise<void> {
-  const token = clientBotToken(env)!;
   const user = await getUserByTelegramId(env, tg.id);
   if (!user) return;
   const sub = await getSubscription(env, user.id);
 
   await deleteVpnDeviceBinding(env, user.id, bindingId);
-  await clearDeviceSwapState(env, user.id);
 
-  await showProfile(env, chatId, tg, messageId, "<b>Устройство отвязано. Можно подключить другое.</b>");
+  let notice = "<b>Устройство отвязано.</b> Можно подключить другое.";
+  try {
+    const mode = await unbindPanelClientIp(env, user.id, sub?.client_email);
+    if (mode === "queued") {
+      notice = "<b>Устройство отвязано.</b> Сброс IP в панели — до 2 минут.";
+    }
+  } catch (error) {
+    if (error instanceof DeviceResetPendingError) {
+      notice = "<b>Устройство отвязано.</b> Сброс IP уже выполняется.";
+    } else {
+      console.error("unbindSingleDevice panel ip:", error);
+    }
+  }
+
+  await showProfile(env, chatId, tg, messageId, notice);
 }
 
 async function resetDeviceBinding(
@@ -647,9 +665,8 @@ async function resetDeviceBinding(
 ): Promise<void> {
   const user = await getUserByTelegramId(env, tg.id);
   if (!user) return;
-  await resolvePanelSubId(env, user, tg);
 
-  await resetPanelDeviceBinding(env, user.id, {
+  const mode = await resetPanelDeviceBinding(env, user.id, {
     telegramId: tg.id,
     isTester: user.is_tester,
   });
@@ -659,7 +676,7 @@ async function resetDeviceBinding(
     chatId,
     tg,
     messageId,
-    `<b>${DEVICE_RESET_SUCCESS_NOTICE}</b>`
+    `<b>${deviceResetNotice(mode)}</b>`
   );
 }
 
@@ -871,6 +888,10 @@ export async function handleClientBotUpdate(
         await resetDeviceBinding(env, tg, chatId, messageId);
       } catch (error) {
         if (error instanceof DeviceResetCooldownError) {
+          await answerCallback(token, cq.id, error.message, { showAlert: true });
+          return;
+        }
+        if (error instanceof DeviceResetPendingError) {
           await answerCallback(token, cq.id, error.message, { showAlert: true });
           return;
         }

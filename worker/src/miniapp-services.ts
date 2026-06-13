@@ -13,7 +13,7 @@ import {
 import type { TelegramUser } from "./telegram";
 import { XuiApi, type PanelDeviceIp } from "./xui";
 import { subscriptionDeviceLimit } from "./device-limit";
-import { DeviceResetCooldownError, resetPanelDeviceBinding } from "./device-reset";
+import { DeviceResetCooldownError, DeviceResetPendingError, deviceResetNotice, resetPanelDeviceBinding } from "./device-reset";
 
 const OS_LABELS: Record<string, string> = {
   android: "Android",
@@ -272,16 +272,17 @@ export async function buildMiniappConnectUrl(
   };
 }
 
-export async function resetMiniappDevices(env: BotEnv, tg: TelegramUser): Promise<void> {
+export async function resetMiniappDevices(env: BotEnv, tg: TelegramUser): Promise<string> {
   const user = await getUserByTelegramId(env, tg.id);
   if (!user) throw new Error("Пользователь не найден");
   try {
-    await resetPanelDeviceBinding(env, user.id, {
+    const mode = await resetPanelDeviceBinding(env, user.id, {
       telegramId: tg.id,
       isTester: user.is_tester,
     });
+    return deviceResetNotice(mode);
   } catch (error) {
-    if (error instanceof DeviceResetCooldownError) {
+    if (error instanceof DeviceResetCooldownError || error instanceof DeviceResetPendingError) {
       throw error;
     }
     throw error instanceof Error ? error : new Error("Не удалось сбросить привязку");

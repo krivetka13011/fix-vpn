@@ -1,5 +1,5 @@
 import type { BotEnv } from "./env";
-import { parseIdList, subscriptionBaseUrl, xuiBaseUrlCandidates } from "./env";
+import { parseIdList, subscriptionBaseUrl, xuiBaseUrlCandidates, xuiWorkerBaseUrl } from "./env";
 import { isPanelErrorBody, panelFetch } from "./panel-fetch";
 import type { SupabaseEnv } from "./supabase";
 
@@ -574,24 +574,66 @@ export class XuiApi {
     this.invalidateScan();
   }
 
-  async clearClientIps(email: string): Promise<void> {
+  async clearClientIps(email: string, options?: { timeoutMs?: number }): Promise<void> {
+    const cleared = await this.tryClearClientIps(email, options?.timeoutMs ?? 12_000);
+    if (!cleared) {
+      throw new Error("clearClientIps failed");
+    }
+  }
+
+  /** Fast panel IP reset — direct panel URL, short timeout, inbound API first. */
+  async tryClearClientIps(email: string, timeoutMs = 5000): Promise<boolean> {
     const encoded = encodeURIComponent(email);
     const paths = [
       `/panel/api/inbounds/clearClientIps/${encoded}`,
       `/panel/api/clients/clearIps/${encoded}`,
     ];
-    let lastError: Error | null = null;
-    for (const path of paths) {
-      try {
-        const response = await this.request(path, { method: "POST", body: "{}" });
-        await this.parseResponse(response, "clearClientIps");
-        this.invalidateScan();
-        return;
-      } catch (error) {
-        lastError = error instanceof Error ? error : new Error(String(error));
+    const bases = [xuiWorkerBaseUrl(this.env), ...this.baseUrls].filter(
+      (base, index, list) => base && list.indexOf(base) === index
+    );
+
+    for (const baseUrl of bases) {
+      for (const path of paths) {
+        try {
+          const response = await this.requestTimed(
+            `${baseUrl}${path}`,
+            { method: "POST", body: "{}" },
+            timeoutMs
+          );
+          await this.parseResponse(response, "clearClientIps");
+          this.invalidateScan();
+          return true;
+        } catch {
+          // try next path/base
+        }
       }
     }
-    throw lastError ?? new Error("clearClientIps failed");
+    return false;
+  }
+
+  private async requestTimed(
+    url: string,
+    init: RequestInit,
+    timeoutMs: number
+  ): Promise<Response> {
+    const path = new URL(url).pathname;
+    assertAllowed(path);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await panelFetch(this.env, url, {
+        ...init,
+        headers: { ...this.headers(), ...(init.headers || {}) },
+        signal: controller.signal,
+      });
+      const preview = await response.clone().text();
+      if (isPanelHtmlError(preview, response.status)) {
+        throw new Error(`XUI HTML/526 (${response.status})`);
+      }
+      return response;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   async rotateClientSubId(

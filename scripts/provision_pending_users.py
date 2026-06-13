@@ -320,31 +320,25 @@ def clear_pending_panel_ips(sb: str, session: requests.Session, base: str) -> in
 
 def clear_stuck_swap_flags(sb: str) -> int:
     cleared = 0
-    for query, body in (
-        ("panel_ip_clear_requested_at=not.is.null", {"panel_ip_clear_requested_at": None}),
-        (
-            "or=(panel_sub_rotate_requested_at.not.is.null,pending_xray_sub_id.not.is.null)",
-            {
+    try:
+        response = requests.patch(
+            sb
+            + "subscriptions?or=(panel_sub_rotate_requested_at.not.is.null,pending_xray_sub_id.not.is.null)",
+            headers={**sb_headers("return=representation"), "Prefer": "return=representation"},
+            json={
                 "panel_sub_rotate_requested_at": None,
                 "pending_xray_sub_id": None,
             },
-        ),
-    ):
-        try:
-            response = requests.patch(
-                sb + f"subscriptions?{query}",
-                headers={**sb_headers("return=representation"), "Prefer": "return=representation"},
-                json=body,
-                timeout=30,
-            )
-            if response.ok:
-                payload = response.json()
-                if isinstance(payload, list):
-                    cleared += len(payload)
-        except Exception as error:
-            print("clear_stuck_swap_flags warn:", query, error)
+            timeout=30,
+        )
+        if response.ok:
+            payload = response.json()
+            if isinstance(payload, list):
+                cleared = len(payload)
+    except Exception as error:
+        print("clear_stuck_swap_flags warn:", error)
     if cleared:
-        print("cleared stuck swap flags", cleared)
+        print("cleared stuck rotation flags", cleared)
     return cleared
 
 

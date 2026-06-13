@@ -115,7 +115,13 @@ def main():
             continue
         body = fetch_payload(session, panel_base, sub_id)
         if not body:
-            print("skip", sub_id, "no payload")
+            print("clear stale cache", sub_id)
+            requests.patch(
+                sb + f"subscriptions?user_id=eq.{row['user_id']}",
+                headers=sb_headers(),
+                json={"subscription_payload_cache": None},
+                timeout=30,
+            )
             continue
         requests.patch(
             sb + f"subscriptions?user_id=eq.{row['user_id']}",

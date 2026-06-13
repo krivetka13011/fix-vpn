@@ -129,18 +129,32 @@ def main():
 
     rows = requests.get(
         sb
-        + "subscriptions?select=user_id,xray_sub_id,xray_uuid,users!inner(telegram_id,username)&or=(xray_sub_id.is.null,xray_uuid.is.null)",
+        + "subscriptions?select=user_id,xray_sub_id,xray_uuid,users!inner(telegram_id,username)",
         headers={**sb_headers("return=representation"), "Prefer": "return=representation"},
         timeout=30,
     ).json()
 
     if not rows:
-        print("no pending users")
+        print("no users")
         return
 
     session, base = panel_session()
     clients = scan_clients(session, base)
     provisioned = 0
+
+    def panel_live(row):
+        sub_id = str(row.get("subId") or "").strip()
+        if not sub_id:
+            return False
+        return len(sub_links(session, base, sub_id)) > 0
+
+    def sub_links(session, base, sub_id):
+        response = session.get(f"{base}/panel/api/clients/subLinks/{sub_id}", timeout=30)
+        if not response.ok:
+            return []
+        payload = response.json()
+        links = payload.get("obj") or []
+        return links if isinstance(links, list) else []
 
     for row in rows:
         user = row.get("users") or {}
@@ -151,6 +165,19 @@ def main():
         user_id = row["user_id"]
 
         panel = find_panel_client(clients, tg_id, username)
+        if panel and not panel_live(panel):
+            print("stale panel row", tg_id, panel["subId"])
+            panel = None
+
+        db_sub = str(row.get("xray_sub_id") or "").strip()
+        if not panel and db_sub:
+            for candidate in clients:
+                if candidate.get("email") in {"lv"}:
+                    continue
+                if candidate.get("subId") == db_sub and panel_live(candidate):
+                    panel = candidate
+                    break
+
         if not panel:
             sub_id = random_sub_id()
             client_uuid = str(uuid.uuid4())
@@ -174,6 +201,13 @@ def main():
             "xray_uuid": client_uuid,
             "subscription_url": f"{worker}/api/sub/{sub_id}",
         }
+        links = sub_links(session, base, sub_id)
+        if links:
+            patch["subscription_payload_cache"] = "\n".join(
+                str(line).strip() for line in links if str(line).strip()
+            )
+        elif str(row.get("xray_sub_id") or "") != sub_id:
+            patch["subscription_payload_cache"] = None
         requests.patch(
             sb + f"subscriptions?user_id=eq.{user_id}",
             headers=sb_headers(),

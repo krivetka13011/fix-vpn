@@ -60,13 +60,19 @@ export async function syncPanelSubIdForUser(
   }
 
   const lockedSubId = sub?.xray_sub_id?.trim() || "";
-  const subId = lockedSubId || panel.subId.trim();
+  const subId =
+    lockedSubId && lockedSubId === panel.subId.trim()
+      ? lockedSubId
+      : panel.subId.trim();
   const panelUrl = buildPanelSubscriptionUrlForUser(env, subId);
   await patchSubscription(env, userId, {
     client_email: String(telegramId),
     xray_sub_id: subId,
     xray_uuid: panel.primaryUuid,
     subscription_url: panelUrl,
+    ...(lockedSubId && lockedSubId !== subId
+      ? { subscription_payload_cache: null }
+      : {}),
   });
 
   return subId;

@@ -134,17 +134,29 @@ export async function handleApiRequest(
       return new Response(live.body, { status: 200, headers });
     }
 
+    let allowCache = true;
     try {
-      const cached = dbSub?.subscription_payload_cache?.trim();
-      if (cached && cached.length > 100) {
-        const body = normalizeSubscriptionBody(cached);
-        const headers: Record<string, string> = { ...lockedHeaders };
-        const userinfo = subscriptionUserinfoHeader(dbSub?.ends_at ?? null);
-        if (userinfo) headers["Subscription-Userinfo"] = userinfo;
-        return new Response(body, { status: 200, headers });
+      const links = await new XuiApi(env).getClientSubLinks(subId);
+      if (links.length === 0) {
+        allowCache = false;
       }
     } catch (error) {
-      console.error("subscription cache:", error);
+      console.error("subscription subLinks probe:", error);
+    }
+
+    if (allowCache) {
+      try {
+        const cached = dbSub?.subscription_payload_cache?.trim();
+        if (cached && cached.length > 100) {
+          const body = normalizeSubscriptionBody(cached);
+          const headers: Record<string, string> = { ...lockedHeaders };
+          const userinfo = subscriptionUserinfoHeader(dbSub?.ends_at ?? null);
+          if (userinfo) headers["Subscription-Userinfo"] = userinfo;
+          return new Response(body, { status: 200, headers });
+        }
+      } catch (error) {
+        console.error("subscription cache:", error);
+      }
     }
 
     const subPath = (env.SUBSCRIPTION_PATH || "/sub").replace(/\/$/, "");

@@ -31,7 +31,8 @@ def subscription_ok(body: str) -> bool:
         return False
     if "error code:" in text or text.startswith("<!DOCTYPE"):
         return False
-    return "dmxlc3M6Ly" in text or "vless://" in text
+    # Happ needs plain protocol lines, not a single base64 blob
+    return "vless://" in text or "hysteria2://" in text or "trojan://" in text
 
 
 def extract_crypt_link(html: str) -> str:
@@ -68,12 +69,10 @@ def main():
         sys.exit(1)
 
     sub_id = sub["xray_sub_id"]
-    panel_url = f"{client_base}{sub_path}/{sub_id}"
-    worker_url = f"{worker}/api/sub/{sub_id}"
+    worker_sub_url = f"{worker}/api/sub/{sub_id}"
 
     print("sub_id", sub_id)
-    print("panel_url", panel_url)
-    print("worker_url", worker_url)
+    print("worker_sub_url", worker_sub_url)
 
     for round_no in range(1, ROUNDS + 1):
         print(f"\n=== Round {round_no}/{ROUNDS} ===")
@@ -91,22 +90,15 @@ def main():
 
         crypto = requests.post(
             "https://crypto.happ.su/api-v2.php",
-            json={"url": panel_url},
+            json={"url": worker_sub_url},
             timeout=30,
         )
         crypto_data = crypto.json()
         if not crypto_data.get("encrypted_link", "").startswith("happ://crypt"):
             raise RuntimeError(f"happ crypto failed: {json.dumps(crypto_data, ensure_ascii=False)}")
-        print("happ crypto OK")
+        print("happ crypto OK (worker URL)")
 
-        panel = requests.get(panel_url, verify=False, timeout=30)
-        if not subscription_ok(panel.text):
-            raise RuntimeError(
-                f"panel sub bad: status={panel.status_code} preview={panel.text[:120]!r}"
-            )
-        print("panel fetch OK", panel.status_code, len(panel.text), "bytes")
-
-        worker_sub = requests.get(worker_url, timeout=30)
+        worker_sub = requests.get(worker_sub_url, timeout=30)
         if not subscription_ok(worker_sub.text):
             raise RuntimeError(
                 f"worker sub bad: status={worker_sub.status_code} preview={worker_sub.text[:120]!r}"

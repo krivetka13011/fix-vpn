@@ -60,6 +60,107 @@ function subscriptionBodyLooksValid(body: string): boolean {
   );
 }
 
+const PLAIN_PROTOCOL_RE =
+  /^(vless|vmess|trojan|ss|hysteria2|tuic):\/\//i;
+
+/** Decode 3X-UI base64 subscription blob into plain protocol lines for VPN clients. */
+export function normalizeSubscriptionBody(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return "";
+
+  if (PLAIN_PROTOCOL_RE.test(trimmed)) {
+    return trimmed
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => PLAIN_PROTOCOL_RE.test(line))
+      .join("\n");
+  }
+
+  const decodedLines: string[] = [];
+  const inputLines = trimmed.split(/\r?\n/).filter(Boolean);
+
+  for (const line of inputLines) {
+    if (PLAIN_PROTOCOL_RE.test(line)) {
+      decodedLines.push(line.trim());
+      continue;
+    }
+    try {
+      const binary = atob(line.replace(/\s/g, ""));
+      const text = binary.trim();
+      if (PLAIN_PROTOCOL_RE.test(text)) {
+        decodedLines.push(
+          ...text
+            .split(/\r?\n/)
+            .map((row) => row.trim())
+            .filter((row) => PLAIN_PROTOCOL_RE.test(row))
+        );
+      }
+    } catch {
+      // not base64 — skip line
+    }
+  }
+
+  if (decodedLines.length > 0) {
+    return decodedLines.join("\n");
+  }
+
+  try {
+    const binary = atob(trimmed.replace(/\s/g, ""));
+    const text = binary.trim();
+    if (PLAIN_PROTOCOL_RE.test(text)) {
+      return text
+        .split(/\r?\n/)
+        .map((row) => row.trim())
+        .filter((row) => PLAIN_PROTOCOL_RE.test(row))
+        .join("\n");
+    }
+  } catch {
+    // keep raw below
+  }
+
+  return trimmed;
+}
+
+export async function fetchPanelSubscriptionBody(
+  env: BotEnv,
+  subId: string
+): Promise<{ body: string; headers: Record<string, string> } | null> {
+  if (!subId.trim()) return null;
+  const path = (env.SUBSCRIPTION_PATH || "/sub").replace(/\/$/, "");
+  const encoded = encodeURIComponent(subId);
+  const bases = [
+    workerSubscriptionFetchBase(env),
+    `https://${resolveVpnHost(env)}:2096`,
+    subscriptionClientBaseUrl(env),
+    subscriptionBaseUrl(env),
+  ].filter((base, index, list) => base && list.indexOf(base) === index);
+
+  for (const base of bases) {
+    try {
+      const response = await fetch(`${base}${path}/${encoded}`);
+      const raw = await response.text();
+      if (!response.ok || !subscriptionBodyLooksValid(raw)) continue;
+      const body = normalizeSubscriptionBody(raw);
+      if (!subscriptionBodyLooksValid(body)) continue;
+      const headers: Record<string, string> = {};
+      for (const name of [
+        "Profile-Title",
+        "Subscription-Userinfo",
+        "Profile-Web-Page-Url",
+        "Support-Url",
+        "Announce",
+      ]) {
+        const value = response.headers.get(name);
+        if (value) headers[name] = value;
+      }
+      return { body, headers };
+    } catch {
+      // try next base
+    }
+  }
+  return null;
+}
+
 export async function verifyPanelSubscription(
   env: BotEnv,
   subId: string
@@ -119,37 +220,30 @@ export async function panelSubscriptionIsLive(
   subId: string
 ): Promise<boolean> {
   if (!subId.trim()) return false;
-  const path = (env.SUBSCRIPTION_PATH || "/sub").replace(/\/$/, "");
-  const encoded = encodeURIComponent(subId);
-  const bases = [
-    workerSubscriptionFetchBase(env),
-    subscriptionClientBaseUrl(env),
-    `https://${resolveVpnHost(env)}:2096`,
-    subscriptionBaseUrl(env),
-  ].filter((base, index, list) => base && list.indexOf(base) === index);
-
-  for (const base of bases) {
+  const live = await fetchPanelSubscriptionBody(env, subId);
+  if (live?.body && subscriptionBodyLooksValid(live.body)) {
+    return PLAIN_PROTOCOL_RE.test(live.body);
+  }
+  const worker = workerBaseUrl(env);
+  if (worker) {
     try {
-      const response = await fetch(`${base}${path}/${encoded}`);
+      const response = await fetch(`${worker}/api/sub/${encodeURIComponent(subId)}`);
       const body = await response.text();
-      if (response.ok && subscriptionBodyLooksValid(body)) return true;
+      if (response.ok && PLAIN_PROTOCOL_RE.test(body)) return true;
     } catch {
-      // try next base
+      // ignore
     }
   }
   return false;
 }
 
-/** URL embedded in Happ crypt5 — panel host with valid TLS (never raw IP). */
+/** Happ fetches Worker proxy — returns plain vless lines, not panel base64. */
 export function buildHappSubscriptionUrl(env: BotEnv, subId: string): string {
-  const path = (env.SUBSCRIPTION_PATH || "/sub").replace(/\/$/, "");
-  const encoded = encodeURIComponent(subId);
-  const host = resolveVpnHost(env);
-  return `https://${host}:2096${path}/${encoded}`;
+  return buildProtectedSubscriptionUrl(env, subId);
 }
 
 export function buildPanelSubscriptionUrlForUser(env: BotEnv, subId: string): string {
-  return buildHappSubscriptionUrl(env, subId);
+  return buildProtectedSubscriptionUrl(env, subId);
 }
 
 export async function encryptHappLink(subscriptionUrl: string): Promise<string> {

@@ -34,9 +34,10 @@ import {
   type MiniappPlatform,
 } from "./miniapp-services";
 import {
-  applyLockedSubscriptionBody,
   buildClientImportTarget,
+  fetchPanelSubscriptionBody,
   LOCKED_SUBSCRIPTION_HEADERS,
+  normalizeSubscriptionBody,
   redirectHtml,
   subscriptionUserinfoHeader,
   type VpnClientId,
@@ -117,17 +118,29 @@ export async function handleApiRequest(
       ...CORS,
     };
 
+    let dbSub: Awaited<ReturnType<typeof getSubscriptionBySubId>> = null;
     try {
-      const cached = await getSubscriptionBySubId(env, subId);
-      const payload = cached?.subscription_payload_cache?.trim();
-      if (payload && payload.length > 100) {
+      dbSub = await getSubscriptionBySubId(env, subId);
+    } catch (error) {
+      console.error("subscription db lookup:", error);
+    }
+
+    const live = await fetchPanelSubscriptionBody(env, subId);
+    if (live?.body) {
+      const headers: Record<string, string> = { ...lockedHeaders, ...live.headers };
+      const userinfo = subscriptionUserinfoHeader(dbSub?.ends_at ?? null);
+      if (userinfo) headers["Subscription-Userinfo"] = userinfo;
+      return new Response(live.body, { status: 200, headers });
+    }
+
+    try {
+      const cached = dbSub?.subscription_payload_cache?.trim();
+      if (cached && cached.length > 100) {
+        const body = normalizeSubscriptionBody(cached);
         const headers: Record<string, string> = { ...lockedHeaders };
-        const userinfo = subscriptionUserinfoHeader(cached.ends_at);
+        const userinfo = subscriptionUserinfoHeader(dbSub?.ends_at ?? null);
         if (userinfo) headers["Subscription-Userinfo"] = userinfo;
-        return new Response(applyLockedSubscriptionBody(payload), {
-          status: 200,
-          headers,
-        });
+        return new Response(body, { status: 200, headers });
       }
     } catch (error) {
       console.error("subscription cache:", error);
@@ -158,15 +171,16 @@ export async function handleApiRequest(
       if (!upstreamRes) {
         return new Response("subscription upstream failed", { status: 502, headers: CORS });
       }
-      const body = applyLockedSubscriptionBody(await upstreamRes.text());
+      const body = normalizeSubscriptionBody(await upstreamRes.text());
       const headers: Record<string, string> = {
         ...lockedHeaders,
         "Content-Type":
           upstreamRes.headers.get("Content-Type") || "text/plain; charset=utf-8",
       };
+      const userinfo = subscriptionUserinfoHeader(dbSub?.ends_at ?? null);
+      if (userinfo) headers["Subscription-Userinfo"] = userinfo;
       for (const name of [
         "Profile-Title",
-        "Subscription-Userinfo",
         "Profile-Web-Page-Url",
         "Support-Url",
         "Announce",

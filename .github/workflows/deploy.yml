@@ -34,6 +34,13 @@ jobs:
             "host=aws-0-eu-west-1.pooler.supabase.com port=5432 dbname=postgres user=postgres.dtxdbniicbmmendcryst sslmode=require" \
             -v ON_ERROR_STOP=1 \
             -f supabase/migrations/20260528120000_bots_system.sql
+          for migration in supabase/migrations/*.sql; do
+            echo "Applying $migration"
+            PGPASSWORD="$SUPABASE_DB_PASSWORD" psql \
+              "host=aws-0-eu-west-1.pooler.supabase.com port=5432 dbname=postgres user=postgres.dtxdbniicbmmendcryst sslmode=require" \
+              -v ON_ERROR_STOP=1 \
+              -f "$migration"
+          done
 
       - name: Install and build
         run: |

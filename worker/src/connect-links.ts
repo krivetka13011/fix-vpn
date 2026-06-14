@@ -440,12 +440,9 @@ export function buildProtectedSubscriptionUrl(env: BotEnv, subId: string): strin
   return `${base}/sub/${encodeURIComponent(subId)}`;
 }
 
-/** Standard 3X-UI /sub format: base64 blob with #hide-settings lock. */
+/** Standard 3X-UI /sub format: base64 blob of plain protocol lines. */
 export function encodeStandardSubscriptionBody(body: string): string {
-  let plain = subscriptionBodyForClients(body);
-  if (!/^#hide-settings\s*:\s*1\b/im.test(plain)) {
-    plain = `#hide-settings: 1\n${plain}`;
-  }
+  const plain = subscriptionBodyForClients(body);
   const bytes = new TextEncoder().encode(plain);
   let binary = "";
   for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
@@ -484,9 +481,11 @@ export const LOCKED_SUBSCRIPTION_HEADERS: Record<string, string> = {
   "Profile-Title": "base64:8J+Up0ZJWCBWUE4=",
 };
 
-/** Headers for /sub — hide-settings locks editing in Happ. */
+/** Headers for /sub — hide-settings via header; ping via proxy (TCP lies behind CDN). */
 export const SUBSCRIPTION_RESPONSE_HEADERS: Record<string, string> = {
   "hide-settings": "1",
+  "ping-type": "proxy",
+  "check-url-via-proxy": "https://cp.cloudflare.com/generate_204",
   "Profile-Update-Interval": "1",
   "Profile-Title": "base64:8J+Up0ZJWCBWUE4=",
 };

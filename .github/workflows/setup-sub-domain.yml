@@ -16,9 +16,9 @@ jobs:
       - name: Install requests
         run: pip install requests
 
-      - name: Configure sub.fixvp.xyz proxy + WAF for Happ
+      - name: Attach sub.fixvp.xyz Worker custom domain
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_FIXVP_ZONE_ID: ${{ secrets.CLOUDFLARE_FIXVP_ZONE_ID }}
-          SUB_ORIGIN_IP: "31.76.2.248"
         run: python scripts/setup_sub_cloudflare.py

@@ -104,7 +104,7 @@ export function managerChatId(env: BotEnv): number | null {
 
 const LEGACY_PANEL_IP = "31.76.2.248";
 const DEFAULT_VPN_HOST = "fixvp.xyz";
-/** Публичный хост подписки для VPN-клиентов (A-запись → панель, DNS only). */
+/** Публичный хост подписки — Worker custom domain (HTTPS :443). */
 export const SUBSCRIPTION_PUBLIC_HOST_DEFAULT = "sub.fixvp.xyz";
 
 export function subscriptionPublicHost(env: BotEnv): string {

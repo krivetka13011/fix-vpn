@@ -75,6 +75,14 @@ jobs:
             echo "zone_id=$ZONE_ID" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Attach sub.fixvp.xyz custom domain
+        continue-on-error: true
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_FIXVP_ZONE_ID: ${{ secrets.CLOUDFLARE_FIXVP_ZONE_ID }}
+        run: python scripts/setup_sub_cloudflare.py
+
       - name: Resolve Live URL
         id: url
         run: |
@@ -132,7 +140,7 @@ jobs:
           put_secret XUI_INBOUND_IDS "19,20,21,24"
           put_secret VPN_SERVER_HOST "${{ secrets.VPN_SERVER_HOST || 'fixvp.xyz' }}"
           put_secret SUBSCRIPTION_BASE_URL "${{ secrets.SUBSCRIPTION_BASE_URL || 'https://fixvp.xyz:2096' }}"
-          put_secret SUBSCRIPTION_CLIENT_BASE_URL "${{ secrets.SUBSCRIPTION_CLIENT_BASE_URL || 'https://sub.fixvp.xyz:2096' }}"
+          put_secret SUBSCRIPTION_CLIENT_BASE_URL "${{ secrets.SUBSCRIPTION_CLIENT_BASE_URL || 'https://sub.fixvp.xyz' }}"
           put_secret SUBSCRIPTION_WORKER_FETCH_URL "${{ secrets.SUBSCRIPTION_WORKER_FETCH_URL || 'https://31.76.2.248:2096' }}"
           put_secret SUBSCRIPTION_PATH "/sub"
           put_secret MANAGER_NOTIFICATION_CHAT_ID "$MANAGER_NOTIFICATION_CHAT_ID"
@@ -193,7 +201,7 @@ jobs:
           XUI_BASE_URL: ${{ secrets.XUI_BASE_URL || 'https://fixvp.xyz:54596/LXZo7cOhasXWon5uQu' }}
           XUI_API_TOKEN: ${{ secrets.XUI_API_TOKEN }}
           SUBSCRIPTION_BASE_URL: ${{ secrets.SUBSCRIPTION_BASE_URL || 'https://fixvp.xyz:2096' }}
-          SUBSCRIPTION_CLIENT_BASE_URL: ${{ secrets.SUBSCRIPTION_CLIENT_BASE_URL || 'https://sub.fixvp.xyz:2096' }}
+          SUBSCRIPTION_CLIENT_BASE_URL: ${{ secrets.SUBSCRIPTION_CLIENT_BASE_URL || 'https://sub.fixvp.xyz' }}
           SUBSCRIPTION_PATH: "/sub"
         run: |
           pip install requests

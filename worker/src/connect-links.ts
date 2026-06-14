@@ -49,7 +49,7 @@ export function buildPanelSubscriptionUrl(env: BotEnv, subId: string): string {
   return `${base}${path}/${subId}`;
 }
 
-/** Прямой URL подписки для VPN-клиентов — sub.fixvp.xyz:2096 (DNS only, без CF proxy). */
+/** Публичный URL подписки — Worker custom domain sub.fixvp.xyz (HTTPS :443). */
 export function buildClientSubscriptionUrl(env: BotEnv, subId: string): string {
   const trimmed = subId.trim();
   const path = (env.SUBSCRIPTION_PATH || "/sub").replace(/\/$/, "");
@@ -58,7 +58,7 @@ export function buildClientSubscriptionUrl(env: BotEnv, subId: string): string {
     return `${base.replace(/\/$/, "")}${path}/${trimmed}`;
   }
   const host = subscriptionPublicHost(env);
-  return `https://${host}:2096${path}/${trimmed}`;
+  return `https://${host}${path}/${trimmed}`;
 }
 
 function subscriptionBodyLooksValid(body: string): boolean {

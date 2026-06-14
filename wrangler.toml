@@ -4,6 +4,10 @@ compatibility_date = "2025-05-27"
 account_id = "abd3a9f30b070ba7b27946ecb6b82945"
 workers_dev = true
 
+[[routes]]
+pattern = "sub.fixvp.xyz"
+custom_domain = true
+
 [assets]
 directory = "./dist"
 binding = "ASSETS"

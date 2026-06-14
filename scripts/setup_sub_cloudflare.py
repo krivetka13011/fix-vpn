@@ -146,7 +146,10 @@ def main() -> int:
         return 1
 
     if not attach_worker_domain(token, zone_id):
-        return 1
+        print(
+            "WARN: API attach failed — wrangler.toml custom_domain should attach on deploy",
+            file=sys.stderr,
+        )
 
     print("waiting for edge propagation...")
     if probe_subscription():

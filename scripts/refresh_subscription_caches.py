@@ -14,6 +14,8 @@ PLAIN_RE = re.compile(r"^(vless|vmess|trojan|ss|hysteria2|tuic)://", re.I)
 
 
 def load_env(path="project_config.env"):
+    if not os.path.isfile(path):
+        return
     with open(path, encoding="utf-8") as handle:
         for line in handle:
             line = line.strip()

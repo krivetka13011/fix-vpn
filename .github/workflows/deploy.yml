@@ -58,6 +58,16 @@ jobs:
         run: |
           npx wrangler@4.69.0 deploy 2>&1 | tee deploy.log
 
+      - name: Attach app.fixvp.xyz custom domain
+        continue-on-error: true
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_FIXVP_ZONE_ID: ${{ secrets.CLOUDFLARE_FIXVP_ZONE_ID }}
+        run: |
+          pip install requests
+          python scripts/attach_public_domain.py
+
       - name: Resolve Live URL
         id: url
         run: |
@@ -71,8 +81,13 @@ jobs:
           if [ -z "$PUBLIC_URL" ]; then
             PUBLIC_URL="https://app.fixvp.xyz"
           fi
-          URL="$PUBLIC_URL"
-          echo "Public URL: $URL (workers.dev fallback: $WORKERS_URL)"
+          if curl -fsS "$PUBLIC_URL/api/health" 2>/dev/null | grep -q '"ok":true'; then
+            URL="$PUBLIC_URL"
+            echo "Public URL ready: $URL"
+          else
+            URL="$WORKERS_URL"
+            echo "::warning::app.fixvp.xyz not ready — WEBAPP_URL stays on workers.dev until zone fixvp.xyz is on Cloudflare"
+          fi
           echo "url=$URL" >> "$GITHUB_OUTPUT"
           echo "workers_url=$WORKERS_URL" >> "$GITHUB_OUTPUT"
 
@@ -127,7 +142,17 @@ jobs:
       - name: Verify deployment
         run: |
           URL="${{ steps.url.outputs.url }}"
-          curl -fsS "$URL/api/health" | tee /tmp/health.json | grep -q '"ok":true'
+          WORKERS_URL="${{ steps.url.outputs.workers_url }}"
+          EFFECTIVE_URL="$URL"
+          if curl -fsS "$URL/api/health" | tee /tmp/health.json | grep -q '"ok":true'; then
+            echo "health OK on public URL"
+          elif [ -n "$WORKERS_URL" ] && curl -fsS "$WORKERS_URL/api/health" | tee /tmp/health.json | grep -q '"ok":true'; then
+            EFFECTIVE_URL="$WORKERS_URL"
+            echo "::warning::Public URL not ready yet ($URL) — workers.dev OK. Add fixvp.xyz to Cloudflare."
+          else
+            cat /tmp/health.json >&2
+            exit 1
+          fi
           grep -q '"clientBotOk":true' /tmp/health.json
           grep -q '"hasSupabaseUrl":true' /tmp/health.json
           grep -q '"hasSupabaseKey":true' /tmp/health.json
@@ -139,14 +164,17 @@ jobs:
             echo "::warning::xuiOk=false — Worker cannot reach 3X-UI panel (use fixvp.xyz hostname, not raw IP)"
             cat /tmp/health.json
           fi
-          curl -fsS "$URL/api/catalog" | grep -q '"tariffs"'
-          WH_CODE=$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$URL/api/webhook/client" \
+          curl -fsS "$EFFECTIVE_URL/api/catalog" | grep -q '"tariffs"'
+          WH_CODE=$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$EFFECTIVE_URL/api/webhook/client" \
             -H "Content-Type: application/json" \
             -d '{"message":{"chat":{"id":0},"text":"/start"}}')
           test "$WH_CODE" = "200"
-          test "$(curl -sS -o /dev/null -w '%{http_code}' "$URL/")" = "200"
+          test "$(curl -sS -o /dev/null -w '%{http_code}' "$EFFECTIVE_URL/")" = "200"
           echo "## FIX VPN — Live URL" >> "$GITHUB_STEP_SUMMARY"
           echo "**$URL**" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$EFFECTIVE_URL" != "$URL" ]; then
+            echo "_(workers.dev fallback: $WORKERS_URL)_" >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Refresh subscription caches
         continue-on-error: true

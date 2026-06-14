@@ -2,8 +2,7 @@ name = "fix-vpn"
 main = "worker/src/index.ts"
 compatibility_date = "2025-05-27"
 account_id = "abd3a9f30b070ba7b27946ecb6b82945"
-
-routes = [{ pattern = "app.fixvp.xyz", custom_domain = true }]
+workers_dev = true
 
 [assets]
 directory = "./dist"

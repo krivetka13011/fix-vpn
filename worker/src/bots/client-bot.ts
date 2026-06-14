@@ -132,19 +132,29 @@ function connectClientKeyboard(
   env: BotEnv,
   os: string,
   subId: string,
+  defaultClient: VpnClientId,
   redirectByClient: Partial<Record<VpnClientId, string>>
 ) {
   const options = clientsForOs(os);
-  return {
-    inline_keyboard: options
-      .map((client) => [
-        {
-          text: clientLabel(client),
-          url: redirectByClient[client] || buildRedirectUrl(env, client, subId),
-        },
-      ])
-      .concat([[{ text: "Назад", callback_data: "c:connect" }]]),
-  };
+  const rows: Array<Array<{ text: string; url?: string; callback_data?: string }>> = [
+    [
+      {
+        text: `Открыть ${clientLabel(defaultClient)}`,
+        url: redirectByClient[defaultClient] || buildRedirectUrl(env, defaultClient, subId),
+      },
+    ],
+  ];
+  for (const client of options) {
+    if (client === defaultClient) continue;
+    rows.push([
+      {
+        text: clientLabel(client),
+        url: redirectByClient[client] || buildRedirectUrl(env, client, subId),
+      },
+    ]);
+  }
+  rows.push([{ text: "Назад", callback_data: "c:connect" }]);
+  return { inline_keyboard: rows };
 }
 
 function osLabel(os: string): string {
@@ -279,30 +289,23 @@ function buildSubscriptionUrl(env: BotEnv, subId: string): string {
   return buildPanelSubscriptionUrlForUser(env, subId);
 }
 
-function importInstructionsMessage(
+function connectOsMessage(
   os: string,
-  vpnClient: VpnClientId,
-  openUrl: string
-): { text: string; markup: Record<string, unknown> } {
-  const happCleanup =
-    os === "windows"
-      ? `В Happ слева удалите <b>все</b> старые подписки «Encrypted» — обновление старой подписки на ПК не работает.\nЗатем нажмите кнопку ниже для нового импорта.`
-      : `Удалите старые подписки «Encrypted» в Happ, затем нажмите кнопку снова.`;
-
-  return {
-    text:
-      `<b>Импорт в ${clientLabel(vpnClient)} (${osLabel(os)})</b>\n\n` +
-      `Нажмите кнопку ниже. Подписка защищена: ссылку и настройки серверов нельзя просмотреть или изменить.\n\n` +
-      (vpnClient === "happ"
-        ? happCleanup
-        : `Удалите старую подписку FIX VPN в ${clientLabel(vpnClient)}, затем импортируйте заново.`),
-    markup: {
-      inline_keyboard: [
-        [{ text: `Открыть ${clientLabel(vpnClient)}`, url: openUrl }],
-        [{ text: "Назад", callback_data: "c:connect" }],
-      ],
-    },
-  };
+  defaultClient: VpnClientId
+): string {
+  const happNote =
+    defaultClient === "happ"
+      ? `\n\n⚠️ В Happ удалите <b>все</b> старые подписки «Encrypted» перед импортом — иначе несколько профилей на одну ссылку и пинг N/D.`
+      : "";
+  const osHint =
+    os === "android"
+      ? `Нажмите <b>Открыть ${clientLabel(defaultClient)}</b> ниже.`
+      : `Нажмите <b>Открыть ${clientLabel(defaultClient)}</b> — ссылка защищена, импорт только через кнопку.`;
+  return (
+    `<b>Подключение VPN</b>\n\n` +
+    `ОС: <b>${osLabel(os)}</b>\n` +
+    `${osHint}${happNote}`
+  );
 }
 
 function buildConnectRedirects(
@@ -950,51 +953,23 @@ export async function handleClientBotUpdate(
         });
         return;
       }
-      const openUrl = redirects[defaultClient];
-      if (!openUrl) {
+      if (!redirects[defaultClient]) {
         await answerCallback(token, cq.id, "Импорт недоступен", { showAlert: true });
         return;
       }
-      const linkMessage = importInstructionsMessage(os, defaultClient, openUrl);
-      const text =
-        `<b>Подключение VPN</b>\n\n` +
-        `ОС: <b>${osLabel(os)}</b>\n` +
-        (os === "android"
-          ? `Нажмите <b>${clientLabel(defaultClient)}</b> ниже.\n` +
-            `Ссылка подписки скрыта и защищена — импорт только через кнопку.\n\n`
-          : `Открываем <b>${clientLabel(defaultClient)}</b>.\n` +
-            `Ссылка подписки скрыта — импорт только через кнопку ниже.\n\n`) +
-        `Если приложение не открылось — выберите клиент ниже:`;
+
+      const text = connectOsMessage(os, defaultClient);
+      const markup = connectClientKeyboard(env, os, subId, defaultClient, redirects);
 
       try {
-        await editMessage(
-          token,
-          chatId,
-          messageId,
-          text,
-          connectClientKeyboard(env, os, subId, redirects)
-        );
+        await editMessage(token, chatId, messageId, text, markup);
       } catch (error) {
         console.error("connect os edit:", error);
-        await sendMessage(
-          token,
-          chatId,
-          text,
-          connectClientKeyboard(env, os, subId, redirects)
-        );
+        await sendMessage(token, chatId, text, markup);
       }
 
       await recordDeviceConnect(env, user.id, os, defaultClient);
-      await sendMessage(token, chatId, linkMessage.text, linkMessage.markup);
-
-      if (os === "android") {
-        await answerCallback(token, cq.id, `Нажмите ${clientLabel(defaultClient)} ниже`);
-        return;
-      }
-
-      await answerCallback(token, cq.id, `Открываем ${clientLabel(defaultClient)}…`, {
-        url: openUrl,
-      });
+      await answerCallback(token, cq.id);
       return;
     }
     return;

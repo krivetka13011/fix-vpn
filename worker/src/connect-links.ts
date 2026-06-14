@@ -103,24 +103,45 @@ export function normalizeSubscriptionBody(raw: string): string {
   }
 
   if (decodedLines.length > 0) {
-    return decodedLines.join("\n");
+    return dedupeSubscriptionLines(decodedLines.join("\n"));
   }
 
   try {
     const binary = atob(trimmed.replace(/\s/g, ""));
     const text = binary.trim();
     if (PLAIN_PROTOCOL_RE.test(text)) {
-      return text
-        .split(/\r?\n/)
-        .map((row) => row.trim())
-        .filter((row) => PLAIN_PROTOCOL_RE.test(row))
-        .join("\n");
+      return dedupeSubscriptionLines(
+        text
+          .split(/\r?\n/)
+          .map((row) => row.trim())
+          .filter((row) => PLAIN_PROTOCOL_RE.test(row))
+          .join("\n")
+      );
     }
   } catch {
     // keep raw below
   }
 
   return trimmed;
+}
+
+/** Remove duplicate protocol lines (same URL imported twice → N/D in Happ). */
+export function dedupeSubscriptionLines(body: string): string {
+  const lines = body.split(/\r?\n/);
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line) continue;
+    if (line.startsWith("#")) {
+      out.push(line);
+      continue;
+    }
+    if (seen.has(line)) continue;
+    seen.add(line);
+    out.push(line);
+  }
+  return out.join("\n");
 }
 
 export async function fetchPanelSubscriptionBody(
@@ -216,12 +237,10 @@ export function applyLockedSubscriptionBody(body: string): string {
   return trimmed.replace(/^#hide-settings\s*:\s*1\s*\n?/im, "");
 }
 
-/** Hide server list in Happ/Hiddify clients (body comment, safe on Windows). */
-export function applyHiddenSubscriptionBody(body: string): string {
-  const normalized = applyLockedSubscriptionBody(body).trim();
-  if (!normalized) return "";
-  if (/^#hide-settings\s*:/im.test(normalized)) return normalized;
-  return `#hide-settings: 1\n${normalized}`;
+/** Subscription body for VPN clients — без #hide-settings (ломает пинг в Happ). */
+export function subscriptionBodyForClients(body: string): string {
+  const normalized = dedupeSubscriptionLines(applyLockedSubscriptionBody(body).trim());
+  return normalized;
 }
 
 export const LOCKED_SUBSCRIPTION_HEADERS: Record<string, string> = {

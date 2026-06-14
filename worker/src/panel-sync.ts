@@ -1,6 +1,8 @@
 import type { BotEnv } from "./env";
 import {
   buildPanelSubscriptionUrlForUser,
+  fetchPanelSubscriptionBody,
+  subscriptionBodyForClients,
 } from "./connect-links";
 import { patchSubscription } from "./repository";
 import type { DbSubscription } from "./types";
@@ -65,7 +67,7 @@ export async function syncPanelSubIdForUser(
       ? lockedSubId
       : panel.subId.trim();
   const panelUrl = buildPanelSubscriptionUrlForUser(env, subId);
-  await patchSubscription(env, userId, {
+  const patch: Record<string, unknown> = {
     client_email: String(telegramId),
     xray_sub_id: subId,
     xray_uuid: panel.primaryUuid,
@@ -73,7 +75,18 @@ export async function syncPanelSubIdForUser(
     ...(lockedSubId && lockedSubId !== subId
       ? { subscription_payload_cache: null }
       : {}),
-  });
+  };
+
+  try {
+    const live = await fetchPanelSubscriptionBody(env, subId);
+    if (live?.body) {
+      patch.subscription_payload_cache = subscriptionBodyForClients(live.body);
+    }
+  } catch (error) {
+    console.error("syncPanelSubId cache refresh:", error);
+  }
+
+  await patchSubscription(env, userId, patch);
 
   return subId;
 }

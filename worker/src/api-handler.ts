@@ -34,6 +34,7 @@ import {
   parseCardlinkPostback,
   verifyCardlinkPostbackSignature,
 } from "./cardlink";
+import { getCardlinkBalance, isCardlinkPayoutConfigured } from "./cardlink-payout";
 import { XuiApi } from "./xui";
 import { getSubscriptionBySubId } from "./repository";
 import {
@@ -48,7 +49,7 @@ import {
 } from "./miniapp-services";
 import {
   buildClientImportTarget,
-  applyHiddenSubscriptionBody,
+  subscriptionBodyForClients,
   fetchPanelSubscriptionBody,
   normalizeSubscriptionBody,
   redirectHtml,
@@ -193,14 +194,14 @@ export async function handleApiRequest(
       delete headers["hide-settings"];
       const userinfo = subscriptionUserinfoHeader(dbSub.ends_at ?? null);
       if (userinfo) headers["Subscription-Userinfo"] = userinfo;
-      const body = applyHiddenSubscriptionBody(live.body);
+      const body = subscriptionBodyForClients(live.body);
       return new Response(body, { status: 200, headers });
     }
 
     try {
       const cached = dbSub.subscription_payload_cache?.trim();
       if (cached && cached.length > 100) {
-        const body = applyHiddenSubscriptionBody(normalizeSubscriptionBody(cached));
+        const body = subscriptionBodyForClients(normalizeSubscriptionBody(cached));
         const headers: Record<string, string> = { ...lockedHeaders };
         const userinfo = subscriptionUserinfoHeader(dbSub.ends_at ?? null);
         if (userinfo) headers["Subscription-Userinfo"] = userinfo;
@@ -242,7 +243,7 @@ export async function handleApiRequest(
       if (isPanelErrorBody(rawBody, upstreamRes.status)) {
         return new Response("subscription unavailable", { status: 503, headers: CORS });
       }
-      const body = applyHiddenSubscriptionBody(normalizeSubscriptionBody(rawBody));
+      const body = subscriptionBodyForClients(normalizeSubscriptionBody(rawBody));
       const headers: Record<string, string> = {
         ...lockedHeaders,
         "Content-Type":
@@ -350,6 +351,15 @@ export async function handleApiRequest(
     }
     const base = env.WEBAPP_URL?.replace(/\/$/, "") ?? null;
     const expectedClientWebhook = base ? `${base}/api/webhook/client` : null;
+    const cardlinkConfigured = isCardlinkConfigured(env);
+    const cardlinkPayoutEnabled = isCardlinkPayoutConfigured(env);
+    let cardlinkBalance: { available: number; hold: number } | null = null;
+    if (cardlinkConfigured) {
+      const balance = await getCardlinkBalance(env);
+      if (balance) {
+        cardlinkBalance = { available: balance.available, hold: balance.hold };
+      }
+    }
     return json({
       ok: true,
       hasClientToken: Boolean(clientToken),
@@ -371,6 +381,9 @@ export async function handleApiRequest(
           clientWebhookUrl &&
           clientWebhookUrl === expectedClientWebhook
       ),
+      cardlinkConfigured,
+      cardlinkPayoutEnabled,
+      cardlinkBalance,
     });
   }
 

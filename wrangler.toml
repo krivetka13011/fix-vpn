@@ -5,7 +5,8 @@ account_id = "abd3a9f30b070ba7b27946ecb6b82945"
 
 routes = [{ pattern = "app.fixvp.xyz", custom_domain = true }]
 
-[assets]directory = "./dist"
+[assets]
+directory = "./dist"
 binding = "ASSETS"
 not_found_handling = "single-page-application"
 run_worker_first = true

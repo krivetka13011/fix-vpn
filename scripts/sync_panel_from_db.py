@@ -113,7 +113,7 @@ def main():
         os.environ.get("SUBSCRIPTION_BASE_URL", "https://fixvp.xyz:2096"),
     ).rstrip("/")
     sub_path = os.environ.get("SUBSCRIPTION_PATH", "/sub").rstrip("/")
-    webapp = os.environ.get("WEBAPP_URL", "https://fix-vpn.krivetkagames.workers.dev").rstrip("/")
+    webapp = os.environ.get("WEBAPP_URL", "https://app.fixvp.xyz").rstrip("/")
     synced = 0
     cached = 0
 

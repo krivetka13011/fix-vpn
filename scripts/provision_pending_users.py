@@ -466,7 +466,7 @@ def main():
             raise RuntimeError(f"missing {name}")
 
     sb = os.environ["SUPABASE_URL"].rstrip("/") + "/rest/v1/"
-    worker = os.environ.get("WEBAPP_URL", "https://fix-vpn.krivetkagames.workers.dev").rstrip("/")
+    worker = os.environ.get("WEBAPP_URL", "https://app.fixvp.xyz").rstrip("/")
 
     rows = requests.get(
         sb

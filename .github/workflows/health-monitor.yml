@@ -23,13 +23,13 @@ jobs:
 
       - name: Run smoke check
         env:
-          WEBAPP_URL: https://fix-vpn.krivetkagames.workers.dev
+          WEBAPP_URL: ${{ secrets.WEBAPP_URL || 'https://app.fixvp.xyz' }}
         run: python scripts/smoke_check.py
 
       - name: E2E bot flow (dry-run)
         continue-on-error: true
         env:
-          WEBAPP_URL: https://fix-vpn.krivetkagames.workers.dev
+          WEBAPP_URL: ${{ secrets.WEBAPP_URL || 'https://app.fixvp.xyz' }}
           E2E_TRACE_SECRET: ${{ secrets.E2E_TRACE_SECRET }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}

@@ -57,16 +57,20 @@ jobs:
         run: |
           SUPABASE_URL="${SUPABASE_URL%/}"
           SUPABASE_URL="${SUPABASE_URL%/rest/v1}"
-          URL="https://fix-vpn.krivetkagames.workers.dev"
+          URL="${{ secrets.WEBAPP_URL || 'https://app.fixvp.xyz' }}"
+          URL="${URL%/}"
           printf '%s' "$TELEGRAM_BOT_TOKEN" | npx wrangler@4.69.0 secret put TELEGRAM_BOT_TOKEN
           printf '%s' "$URL" | npx wrangler@4.69.0 secret put WEBAPP_URL
           printf '%s' "$SUPABASE_URL" | npx wrangler@4.69.0 secret put SUPABASE_URL
           printf '%s' "$SUPABASE_SERVICE_ROLE_KEY" | npx wrangler@4.69.0 secret put SUPABASE_SERVICE_ROLE_KEY
 
       - name: Verify Worker health
+        env:
+          WEBAPP_URL: ${{ secrets.WEBAPP_URL || 'https://app.fixvp.xyz' }}
         run: |
+          URL="${WEBAPP_URL%/}"
           for i in 1 2 3 4 5 6; do
-            curl -fsS "https://fix-vpn.krivetkagames.workers.dev/api/health" | tee /tmp/health.json
+            curl -fsS "$URL/api/health" | tee /tmp/health.json
             if grep -q '"supabaseOk":true' /tmp/health.json; then
               echo "## Supabase connected" >> "$GITHUB_STEP_SUMMARY"
               exit 0

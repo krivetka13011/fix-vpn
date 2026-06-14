@@ -30,5 +30,5 @@ jobs:
           SUBSCRIPTION_BASE_URL: ${{ secrets.SUBSCRIPTION_BASE_URL || 'https://fixvp.xyz:2096' }}
           SUBSCRIPTION_CLIENT_BASE_URL: ${{ secrets.SUBSCRIPTION_CLIENT_BASE_URL || 'https://31.76.2.248:2096' }}
           SUBSCRIPTION_PATH: /sub
-          WEBAPP_URL: ${{ secrets.WEBAPP_URL || 'https://fix-vpn.krivetkagames.workers.dev' }}
+          WEBAPP_URL: ${{ secrets.WEBAPP_URL || 'https://app.fixvp.xyz' }}
         run: python scripts/sync_panel_from_db.py

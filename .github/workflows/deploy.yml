@@ -61,12 +61,20 @@ jobs:
       - name: Resolve Live URL
         id: url
         run: |
-          URL=$(grep -oE 'https://[a-zA-Z0-9.-]+\.workers\.dev' deploy.log | head -1)
-          if [ -z "$URL" ]; then
+          WORKERS_URL=$(grep -oE 'https://[a-zA-Z0-9.-]+\.workers\.dev' deploy.log | head -1)
+          if [ -z "$WORKERS_URL" ]; then
             cat deploy.log >&2
             exit 1
           fi
+          PUBLIC_URL="${{ secrets.WEBAPP_URL }}"
+          PUBLIC_URL="${PUBLIC_URL%/}"
+          if [ -z "$PUBLIC_URL" ]; then
+            PUBLIC_URL="https://app.fixvp.xyz"
+          fi
+          URL="$PUBLIC_URL"
+          echo "Public URL: $URL (workers.dev fallback: $WORKERS_URL)"
           echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "workers_url=$WORKERS_URL" >> "$GITHUB_OUTPUT"
 
       - name: Set Worker secrets
         env:

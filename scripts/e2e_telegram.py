@@ -17,7 +17,7 @@ import uuid
 
 import requests
 
-DEFAULT_WORKER = "https://fix-vpn.krivetkagames.workers.dev"
+DEFAULT_WORKER = os.environ.get("WEBAPP_URL", "https://app.fixvp.xyz")
 DEFAULT_TESTER_TG = 1159166497
 
 

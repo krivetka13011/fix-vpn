@@ -558,6 +558,26 @@ export class XuiApi {
     this.invalidateScan();
   }
 
+  async ensureClientEnabled(email: string, telegramId: number): Promise<void> {
+    const found = await this.findClientByEmail(email);
+    if (!found || found.enable) return;
+    const client = this.buildClient(
+      found.email,
+      found.subId,
+      telegramId || found.tgId,
+      0,
+      0,
+      true,
+      found.primaryUuid
+    );
+    try {
+      await this.updateClient(client);
+      console.error("ensureClientEnabled: re-enabled", email);
+    } catch (error) {
+      console.error("ensureClientEnabled:", error);
+    }
+  }
+
   async updateClient(client: XuiClientRecord): Promise<void> {
     const response = await this.request(
       `/panel/api/clients/update/${encodeURIComponent(client.email)}`,
@@ -870,6 +890,7 @@ export class XuiApi {
     }
 
     await this.rebindPanelClientEmail(existing, params.telegramId);
+    await this.ensureClientEnabled(String(params.telegramId), params.telegramId);
 
     return this.toProvisionResult(
       env,

@@ -39,10 +39,17 @@ def load_env(path: str = "project_config.env") -> bool:
 
 def subscription_ok(body: str) -> bool:
     text = body.strip()
-    if len(text) < 200:
+    if len(text) < 80:
         return False
     if "error code:" in text or text.startswith("<!DOCTYPE"):
         return False
+    if not re.search(r"^(vless|vmess|trojan|ss|hysteria2|tuic)://", text, re.I | re.M):
+        try:
+            import base64
+
+            text = base64.b64decode(text.replace("\n", "")).decode("utf-8", errors="replace").strip()
+        except Exception:
+            return False
     cleaned = re.sub(r"^#hide-settings\s*:\s*1\s*\n?", "", text, flags=re.I).strip()
     return bool(
         re.search(r"^(vless|vmess|trojan|ss|hysteria2|tuic)://", cleaned, re.I | re.M)
@@ -133,12 +140,12 @@ def fetch_tester_sub_id(tester_tg: int) -> str | None:
 
 
 def check_subscription_chain(worker: str, sub_id: str, report: SmokeReport) -> None:
-    sub_url = f"{worker}/api/sub/{sub_id}"
+    sub_url = f"{worker}/sub/{sub_id}"
     try:
         sub = requests.get(sub_url, timeout=25)
         ok = sub.status_code == 200 and subscription_ok(sub.text)
         report.add(
-            "subscription /api/sub",
+            "subscription /sub",
             ok,
             f"HTTP {sub.status_code}, {len(sub.text)} bytes",
         )

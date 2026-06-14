@@ -19,7 +19,7 @@ function formatDateFromMs(ms: number): string {
 
 function buildSubscriptionUrl(env: BotEnv, subId: string): string {
   const base = env.WEBAPP_URL?.replace(/\/$/, "") || "";
-  return base ? `${base}/api/sub/${subId}` : `/api/sub/${subId}`;
+  return base ? `${base}/sub/${subId}` : `/sub/${subId}`;
 }
 
 async function sbUserById(env: BotEnv, userId: string) {

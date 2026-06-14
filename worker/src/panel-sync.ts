@@ -39,6 +39,7 @@ export async function syncPanelSubIdForUser(
 
   try {
     const xui = new XuiApi(env);
+    await xui.ensureClientEnabled(String(telegramId), telegramId);
     panel = await xui.resolvePanelClientForTelegram(telegramId, sub, username);
 
     if (!panel) {

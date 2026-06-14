@@ -227,8 +227,28 @@ export async function verifyPanelSubscription(
 export function buildProtectedSubscriptionUrl(env: BotEnv, subId: string): string {
   const base = workerBaseUrl(env);
   if (!base) throw new Error("WEBAPP_URL missing");
-  const path = (env.SUBSCRIPTION_PATH || "/sub").replace(/\/$/, "");
-  return `${base}/api/sub/${encodeURIComponent(subId)}`;
+  return `${base}/sub/${encodeURIComponent(subId)}`;
+}
+
+/** Standard 3X-UI /sub format: base64 blob of plain protocol lines. */
+export function encodeStandardSubscriptionBody(body: string): string {
+  const plain = subscriptionBodyForClients(body);
+  const bytes = new TextEncoder().encode(plain);
+  let binary = "";
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+  return btoa(binary);
+}
+
+export function decodeStandardSubscriptionBody(encoded: string): string {
+  const trimmed = encoded.trim();
+  if (PLAIN_PROTOCOL_RE.test(trimmed)) return trimmed;
+  try {
+    const binary = atob(trimmed.replace(/\s/g, ""));
+    const bytes = Uint8Array.from(binary, (ch) => ch.charCodeAt(0));
+    return new TextDecoder().decode(bytes);
+  } catch {
+    return trimmed;
+  }
 }
 
 export function applyLockedSubscriptionBody(body: string): string {
@@ -277,8 +297,8 @@ export async function panelSubscriptionIsLive(
   const worker = workerBaseUrl(env);
   if (worker) {
     try {
-      const response = await fetch(`${worker}/api/sub/${encodeURIComponent(subId)}`);
-      const body = await response.text();
+      const response = await fetch(`${worker}/sub/${encodeURIComponent(subId)}`);
+      const body = decodeStandardSubscriptionBody(await response.text());
       if (response.ok && PLAIN_PROTOCOL_RE.test(body)) return true;
     } catch {
       // ignore

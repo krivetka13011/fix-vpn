@@ -49,7 +49,7 @@ import {
 } from "./miniapp-services";
 import {
   buildClientImportTarget,
-  subscriptionBodyForClients,
+  encodeStandardSubscriptionBody,
   fetchPanelSubscriptionBody,
   normalizeSubscriptionBody,
   redirectHtml,
@@ -162,8 +162,12 @@ export async function handleApiRequest(
     return new Response(null, { headers: CORS });
   }
 
-  if (path.startsWith("/api/sub/") && request.method === "GET") {
-    const subId = decodeURIComponent(path.slice("/api/sub/".length))
+  if (
+    (path.startsWith("/api/sub/") || path.startsWith("/sub/")) &&
+    request.method === "GET"
+  ) {
+    const prefix = path.startsWith("/api/sub/") ? "/api/sub/" : "/sub/";
+    const subId = decodeURIComponent(path.slice(prefix.length))
       .replace(/\/$/, "")
       .trim();
     if (!subId || subId.includes("/")) {
@@ -194,14 +198,14 @@ export async function handleApiRequest(
       delete headers["hide-settings"];
       const userinfo = subscriptionUserinfoHeader(dbSub.ends_at ?? null);
       if (userinfo) headers["Subscription-Userinfo"] = userinfo;
-      const body = subscriptionBodyForClients(live.body);
+      const body = encodeStandardSubscriptionBody(live.body);
       return new Response(body, { status: 200, headers });
     }
 
     try {
       const cached = dbSub.subscription_payload_cache?.trim();
       if (cached && cached.length > 100) {
-        const body = subscriptionBodyForClients(normalizeSubscriptionBody(cached));
+        const body = encodeStandardSubscriptionBody(normalizeSubscriptionBody(cached));
         const headers: Record<string, string> = { ...lockedHeaders };
         const userinfo = subscriptionUserinfoHeader(dbSub.ends_at ?? null);
         if (userinfo) headers["Subscription-Userinfo"] = userinfo;
@@ -243,7 +247,7 @@ export async function handleApiRequest(
       if (isPanelErrorBody(rawBody, upstreamRes.status)) {
         return new Response("subscription unavailable", { status: 503, headers: CORS });
       }
-      const body = subscriptionBodyForClients(normalizeSubscriptionBody(rawBody));
+      const body = encodeStandardSubscriptionBody(normalizeSubscriptionBody(rawBody));
       const headers: Record<string, string> = {
         ...lockedHeaders,
         "Content-Type":

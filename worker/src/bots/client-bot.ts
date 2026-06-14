@@ -295,9 +295,9 @@ function connectOsMessage(
 ): string {
   const happNote =
     defaultClient === "happ"
-      ? `\n\n⚠️ В Happ удалите <b>все</b> старые подписки (Encrypted, Russia Priority и др.) перед импортом.\nИмпорт идёт в <b>JSON</b>-формате — 3 рабочих сервера (Vless, Xhttp, Trojan).`
+      ? `\n\n⚠️ В Happ удалите <b>все</b> старые подписки (Encrypted, Russia Priority и др.) перед импортом.\nПодписка: 3 сервера (Vless, Xhttp, Trojan).`
       : "";
-  const osHint = `Нажмите <b>Открыть ${clientLabel(defaultClient)}</b> ниже — подписка импортируется в JSON-формате.`;
+  const osHint = `Нажмите <b>Открыть ${clientLabel(defaultClient)}</b> ниже — ссылка откроет Happ и добавит подписку.`;
   return (
     `<b>Подключение VPN</b>\n\n` +
     `ОС: <b>${osLabel(os)}</b>\n` +

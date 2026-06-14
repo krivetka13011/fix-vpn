@@ -475,9 +475,9 @@ export async function panelSubscriptionIsLive(
   return false;
 }
 
-/** Happ: JSON subscription (полный Xray config), остальные клиенты — /sub/ base64. */
+/** Happ: стандартная 3X-UI подписка /sub/ (base64), как в панели и у конкурентов. */
 export function buildHappSubscriptionUrl(env: BotEnv, subId: string): string {
-  return buildProtectedJsonSubscriptionUrl(env, subId);
+  return buildProtectedSubscriptionUrl(env, subId);
 }
 
 export function buildPanelSubscriptionUrlForUser(env: BotEnv, subId: string): string {
@@ -506,9 +506,7 @@ export async function buildHappImportTarget(
   env: BotEnv,
   subId: string
 ): Promise<string> {
-  const url = buildHappSubscriptionUrl(env, subId);
-  // Happ 2.7.x on Windows rejects happ://crypt5/ — plain add URL works on all platforms.
-  return `happ://add/${encodeURIComponent(url)}`;
+  return buildHappSubscriptionUrl(env, subId);
 }
 
 export async function buildClientImportTarget(
@@ -540,7 +538,8 @@ export function buildDeepLink(client: VpnClientId, importTarget: string): string
   if (client === "happ") {
     const trimmed = importTarget.trim();
     if (isHappEncryptedLink(trimmed) || /^happ:\/\//i.test(trimmed)) return trimmed;
-    return `happ://add/${encodeURIComponent(trimmed)}`;
+    // 3X-UI / Happ: URL после happ://add/ без encodeURIComponent.
+    return `happ://add/${trimmed}`;
   }
   const encoded = encodeURIComponent(importTarget);
   switch (client) {

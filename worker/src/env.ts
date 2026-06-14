@@ -25,6 +25,8 @@ export interface BotEnv extends SupabaseEnv {
   SUBSCRIPTION_WORKER_FETCH_URL?: string;
   SUBSCRIPTION_PATH?: string;
   VPN_SERVER_HOST?: string;
+  /** Host in vless/trojan links inside subscription (default: panel IP). */
+  VPN_SUBSCRIPTION_HOST?: string;
   PARTNER_DEFAULT_COMMISSION_PERCENT?: string;
   BASE_PRICE_RUB_PER_MONTH?: string;
   DISCOUNT_3_MONTHS_PERCENT?: string;
@@ -44,6 +46,10 @@ export interface BotEnv extends SupabaseEnv {
   CARDLINK_SHOP_ID?: string;
   /** "1" = клиент платит комиссию Cardlink */
   CARDLINK_PAYER_PAYS_COMMISSION?: string;
+  /** "0" = отключить автовыплаты партнёрам через Cardlink */
+  CARDLINK_PAYOUT_ENABLED?: string;
+  /** ID банка СБП для payout API (см. /api/v1/payout/dictionaries/sbp_banks) */
+  CARDLINK_DEFAULT_SBP_BANK_ID?: string;
 }
 
 export const XUI_INBOUND_IDS_DEFAULT = [19, 20, 21, 24];

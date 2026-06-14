@@ -150,26 +150,14 @@ export async function fetchPanelSubscriptionBody(
 ): Promise<{ body: string; headers: Record<string, string> } | null> {
   if (!subId.trim()) return null;
 
-  try {
-    const xui = new XuiApi(env);
-    const links = await xui.getClientSubLinks(subId);
-    if (links.length > 0) {
-      const body = links.join("\n");
-      if (subscriptionBodyLooksValid(body) && PLAIN_PROTOCOL_RE.test(body)) {
-        return { body, headers: {} };
-      }
-    }
-  } catch (error) {
-    console.error("fetchPanelSubscriptionBody subLinks:", error);
-  }
-
   const path = (env.SUBSCRIPTION_PATH || "/sub").replace(/\/$/, "");
   const encoded = encodeURIComponent(subId);
+  const egressHost = subscriptionEgressHost(env);
   const bases = [
     workerSubscriptionFetchBase(env),
     subscriptionClientBaseUrl(env),
     subscriptionBaseUrl(env),
-    `https://${resolveVpnHost(env)}:2096`,
+    `https://${PANEL_EGRESS_IP}:2096`,
   ].filter((base, index, list) => base && list.indexOf(base) === index);
 
   for (const base of bases) {
@@ -178,8 +166,10 @@ export async function fetchPanelSubscriptionBody(
       const raw = await response.text();
       if (!response.ok || isPanelErrorBody(raw, response.status)) continue;
       if (!subscriptionBodyLooksValid(raw)) continue;
-      const body = normalizeSubscriptionBody(raw);
+      let body = normalizeSubscriptionBody(raw);
       if (!subscriptionBodyLooksValid(body)) continue;
+      body = rewriteSubscriptionEgressHost(body, egressHost);
+      body = filterUnreachableSubscriptionLines(body);
       const headers: Record<string, string> = {};
       for (const name of [
         "Profile-Title",
@@ -196,6 +186,22 @@ export async function fetchPanelSubscriptionBody(
       // try next base
     }
   }
+
+  try {
+    const xui = new XuiApi(env);
+    const links = await xui.getClientSubLinks(subId);
+    if (links.length > 0) {
+      let body = links.join("\n");
+      if (subscriptionBodyLooksValid(body) && PLAIN_PROTOCOL_RE.test(body)) {
+        body = rewriteSubscriptionEgressHost(body, egressHost);
+        body = filterUnreachableSubscriptionLines(body);
+        return { body, headers: {} };
+      }
+    }
+  } catch (error) {
+    console.error("fetchPanelSubscriptionBody subLinks:", error);
+  }
+
   return null;
 }
 
@@ -222,6 +228,120 @@ export async function verifyPanelSubscription(
     }
   }
   return false;
+}
+
+const PANEL_EGRESS_IP = "31.76.2.248";
+const DEAD_OUTBOUND_PORTS = new Set([53120]);
+
+export function subscriptionEgressHost(env: BotEnv): string {
+  return env.VPN_SUBSCRIPTION_HOST?.trim() || PANEL_EGRESS_IP;
+}
+
+export function rewriteSubscriptionEgressHost(body: string, host: string): string {
+  if (!host) return body;
+  return body.replace(/@fixvp\.xyz:/g, `@${host}:`);
+}
+
+export function filterUnreachableSubscriptionLines(body: string): string {
+  return body
+    .split(/\r?\n/)
+    .filter((line) => {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) return true;
+      for (const port of DEAD_OUTBOUND_PORTS) {
+        if (new RegExp(`:${port}([/?#]|$)`).test(trimmed)) return false;
+      }
+      return true;
+    })
+    .join("\n");
+}
+
+type JsonRecord = Record<string, unknown>;
+
+function fixJsonInboundForHapp(inbounds: JsonRecord[]): JsonRecord[] {
+  const mixed = inbounds.find((row) => row.protocol === "mixed");
+  const http = inbounds.find((row) => row.protocol === "http");
+  const sniffing = mixed?.sniffing;
+  const socks: JsonRecord = {
+    listen: "127.0.0.1",
+    port: 10808,
+    protocol: "socks",
+    settings: { auth: "noauth", udp: true, userLevel: 8 },
+    tag: "socks",
+  };
+  if (sniffing) socks.sniffing = sniffing;
+  const next: JsonRecord[] = [socks];
+  if (http) {
+    next.push({
+      ...http,
+      listen: "127.0.0.1",
+      port: http.port ?? 10809,
+    });
+  }
+  return next;
+}
+
+function jsonProxyPort(item: JsonRecord): number | null {
+  const outbounds = item.outbounds;
+  if (!Array.isArray(outbounds)) return null;
+  const proxy = outbounds.find((row) => (row as JsonRecord).tag === "proxy") as
+    | JsonRecord
+    | undefined;
+  if (!proxy) return null;
+  const settings = proxy.settings as JsonRecord | undefined;
+  const port = Number(settings?.port);
+  return Number.isFinite(port) ? port : null;
+}
+
+export function normalizeJsonSubscriptionForHapp(items: unknown[]): string {
+  const fixed: JsonRecord[] = [];
+  for (const raw of items) {
+    if (!raw || typeof raw !== "object") continue;
+    const item = raw as JsonRecord;
+    const port = jsonProxyPort(item);
+    if (port && DEAD_OUTBOUND_PORTS.has(port)) continue;
+    const inbounds = Array.isArray(item.inbounds)
+      ? (item.inbounds as JsonRecord[])
+      : [];
+    fixed.push({
+      ...item,
+      inbounds: fixJsonInboundForHapp(inbounds),
+    });
+  }
+  return JSON.stringify(fixed);
+}
+
+export async function fetchPanelJsonSubscription(
+  env: BotEnv,
+  subId: string
+): Promise<string | null> {
+  if (!subId.trim()) return null;
+  const encoded = encodeURIComponent(subId);
+  const bases = [
+    workerSubscriptionFetchBase(env),
+    subscriptionClientBaseUrl(env),
+    subscriptionBaseUrl(env),
+    `https://${PANEL_EGRESS_IP}:2096`,
+  ].filter((base, index, list) => base && list.indexOf(base) === index);
+
+  for (const base of bases) {
+    try {
+      const response = await panelFetch(env, `${base}/json/${encoded}`);
+      if (!response.ok) continue;
+      const payload = (await response.json()) as unknown;
+      if (!Array.isArray(payload) || payload.length === 0) continue;
+      return normalizeJsonSubscriptionForHapp(payload);
+    } catch {
+      // try next base
+    }
+  }
+  return null;
+}
+
+export function buildProtectedJsonSubscriptionUrl(env: BotEnv, subId: string): string {
+  const base = workerBaseUrl(env);
+  if (!base) throw new Error("WEBAPP_URL missing");
+  return `${base}/json/${encodeURIComponent(subId)}`;
 }
 
 export function buildProtectedSubscriptionUrl(env: BotEnv, subId: string): string {
@@ -307,9 +427,9 @@ export async function panelSubscriptionIsLive(
   return false;
 }
 
-/** Happ fetches Worker proxy — returns plain vless lines, not panel base64. */
+/** Happ: JSON subscription (полный Xray config), остальные клиенты — /sub/ base64. */
 export function buildHappSubscriptionUrl(env: BotEnv, subId: string): string {
-  return buildProtectedSubscriptionUrl(env, subId);
+  return buildProtectedJsonSubscriptionUrl(env, subId);
 }
 
 export function buildPanelSubscriptionUrlForUser(env: BotEnv, subId: string): string {

@@ -49,6 +49,7 @@ import {
 } from "./miniapp-services";
 import {
   buildClientImportTarget,
+  fetchPanelJsonSubscription,
   encodeStandardSubscriptionBody,
   fetchPanelSubscriptionBody,
   normalizeSubscriptionBody,
@@ -269,6 +270,40 @@ export async function handleApiRequest(
       console.error("subscription proxy:", error);
       return new Response("subscription proxy failed", { status: 502, headers: CORS });
     }
+  }
+
+  if (path.startsWith("/json/") && request.method === "GET") {
+    const subId = decodeURIComponent(path.slice("/json/".length))
+      .replace(/\/$/, "")
+      .trim();
+    if (!subId || subId.includes("/")) {
+      return new Response("bad sub", { status: 400, headers: CORS });
+    }
+
+    let dbSub: Awaited<ReturnType<typeof getSubscriptionBySubId>> = null;
+    try {
+      dbSub = await getSubscriptionBySubId(env, subId);
+    } catch (error) {
+      console.error("json subscription db lookup:", error);
+    }
+    if (!dbSub || dbSub.status !== "active") {
+      return new Response("subscription revoked", { status: 404, headers: CORS });
+    }
+
+    const jsonBody = await fetchPanelJsonSubscription(env, subId);
+    if (!jsonBody) {
+      return new Response("json subscription unavailable", { status: 503, headers: CORS });
+    }
+
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json; charset=utf-8",
+      "Cache-Control": "no-store",
+      ...SUBSCRIPTION_RESPONSE_HEADERS,
+      ...CORS,
+    };
+    const userinfo = subscriptionUserinfoHeader(dbSub.ends_at ?? null);
+    if (userinfo) headers["Subscription-Userinfo"] = userinfo;
+    return new Response(jsonBody, { status: 200, headers });
   }
 
   if (path.startsWith("/api/redirect/") && request.method === "GET") {

@@ -295,7 +295,7 @@ function connectOsMessage(
 ): string {
   const happNote =
     defaultClient === "happ"
-      ? `\n\n⚠️ В Happ удалите <b>все</b> старые подписки «Encrypted» перед импортом — иначе несколько профилей на одну ссылку и пинг N/D.`
+      ? `\n\n⚠️ В Happ удалите <b>все</b> старые подписки (Encrypted, Russia Priority и др.) перед импортом.\nИмпорт идёт в <b>JSON</b>-формате — 3 рабочих сервера (Vless, Xhttp, Trojan).`
       : "";
   const osHint =
     os === "android"

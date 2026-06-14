@@ -32,6 +32,7 @@ const CLIENTS_BY_OS: Record<string, VpnClientId[]> = {
 };
 
 const HAPP_CRYPTO_API = "https://crypto.happ.su/api-v2.php";
+const PANEL_EGRESS_IP = "31.76.2.248";
 
 export function workerBaseUrl(env: BotEnv): string {
   return (env.WEBAPP_URL || "").replace(/\/$/, "");
@@ -47,14 +48,12 @@ export function buildPanelSubscriptionUrl(env: BotEnv, subId: string): string {
   return `${base}${path}/${subId}`;
 }
 
+/** Прямой URL панели для VPN-клиентов — IP:2096, как у рабочих подписок конкурентов в Happ. */
 export function buildClientSubscriptionUrl(env: BotEnv, subId: string): string {
   const trimmed = subId.trim();
   const path = (env.SUBSCRIPTION_PATH || "/sub").replace(/\/$/, "");
-  const base =
-    subscriptionClientBaseUrl(env) ||
-    subscriptionBaseUrl(env) ||
-    `https://${PANEL_EGRESS_IP}:2096`;
-  return `${base.replace(/\/$/, "")}${path}/${trimmed}`;
+  const host = env.VPN_SUBSCRIPTION_HOST?.trim() || PANEL_EGRESS_IP;
+  return `https://${host}:2096${path}/${trimmed}`;
 }
 
 function subscriptionBodyLooksValid(body: string): boolean {
@@ -234,7 +233,6 @@ export async function verifyPanelSubscription(
   return false;
 }
 
-const PANEL_EGRESS_IP = "31.76.2.248";
 const DEAD_OUTBOUND_PORTS = new Set([53120]);
 
 export function subscriptionEgressHost(env: BotEnv): string {
@@ -545,8 +543,8 @@ export function buildDeepLink(client: VpnClientId, importTarget: string): string
     if (/\/api\/redirect\//i.test(trimmed) || /\/redirect\//i.test(trimmed)) {
       throw new Error("Happ import must use direct panel /sub/ URL, not redirect HTML");
     }
-    // Windows Happ: install-sub + encodeURIComponent(прямой URL панели 3X-UI).
-    return `happ://install-sub?url=${encodeURIComponent(trimmed)}`;
+    // 3X-UI / Happ Windows: happ://add/ + прямой URL без encodeURIComponent (как в панели).
+    return `happ://add/${trimmed}`;
   }
   const encoded = encodeURIComponent(importTarget);
   switch (client) {
@@ -576,6 +574,7 @@ export function defaultClientForOs(os: string): VpnClientId {
 export function redirectHtml(client: VpnClientId, importTarget: string): string {
   const deepLink = buildDeepLink(client, importTarget);
   const safeDeep = deepLink.replace(/"/g, "&quot;");
+  const safeSub = importTarget.replace(/"/g, "&quot;");
   const label = clientLabel(client);
 
   return `<!DOCTYPE html>
@@ -588,21 +587,39 @@ export function redirectHtml(client: VpnClientId, importTarget: string): string 
     body { font-family: system-ui, sans-serif; background: #0b1220; color: #e8eefc; display: grid; place-items: center; min-height: 100vh; margin: 0; padding: 24px; text-align: center; }
     .card { max-width: 420px; width: 100%; }
     .btn { display: block; width: 100%; box-sizing: border-box; margin: 10px 0; padding: 14px 18px; border-radius: 12px; border: 0; font-size: 17px; font-weight: 600; cursor: pointer; text-decoration: none; background: #3d7eff; color: #fff; }
+    .btn-secondary { background: #243352; color: #e8eefc; }
     .hint { color: #9db0d0; font-size: 14px; line-height: 1.5; }
+    .sub-url { word-break: break-all; font-size: 12px; color: #7f93b8; margin-top: 12px; }
   </style>
 </head>
 <body>
   <div class="card">
     <p>Импорт подписки в <b>${label}</b></p>
-    <p class="hint">Подписка загружается напрямую с панели 3X-UI (base64). Ссылка на эту HTML-страницу в Happ не передаётся.</p>
+    <p class="hint">Подписка скачивается с панели 3X-UI (base64). Если кнопка не сработала — скопируйте ссылку и вставьте в Happ вручную.</p>
     <a class="btn" id="open-app" href="${safeDeep}">Открыть ${label}</a>
+    <button class="btn btn-secondary" id="copy-sub" type="button">Скопировать ссылку подписки</button>
+    <p class="sub-url" id="sub-url">${safeSub}</p>
   </div>
   <script>
     (function () {
       var deepLink = ${JSON.stringify(deepLink)};
+      var subUrl = ${JSON.stringify(importTarget)};
       var isAndroid = /Android/i.test(navigator.userAgent);
-      if (!isAndroid) {
+      if (isAndroid) {
         setTimeout(function () { window.location.replace(deepLink); }, 120);
+      }
+      var copyBtn = document.getElementById("copy-sub");
+      if (copyBtn) {
+        copyBtn.addEventListener("click", function () {
+          var done = function () { copyBtn.textContent = "Скопировано"; };
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(subUrl).then(done).catch(function () {
+              window.prompt("Скопируйте ссылку подписки:", subUrl);
+            });
+          } else {
+            window.prompt("Скопируйте ссылку подписки:", subUrl);
+          }
+        });
       }
     })();
   </script>

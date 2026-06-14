@@ -289,11 +289,54 @@ function jsonProxyPort(item: JsonRecord): number | null {
     | undefined;
   if (!proxy) return null;
   const settings = proxy.settings as JsonRecord | undefined;
-  const port = Number(settings?.port);
+  const directPort = Number(settings?.port);
+  if (Number.isFinite(directPort)) return directPort;
+  const servers = settings?.servers;
+  if (!Array.isArray(servers) || servers.length === 0) return null;
+  const port = Number((servers[0] as JsonRecord).port);
   return Number.isFinite(port) ? port : null;
 }
 
-export function normalizeJsonSubscriptionForHapp(items: unknown[]): string {
+function rewriteJsonHostInAddress(address: string, host: string): string {
+  if (!host || !address) return address;
+  return address.replace(/fixvp\.xyz/gi, host);
+}
+
+function rewriteJsonOutboundAddresses(item: JsonRecord, host: string): JsonRecord {
+  const outbounds = item.outbounds;
+  if (!Array.isArray(outbounds) || !host) return item;
+
+  const nextOutbounds = outbounds.map((raw) => {
+    const outbound = raw as JsonRecord;
+    if (outbound.tag !== "proxy") return outbound;
+    const settings = outbound.settings as JsonRecord | undefined;
+    if (!settings) return outbound;
+
+    const patched: JsonRecord = { ...settings };
+    if (typeof patched.address === "string") {
+      patched.address = rewriteJsonHostInAddress(patched.address, host);
+    }
+    const servers = patched.servers;
+    if (Array.isArray(servers)) {
+      patched.servers = servers.map((row) => {
+        const server = row as JsonRecord;
+        if (typeof server.address !== "string") return server;
+        return {
+          ...server,
+          address: rewriteJsonHostInAddress(server.address, host),
+        };
+      });
+    }
+    return { ...outbound, settings: patched };
+  });
+
+  return { ...item, outbounds: nextOutbounds };
+}
+
+export function normalizeJsonSubscriptionForHapp(
+  items: unknown[],
+  host = PANEL_EGRESS_IP
+): string {
   const fixed: JsonRecord[] = [];
   for (const raw of items) {
     if (!raw || typeof raw !== "object") continue;
@@ -303,10 +346,15 @@ export function normalizeJsonSubscriptionForHapp(items: unknown[]): string {
     const inbounds = Array.isArray(item.inbounds)
       ? (item.inbounds as JsonRecord[])
       : [];
-    fixed.push({
-      ...item,
-      inbounds: fixJsonInboundForHapp(inbounds),
-    });
+    fixed.push(
+      rewriteJsonOutboundAddresses(
+        {
+          ...item,
+          inbounds: fixJsonInboundForHapp(inbounds),
+        },
+        host
+      )
+    );
   }
   return JSON.stringify(fixed);
 }
@@ -330,7 +378,7 @@ export async function fetchPanelJsonSubscription(
       if (!response.ok) continue;
       const payload = (await response.json()) as unknown;
       if (!Array.isArray(payload) || payload.length === 0) continue;
-      return normalizeJsonSubscriptionForHapp(payload);
+      return normalizeJsonSubscriptionForHapp(payload, subscriptionEgressHost(env));
     } catch {
       // try next base
     }
@@ -459,12 +507,8 @@ export async function buildHappImportTarget(
   subId: string
 ): Promise<string> {
   const url = buildHappSubscriptionUrl(env, subId);
-  try {
-    return await encryptHappLink(url);
-  } catch (error) {
-    console.error("encryptHappLink fallback:", error);
-    return `happ://add/${encodeURIComponent(url)}`;
-  }
+  // Happ 2.7.x on Windows rejects happ://crypt5/ — plain add URL works on all platforms.
+  return `happ://add/${encodeURIComponent(url)}`;
 }
 
 export async function buildClientImportTarget(
@@ -494,8 +538,9 @@ export function buildRedirectUrl(
 
 export function buildDeepLink(client: VpnClientId, importTarget: string): string {
   if (client === "happ") {
-    if (isHappEncryptedLink(importTarget)) return importTarget;
-    return `happ://add/${importTarget}`;
+    const trimmed = importTarget.trim();
+    if (isHappEncryptedLink(trimmed) || /^happ:\/\//i.test(trimmed)) return trimmed;
+    return `happ://add/${encodeURIComponent(trimmed)}`;
   }
   const encoded = encodeURIComponent(importTarget);
   switch (client) {

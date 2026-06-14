@@ -34,6 +34,7 @@ const ALLOWED_PREFIXES = [
   "/panel/api/clients/lastOnline",
   "/panel/api/clients/subLinks/",
   "/panel/api/inbounds/get/",
+  "/panel/api/inbounds/update/",
 ];
 
 export interface PanelDeviceIp {
@@ -377,7 +378,7 @@ export class XuiApi {
     const client = obj?.client;
     if (!client) return null;
     const subId = String(client.subId || "").trim();
-    const primaryUuid = String(client.id || client.uuid || "").trim();
+    const primaryUuid = String(client.uuid || client.id || "").trim();
     const resolvedEmail = String(client.email || email).trim();
     if (!subId || !primaryUuid || !resolvedEmail) return null;
     return {
@@ -558,20 +559,72 @@ export class XuiApi {
     this.invalidateScan();
   }
 
+  private async enableClientOnInbounds(email: string): Promise<void> {
+    const needle = email.trim();
+    if (!needle) return;
+
+    for (const inboundId of this.inboundIds) {
+      try {
+        const response = await this.request(`/panel/api/inbounds/get/${inboundId}`);
+        const payload = await this.readJsonBody(response);
+        if (!response.ok || payload.success === false) continue;
+        const obj = payload.obj as Record<string, unknown> | undefined;
+        if (!obj) continue;
+
+        const settingsRaw = obj.settings;
+        const settings =
+          typeof settingsRaw === "string"
+            ? (JSON.parse(settingsRaw) as {
+                clients?: Array<Record<string, unknown>>;
+              })
+            : (settingsRaw as { clients?: Array<Record<string, unknown>> } | undefined);
+        const clients = settings?.clients ?? [];
+        let touched = false;
+        for (const row of clients) {
+          if (String(row.email || "") !== needle) continue;
+          if (row.enable === true) continue;
+          row.enable = true;
+          touched = true;
+        }
+        if (!touched) continue;
+
+        const updateBody: Record<string, unknown> = {
+          ...obj,
+          settings: JSON.stringify({ ...settings, clients }),
+        };
+        for (const key of Object.keys(updateBody)) {
+          if (updateBody[key] === null) delete updateBody[key];
+        }
+
+        const updateResponse = await this.request(
+          `/panel/api/inbounds/update/${inboundId}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(updateBody),
+          }
+        );
+        await this.parseResponse(updateResponse, `enableClientOnInbounds:${inboundId}`);
+      } catch (error) {
+        console.error(`enableClientOnInbounds ${inboundId}:`, error);
+      }
+    }
+
+    this.invalidateScan();
+  }
+
   async ensureClientEnabled(email: string, telegramId: number): Promise<void> {
     const found = await this.findClientByEmail(email);
-    if (!found || found.enable) return;
-    const client = this.buildClient(
-      found.email,
-      found.subId,
-      telegramId || found.tgId,
-      0,
-      0,
-      true,
-      found.primaryUuid
-    );
+    if (!found) return;
+
+    const scanned = await this.scanAllClients();
+    const rows = scanned.filter((row) => row.email === email);
+    const needsEnable =
+      !found.enable || rows.length === 0 || rows.some((row) => !row.enable);
+    if (!needsEnable) return;
+
     try {
-      await this.updateClient(client);
+      await this.enableClientOnInbounds(email);
       console.error("ensureClientEnabled: re-enabled", email);
     } catch (error) {
       console.error("ensureClientEnabled:", error);

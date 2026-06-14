@@ -30,6 +30,8 @@ INBOUND_IDS = [19, 20, 21, 24]
 
 
 def load_env(path: str = "project_config.env") -> None:
+    if not os.path.isfile(path):
+        return
     with open(path, encoding="utf-8") as handle:
         for line in handle:
             line = line.strip()

@@ -40,6 +40,10 @@ export interface BotEnv extends SupabaseEnv {
   PANEL_ORIGIN_IP?: string;
   /** Secret for X-Fix-Vpn-E2E header — enables webhook trace JSON (CI / agent tests). */
   E2E_TRACE_SECRET?: string;
+  CARDLINK_API_TOKEN?: string;
+  CARDLINK_SHOP_ID?: string;
+  /** "1" = клиент платит комиссию Cardlink */
+  CARDLINK_PAYER_PAYS_COMMISSION?: string;
 }
 
 export const XUI_INBOUND_IDS_DEFAULT = [19, 20, 21, 24];

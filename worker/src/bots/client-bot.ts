@@ -1,7 +1,6 @@
 import type { BotEnv } from "../env";
 import { clientBotToken, isTesterAccount } from "../env";
 import {
-  addPartnerBalance,
   clearSession,
   createTransaction,
   getPartner,
@@ -44,6 +43,11 @@ import {
   resetPanelDeviceBinding,
   unbindPanelClientIp,
 } from "../device-reset";
+import { approvePaidTransaction } from "../approve-transaction";
+import {
+  createCardlinkBill,
+  shouldUseCardlink,
+} from "../cardlink";
 import {
   buildPanelSubscriptionUrlForUser,
   buildRedirectUrl,
@@ -692,58 +696,8 @@ export async function handleManagerClientCallback(
 
   if (data.startsWith("mgr:txn:ok:")) {
     const txnId = data.slice("mgr:txn:ok:".length);
-    const txn = await getTransaction(env, txnId);
-    if (!txn || txn.status !== "pending") return "Заявка не найдена";
-    const user = await sbUserById(env, txn.user_id);
-    if (!user) return "Пользователь не найден";
-    const months = txn.billing_months as BillingMonths;
-    const xui = new XuiApi(env);
-    const sub = await getSubscription(env, user.id);
-    const extendDays = months * 30;
-    const baseMs =
-      sub?.status === "active" && sub.ends_at
-        ? new Date(`${sub.ends_at}T23:59:59`).getTime()
-        : Date.now();
-    const expiryMs = Math.max(Date.now(), baseMs) + extendDays * 24 * 60 * 60 * 1000;
-    const provision = await xui.provisionUser(env, {
-      userId: user.id,
-      username: user.username,
-      telegramId: user.telegram_id,
-      expiryMs,
-      dbSubscription: sub,
-    });
-    await persistProvision(env, user.id, provision, {
-      status: "active",
-      plan_type: "basic",
-      plan_label: `Базовый · ${periodLabel(months)}`,
-      billing_months: months,
-      starts_at: sub?.starts_at || formatDateFromMs(Date.now()),
-      ends_at: formatDateFromMs(expiryMs),
-      is_trial: false,
-    });
-    if (txn.is_first_payment && user.ref_by_partner_id) {
-      const commissionPct = Number(env.PARTNER_DEFAULT_COMMISSION_PERCENT || "50");
-      const commission = Math.round((Number(txn.amount) * commissionPct) / 100);
-      await addPartnerBalance(env, user.ref_by_partner_id, commission);
-      await patchTransaction(env, txnId, {
-        status: "approved",
-        partner_commission_amount: commission,
-      });
-    } else {
-      await patchTransaction(env, txnId, { status: "approved" });
-    }
-    if (!user.first_payment_done) {
-      await patchUser(env, user.id, { first_payment_done: true });
-    }
-    const clientToken = clientBotToken(env);
-    if (clientToken) {
-      await sendMessage(
-        clientToken,
-        user.telegram_id,
-        `Оплата подтверждена. Подписка продлена на ${periodLabel(months)}.`
-      );
-    }
-    return "Подписка активирована";
+    const result = await approvePaidTransaction(env, txnId);
+    return result.ok ? result.message : result.message;
   }
 
   if (data.startsWith("mgr:txn:no:")) {
@@ -753,14 +707,6 @@ export async function handleManagerClientCallback(
   }
 
   return null;
-}
-
-async function sbUserById(env: BotEnv, userId: string) {
-  const { sbJson, sbRequest } = await import("../supabase");
-  const rows = await sbJson<Array<{ id: string; telegram_id: number; username: string | null; ref_by_partner_id: number | null; first_payment_done: boolean }>>(
-    await sbRequest(env, `users?id=eq.${userId}&select=id,telegram_id,username,ref_by_partner_id,first_payment_done&limit=1`)
-  );
-  return rows[0] ?? null;
 }
 
 export async function handleClientBotUpdate(
@@ -838,6 +784,50 @@ export async function handleClientBotUpdate(
         status: "pending",
         is_first_payment: !Boolean(user.first_payment_done),
       });
+
+      if (shouldUseCardlink(env, method)) {
+        try {
+          const bill = await createCardlinkBill(env, {
+            amount: price,
+            orderId: txn.id,
+            description: `FIX VPN · ${periodLabel(months)}`,
+            method,
+            custom: String(tg.id),
+          });
+          await patchTransaction(env, txn.id, {
+            cardlink_bill_id: bill.billId,
+            payment_url: bill.linkPageUrl,
+          });
+          await editMessage(
+            token,
+            chatId,
+            messageId,
+            `Оплата FIX VPN: <b>${price} ₽</b> · ${periodLabel(months)}\n\n` +
+              `Нажмите кнопку ниже — откроется безопасная форма Cardlink.\n` +
+              `После оплаты подписка активируется автоматически.`,
+            {
+              inline_keyboard: [
+                [{ text: "Оплатить", url: bill.linkPageUrl }],
+                [{ text: "Назад", callback_data: "c:menu" }],
+              ],
+            }
+          );
+        } catch (error) {
+          console.error("cardlink bill:", error);
+          await editMessage(
+            token,
+            chatId,
+            messageId,
+            `Не удалось создать ссылку на оплату.\n` +
+              `${error instanceof Error ? error.message : "ошибка Cardlink"}\n\n` +
+              `Попробуйте позже или выберите другой способ.`,
+            { inline_keyboard: [[{ text: "Назад", callback_data: "c:buy" }]] }
+          );
+        }
+        await answerCallback(token, cq.id);
+        return;
+      }
+
       await setSession(env, tg.id, "client", "await_receipt", {
         txnId: txn.id,
       });

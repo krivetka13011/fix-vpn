@@ -92,6 +92,8 @@ create table if not exists transactions (
   manager_note text,
   is_first_payment boolean not null default false,
   partner_commission_amount numeric(12, 2),
+  cardlink_bill_id text,
+  payment_url text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );

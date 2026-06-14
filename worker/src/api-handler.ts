@@ -27,6 +27,13 @@ import {
   DeviceResetCooldownError,
   DeviceResetPendingError,
 } from "./device-reset";
+import { approvePaidTransaction } from "./approve-transaction";
+import {
+  cardlinkResultHtml,
+  isCardlinkConfigured,
+  parseCardlinkPostback,
+  verifyCardlinkPostbackSignature,
+} from "./cardlink";
 import { XuiApi } from "./xui";
 import { getSubscriptionBySubId } from "./repository";
 import {
@@ -365,6 +372,57 @@ export async function handleApiRequest(
           clientWebhookUrl === expectedClientWebhook
       ),
     });
+  }
+
+  if (path === "/api/payment/cardlink/success" && (request.method === "GET" || request.method === "POST")) {
+    return cardlinkResultHtml(
+      "Оплата принята",
+      "Спасибо! Вернитесь в Telegram — бот пришлёт подтверждение в течение минуты."
+    );
+  }
+
+  if (path === "/api/payment/cardlink/fail" && (request.method === "GET" || request.method === "POST")) {
+    return cardlinkResultHtml(
+      "Оплата не прошла",
+      "Платёж отменён или отклонён. Вернитесь в бот и попробуйте снова."
+    );
+  }
+
+  if (path === "/api/webhook/cardlink" && request.method === "POST") {
+    if (!isCardlinkConfigured(env)) {
+      return new Response("cardlink disabled", { status: 503 });
+    }
+    try {
+      const postback = await parseCardlinkPostback(request);
+      if (
+        !postback.invId ||
+        !postback.outSum ||
+        !verifyCardlinkPostbackSignature(
+          env,
+          postback.outSum,
+          postback.invId,
+          postback.signatureValue
+        )
+      ) {
+        console.error("cardlink postback: bad signature", postback.invId);
+        return new Response("bad signature", { status: 403 });
+      }
+
+      if (postback.status === "SUCCESS") {
+        const result = await approvePaidTransaction(env, postback.invId);
+        if (!result.ok) {
+          console.error("cardlink approve:", result.message, postback.invId);
+        }
+      } else if (postback.status === "FAIL") {
+        const { patchTransaction } = await import("./repository");
+        await patchTransaction(env, postback.invId, { status: "rejected" });
+      }
+
+      return new Response("ok");
+    } catch (error) {
+      console.error("cardlink webhook:", error);
+      return new Response("error", { status: 500 });
+    }
   }
 
   if (

@@ -24,6 +24,8 @@ export interface TransactionRow {
   screenshot_file_id: string | null;
   sender_name: string | null;
   is_first_payment: boolean;
+  cardlink_bill_id?: string | null;
+  payment_url?: string | null;
 }
 
 export interface BotSessionRow {

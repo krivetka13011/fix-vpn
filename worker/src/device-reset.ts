@@ -6,11 +6,24 @@ import {
   patchSubscription,
 } from "./repository";
 import { clearStuckRotationFlags } from "./subscription-rotate";
+import { syncPanelDeviceLimit } from "./device-limit";
 import { XuiApi } from "./xui";
 
 export const DEVICE_RESET_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 const PANEL_CLEAR_PENDING_MS = 5 * 60 * 1000;
 const PANEL_CLEAR_TRY_TIMEOUT_MS = 5000;
+
+export async function clearPanelIpsOnly(
+  env: BotEnv,
+  clientEmail: string
+): Promise<"cleared" | "queued"> {
+  const email = clientEmail.trim();
+  if (!email) return "cleared";
+
+  const xui = new XuiApi(env);
+  const cleared = await xui.tryClearClientIps(email, PANEL_CLEAR_TRY_TIMEOUT_MS);
+  return cleared ? "cleared" : "queued";
+}
 
 export function deviceResetCooldownRemaining(
   lastReset: string | null | undefined
@@ -120,21 +133,24 @@ export async function resetPanelDeviceBinding(
     throw new Error("Нет активного клиента в панели");
   }
 
-  return clearPanelClientIps(env, userId, sub.client_email, {
+  const mode = await clearPanelClientIps(env, userId, sub.client_email, {
     enforceCooldown: true,
     bypassCooldown: options?.bypassCooldown,
     telegramId: options?.telegramId,
     isTester: options?.isTester,
   });
+  await syncPanelDeviceLimit(env, userId);
+  return mode;
 }
 
 export async function unbindPanelClientIp(
   env: BotEnv,
-  userId: string,
+  _userId: string,
   clientEmail: string | null | undefined
 ): Promise<"cleared" | "queued" | "skipped"> {
   if (!clientEmail?.trim()) return "skipped";
-  return clearPanelClientIps(env, userId, clientEmail, { enforceCooldown: false });
+  const mode = await clearPanelIpsOnly(env, clientEmail);
+  return mode;
 }
 
 export function deviceResetNotice(mode: "cleared" | "queued"): string {

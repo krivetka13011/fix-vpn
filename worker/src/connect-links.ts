@@ -440,9 +440,12 @@ export function buildProtectedSubscriptionUrl(env: BotEnv, subId: string): strin
   return `${base}/sub/${encodeURIComponent(subId)}`;
 }
 
-/** Standard 3X-UI /sub format: base64 blob of plain protocol lines. */
+/** Standard 3X-UI /sub format: base64 blob with #hide-settings lock. */
 export function encodeStandardSubscriptionBody(body: string): string {
-  const plain = subscriptionBodyForClients(body);
+  let plain = subscriptionBodyForClients(body);
+  if (!/^#hide-settings\s*:\s*1\b/im.test(plain)) {
+    plain = `#hide-settings: 1\n${plain}`;
+  }
   const bytes = new TextEncoder().encode(plain);
   let binary = "";
   for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
@@ -467,10 +470,10 @@ export function applyLockedSubscriptionBody(body: string): string {
   return trimmed.replace(/^#hide-settings\s*:\s*1\s*\n?/im, "");
 }
 
-/** Subscription body for VPN clients — без #hide-settings (ломает пинг в Happ). */
+/** Subscription body for VPN clients with locked settings in Happ. */
 export function subscriptionBodyForClients(body: string): string {
   const normalized = dedupeSubscriptionLines(
-    sanitizeSubscriptionLineRemarks(applyLockedSubscriptionBody(body).trim())
+    sanitizeSubscriptionLineRemarks(body.trim())
   );
   return normalized;
 }
@@ -481,8 +484,9 @@ export const LOCKED_SUBSCRIPTION_HEADERS: Record<string, string> = {
   "Profile-Title": "base64:8J+Up0ZJWCBWUE4=",
 };
 
-/** Headers for /api/sub — без hide-settings (ломает refresh в Happ на Windows). */
+/** Headers for /sub — hide-settings locks editing in Happ. */
 export const SUBSCRIPTION_RESPONSE_HEADERS: Record<string, string> = {
+  "hide-settings": "1",
   "Profile-Update-Interval": "1",
   "Profile-Title": "base64:8J+Up0ZJWCBWUE4=",
 };

@@ -9,11 +9,18 @@ import {
   patchSubscription,
   upsertTelegramUser,
   upsertVpnDeviceBinding,
+  deleteVpnDeviceBinding,
 } from "./repository";
 import type { TelegramUser } from "./telegram";
-import { XuiApi, type PanelDeviceIp } from "./xui";
-import { subscriptionDeviceLimit } from "./device-limit";
-import { DeviceResetCooldownError, DeviceResetPendingError, deviceResetNotice, resetPanelDeviceBinding } from "./device-reset";
+import { XuiApi } from "./xui";
+import {
+  deviceOccupiedMessage,
+  isDifferentDeviceAttempt,
+  subscriptionDeviceLimit,
+  syncPanelDeviceLimit,
+  type DeviceSlotStatus,
+} from "./device-limit";
+import { DeviceResetCooldownError, DeviceResetPendingError, deviceResetNotice, resetPanelDeviceBinding, unbindPanelClientIp } from "./device-reset";
 
 const OS_LABELS: Record<string, string> = {
   android: "Android",
@@ -113,18 +120,7 @@ export interface MiniappDeviceRow {
   online: boolean;
 }
 
-export type DeviceBindingRow = {
-  os: string;
-  vpn_client: string;
-  label: string;
-};
-
-export type DeviceSlotStatus = {
-  limit: number;
-  panelIps: PanelDeviceIp[];
-  bindings: DeviceBindingRow[];
-  slotTaken: boolean;
-};
+export type { DeviceBindingRow, DeviceSlotStatus } from "./device-limit";
 
 export async function fetchDeviceSlotStatus(
   env: BotEnv,
@@ -133,7 +129,7 @@ export async function fetchDeviceSlotStatus(
 ): Promise<DeviceSlotStatus> {
   const limit = subscriptionDeviceLimit(sub);
   const bindings = await listVpnDeviceBindings(env, userId);
-  let panelIps: PanelDeviceIp[] = [];
+  let panelIps: Awaited<ReturnType<XuiApi["getClientIps"]>> = [];
 
   if (sub?.client_email) {
     try {
@@ -143,9 +139,6 @@ export async function fetchDeviceSlotStatus(
     }
   }
 
-  const unlimited = limit === 0;
-  const slotTaken = false;
-
   return {
     limit,
     panelIps,
@@ -154,44 +147,10 @@ export async function fetchDeviceSlotStatus(
       vpn_client: row.vpn_client,
       label: row.label,
     })),
-    slotTaken,
   };
 }
 
-export function isDifferentDeviceAttempt(
-  status: DeviceSlotStatus,
-  targetOs: string
-): boolean {
-  if (!status.slotTaken) return false;
-  return !status.bindings.some((row) => row.os === targetOs);
-}
-
-export function deviceOccupiedMessage(
-  status: DeviceSlotStatus,
-  targetOs?: string
-): string {
-  const occupiedLines: string[] = [];
-  for (const row of status.bindings.slice(0, 2)) {
-    occupiedLines.push(`• ${row.label}`);
-  }
-  for (const row of status.panelIps.slice(0, 2)) {
-    const seen = row.seenAt ? ` (${row.seenAt})` : "";
-    occupiedLines.push(`• IP ${row.ip}${seen}`);
-  }
-  const occupied =
-    occupiedLines.length > 0 ? occupiedLines.join("\n") : "• другое устройство";
-
-  const replaceNote =
-    targetOs && isDifferentDeviceAttempt(status, targetOs)
-      ? "\n\nВы подключаете другое устройство — сначала отвяжите текущее."
-      : "";
-
-  return (
-    `На этом аккаунте уже привязано устройство. Одновременно доступно ${status.limit}.\n\n` +
-    `Сейчас занято:\n${occupied}${replaceNote}\n\n` +
-    `Чтобы заменить: «Мой профиль» → нажмите устройство или «Сбросить все».`
-  );
-}
+export { canRegisterDeviceBinding, deviceOccupiedMessage, isDifferentDeviceAttempt } from "./device-limit";
 
 export async function fetchMiniappDevices(
   env: BotEnv,
@@ -264,12 +223,37 @@ export async function buildMiniappConnectUrl(
     }
     const label = `${OS_LABELS[mappedOs] || mappedOs} · ${CLIENT_LABELS[client] || client}`;
     await upsertVpnDeviceBinding(env, user.id, mappedOs, mappedClient, label);
+    await syncPanelDeviceLimit(env, user.id);
   }
 
   return {
     subId,
     redirectUrl: buildRedirectUrl(env, mappedClient, subId),
   };
+}
+
+export async function unbindMiniappDevice(
+  env: BotEnv,
+  tg: TelegramUser,
+  bindingId: string
+): Promise<string> {
+  const user = await getUserByTelegramId(env, tg.id);
+  if (!user) throw new Error("Пользователь не найден");
+  const sub = await getSubscription(env, user.id);
+
+  await deleteVpnDeviceBinding(env, user.id, bindingId);
+
+  let notice = "Устройство отвязано. Можно подключить другое.";
+  try {
+    const mode = await unbindPanelClientIp(env, user.id, sub?.client_email);
+    if (mode === "queued") {
+      notice = "Устройство отвязано. Сброс IP в панели — до 2 минут.";
+    }
+    await syncPanelDeviceLimit(env, user.id);
+  } catch (error) {
+    console.error("unbindMiniappDevice panel:", error);
+  }
+  return notice;
 }
 
 export async function resetMiniappDevices(env: BotEnv, tg: TelegramUser): Promise<string> {

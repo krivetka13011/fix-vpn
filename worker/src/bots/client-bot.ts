@@ -57,6 +57,12 @@ import {
   type VpnClientId,
 } from "../connect-links";
 import { syncPanelSubIdForUser } from "../panel-sync";
+import {
+  deviceOccupiedMessage,
+  fetchDeviceSlotStatus,
+  isDifferentDeviceAttempt,
+} from "../miniapp-services";
+import { syncPanelDeviceLimit } from "../device-limit";
 
 type TgUpdate = {
   message?: {
@@ -212,6 +218,7 @@ async function recordDeviceConnect(
 ): Promise<void> {
   const label = `${deviceDisplayName(os, vpnClient)}`;
   await upsertVpnDeviceBinding(env, userId, os, vpnClient, label);
+  await syncPanelDeviceLimit(env, userId);
 }
 
 function buildProfileKeyboard(
@@ -650,6 +657,7 @@ async function unbindSingleDevice(
     if (mode === "queued") {
       notice = "<b>Устройство отвязано.</b> Сброс IP в панели — до 2 минут.";
     }
+    await syncPanelDeviceLimit(env, user.id);
   } catch (error) {
     if (error instanceof DeviceResetPendingError) {
       notice = "<b>Устройство отвязано.</b> Сброс IP уже выполняется.";
@@ -939,6 +947,17 @@ export async function handleClientBotUpdate(
       }
 
       const defaultClient = defaultClientForOs(os);
+      const slot = await fetchDeviceSlotStatus(env, user.id, sub);
+      if (isDifferentDeviceAttempt(slot, os)) {
+        await answerCallback(
+          token,
+          cq.id,
+          deviceOccupiedMessage(slot, os),
+          { showAlert: true }
+        );
+        return;
+      }
+
       let redirects: Partial<Record<VpnClientId, string>>;
       try {
         redirects = buildConnectRedirects(env, os, subId);

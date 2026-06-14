@@ -647,6 +647,31 @@ export class XuiApi {
     this.invalidateScan();
   }
 
+  async setClientLimitIp(email: string, limitIp: number): Promise<void> {
+    const response = await this.request(
+      `/panel/api/clients/get/${encodeURIComponent(email)}`
+    );
+    const payload = await this.readJsonBody(response);
+    if (!response.ok || payload.success === false) {
+      throw new Error(String(payload.msg || "getClient failed"));
+    }
+    const obj = payload.obj as { client?: Record<string, unknown> } | undefined;
+    const row = obj?.client;
+    if (!row) throw new Error("getClient empty");
+
+    await this.updateClient({
+      id: String(row.id ?? ""),
+      email: String(row.email ?? email),
+      subId: String(row.subId ?? ""),
+      limitIp,
+      expiryTime: Number(row.expiryTime ?? 0),
+      enable: Boolean(row.enable ?? true),
+      tgId: Number(row.tgId ?? 0),
+      totalGB: Number(row.totalGB ?? 0),
+      flow: String(row.flow ?? ""),
+    });
+  }
+
   async clearClientIps(email: string, options?: { timeoutMs?: number }): Promise<void> {
     const cleared = await this.tryClearClientIps(email, options?.timeoutMs ?? 12_000);
     if (!cleared) {

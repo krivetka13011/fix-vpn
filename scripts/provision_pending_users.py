@@ -13,7 +13,17 @@ import urllib3
 urllib3.disable_warnings()
 
 INBOUND_IDS = [19, 20, 21, 24]
-PROTECTED_EMAILS = {"lv", "max-mobile", "egor-mobile", "max-pc"}
+PROTECTED_EMAILS = {
+    "lv",
+    "max-mobile",
+    "egor-mobile",
+    "max-pc",
+    "iv",
+    "egor-pc",
+    "Ba-mobile",
+    "Ba-pc",
+    "mom-mobile",
+}
 
 
 def dedupe_clients_index(clients):
@@ -109,13 +119,19 @@ def dedupe_panel_clients(sb, session, base, clients, rows):
     return removed
 
 
-def update_panel_client_sub_id(session, base, panel, new_sub_id, tg_id):
+def limit_ip_for_row(row):
+    if str(row.get("plan_type") or "") == "personal":
+        return 0
+    return 1 + int(row.get("extra_devices") or 0)
+
+
+def update_panel_client_sub_id(session, base, panel, new_sub_id, tg_id, limit_ip=1):
     email = str(panel.get("email") or "").strip()
     client = {
         "id": panel.get("uuid"),
         "email": email,
         "subId": new_sub_id,
-        "limitIp": 0,
+        "limitIp": limit_ip,
         "expiryTime": 0,
         "enable": True,
         "tgId": int(tg_id or 0),
@@ -128,10 +144,6 @@ def update_panel_client_sub_id(session, base, panel, new_sub_id, tg_id):
         timeout=30,
     )
     return response.ok or "success" in response.text.lower()
-
-
-def limit_ip_for_row(_row):
-    return 0
 
 
 def ensure_panel_client(session, base, clients, row, worker, sub_links_fn, panel_live_fn):
@@ -150,7 +162,7 @@ def ensure_panel_client(session, base, clients, row, worker, sub_links_fn, panel
             or str(panel.get("subId") or "").strip()
         )
         if target_sub and target_sub != str(panel.get("subId") or ""):
-            if update_panel_client_sub_id(session, base, panel, target_sub, tg_id):
+            if update_panel_client_sub_id(session, base, panel, target_sub, tg_id, limit_ip_for_row(row)):
                 panel["subId"] = target_sub
                 print("repaired stale subId", tg_id, target_sub)
 
@@ -370,7 +382,7 @@ def process_pending_sub_rotations(sb: str, session: requests.Session, base: str,
             "id": (panel or {}).get("uuid") or row.get("xray_uuid"),
             "email": (panel or {}).get("email") or email,
             "subId": new_sub_id,
-            "limitIp": 0,
+            "limitIp": limit_ip_for_row(row),
             "expiryTime": 0,
             "enable": True,
             "tgId": tg_id,
@@ -433,7 +445,7 @@ def sync_client_limits(sb: str, session: requests.Session, base: str, clients: l
         panel = by_email.get(email) or by_tg.get(tg_id)
         if not panel:
             continue
-        limit_ip = 0
+        limit_ip = limit_ip_for_row(row)
         if int(panel.get("limitIp") or -1) == limit_ip:
             continue
         client = {

@@ -42,6 +42,7 @@ import {
   canConnectSubscription,
   fetchMiniappDevices,
   resetMiniappDevices,
+  unbindMiniappDevice,
   resolvePanelSubIdForUser,
   subscriptionPeriodText,
   type MiniappClient,
@@ -196,7 +197,6 @@ export async function handleApiRequest(
     const live = await fetchPanelSubscriptionBody(env, subId);
     if (live?.body) {
       const headers: Record<string, string> = { ...lockedHeaders, ...live.headers };
-      delete headers["hide-settings"];
       const userinfo = subscriptionUserinfoHeader(dbSub.ends_at ?? null);
       if (userinfo) headers["Subscription-Userinfo"] = userinfo;
       const body = encodeStandardSubscriptionBody(live.body);
@@ -588,6 +588,23 @@ export async function handleApiRequest(
       }
       return json(
         { error: e instanceof Error ? e.message : "Reset failed" },
+        400
+      );
+    }
+  }
+
+  if (path === "/api/devices/unbind" && request.method === "POST") {
+    try {
+      const body = (await request.json()) as { bindingId?: string };
+      const bindingId = body.bindingId?.trim();
+      if (!bindingId) return json({ error: "bindingId required" }, 400);
+      const message = await unbindMiniappDevice(env, tgUser, bindingId);
+      const bundle = await ensureUser(env, tgUser);
+      const deviceInfo = await fetchMiniappDevices(env, bundle.user.id);
+      return json({ ok: true, message, devices: deviceInfo });
+    } catch (e) {
+      return json(
+        { error: e instanceof Error ? e.message : "Unbind failed" },
         400
       );
     }

@@ -1,6 +1,6 @@
 import type { UserProfile } from "../types";
 import { formatRuDate } from "../utils/copy";
-import { resetDevices } from "../api/client";
+import { resetDevices, unbindDevice } from "../api/client";
 import { useState } from "react";
 
 interface Props {
@@ -23,6 +23,7 @@ export function ProfileTab({ user, fallbackPhoto, onRefresh }: Props) {
   const photo = user.photoUrl ?? fallbackPhoto;
   const isActive = sub.status === "active";
   const [resetting, setResetting] = useState(false);
+  const [unbindingId, setUnbindingId] = useState<string | null>(null);
   const [hint, setHint] = useState<string | null>(null);
 
   const statusLabel = isActive
@@ -52,6 +53,20 @@ export function ProfileTab({ user, fallbackPhoto, onRefresh }: Props) {
   const devicesUsed = sub.devicesUsed ?? 0;
   const devicesMax = sub.deviceTotal ?? sub.devicesMax ?? 1;
   const devices = sub.devices ?? [];
+
+  async function handleUnbindDevice(bindingId: string) {
+    setUnbindingId(bindingId);
+    setHint(null);
+    try {
+      const result = await unbindDevice(bindingId);
+      setHint(result.message || "Устройство отвязано.");
+      onRefresh();
+    } catch (error) {
+      setHint(error instanceof Error ? error.message : "Не удалось отвязать");
+    } finally {
+      setUnbindingId(null);
+    }
+  }
 
   async function handleResetDevices() {
     setResetting(true);
@@ -168,6 +183,14 @@ export function ProfileTab({ user, fallbackPhoto, onRefresh }: Props) {
                           Последний вход: {formatDateTime(device.lastSeenAt)}
                         </span>
                       </div>
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-pill device-unbind-btn"
+                        disabled={unbindingId === device.id}
+                        onClick={() => handleUnbindDevice(device.id)}
+                      >
+                        {unbindingId === device.id ? "…" : "Отвязать"}
+                      </button>
                     </li>
                   ))}
                 </ul>

@@ -1,0 +1,24 @@
+name: Setup sub.fixvp.xyz Cloudflare
+
+on:
+  workflow_dispatch:
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install requests
+        run: pip install requests
+
+      - name: Configure sub.fixvp.xyz proxy + WAF for Happ
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_FIXVP_ZONE_ID: ${{ secrets.CLOUDFLARE_FIXVP_ZONE_ID }}
+          SUB_ORIGIN_IP: "31.76.2.248"
+        run: python scripts/setup_sub_cloudflare.py

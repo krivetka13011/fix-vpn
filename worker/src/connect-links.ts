@@ -4,6 +4,7 @@ import {
   subscriptionBaseUrl,
   subscriptionClientBaseUrl,
   subscriptionPublicHost,
+  webappPublicUrl,
   workerSubscriptionFetchBase,
 } from "./env";
 import { isPanelErrorBody, panelFetch } from "./panel-fetch";
@@ -36,7 +37,7 @@ const HAPP_CRYPTO_API = "https://crypto.happ.su/api-v2.php";
 const PANEL_EGRESS_IP = "31.76.2.248";
 
 export function workerBaseUrl(env: BotEnv): string {
-  return (env.WEBAPP_URL || "").replace(/\/$/, "");
+  return webappPublicUrl(env);
 }
 
 export function isHappEncryptedLink(link: string): boolean {
@@ -178,6 +179,7 @@ export async function fetchPanelSubscriptionBody(
       if (!subscriptionBodyLooksValid(body)) continue;
       body = rewriteSubscriptionEgressHost(body, egressHost);
       body = filterUnreachableSubscriptionLines(body);
+      body = sanitizeSubscriptionLineRemarks(body);
       const headers: Record<string, string> = {};
       for (const name of [
         "Profile-Title",
@@ -203,6 +205,7 @@ export async function fetchPanelSubscriptionBody(
       if (subscriptionBodyLooksValid(body) && PLAIN_PROTOCOL_RE.test(body)) {
         body = rewriteSubscriptionEgressHost(body, egressHost);
         body = filterUnreachableSubscriptionLines(body);
+        body = sanitizeSubscriptionLineRemarks(body);
         return { body, headers: {} };
       }
     }
@@ -259,6 +262,38 @@ export function filterUnreachableSubscriptionLines(body: string): string {
         if (new RegExp(`:${port}([/?#]|$)`).test(trimmed)) return false;
       }
       return true;
+    })
+    .join("\n");
+}
+
+/** Strip panel test markers (⛔️ N/A-) from Happ server names in URL fragments. */
+export function sanitizeSubscriptionLineRemarks(body: string): string {
+  return body
+    .split(/\r?\n/)
+    .map((line) => {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#") || !PLAIN_PROTOCOL_RE.test(trimmed)) {
+        return line;
+      }
+      const hash = trimmed.indexOf("#");
+      if (hash < 0) return line;
+
+      const prefix = trimmed.slice(0, hash + 1);
+      let fragment = trimmed.slice(hash + 1);
+      try {
+        fragment = decodeURIComponent(fragment);
+      } catch {
+        // keep encoded fragment
+      }
+
+      const cleaned = fragment
+        .replace(/^[\u26D4\uFE0F\u200D\s]+/u, "")
+        .replace(/^N\/A\s*[-–—]?\s*/i, "")
+        .replace(/^\s+/, "")
+        .trim();
+      if (!cleaned) return trimmed.slice(0, hash);
+
+      return `${prefix}${encodeURIComponent(cleaned)}`;
     })
     .join("\n");
 }
@@ -434,7 +469,9 @@ export function applyLockedSubscriptionBody(body: string): string {
 
 /** Subscription body for VPN clients — без #hide-settings (ломает пинг в Happ). */
 export function subscriptionBodyForClients(body: string): string {
-  const normalized = dedupeSubscriptionLines(applyLockedSubscriptionBody(body).trim());
+  const normalized = dedupeSubscriptionLines(
+    sanitizeSubscriptionLineRemarks(applyLockedSubscriptionBody(body).trim())
+  );
   return normalized;
 }
 

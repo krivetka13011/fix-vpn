@@ -5,6 +5,10 @@ account_id = "abd3a9f30b070ba7b27946ecb6b82945"
 workers_dev = true
 
 [[routes]]
+pattern = "app.fixvp.xyz"
+custom_domain = true
+
+[[routes]]
 pattern = "sub.fixvp.xyz"
 custom_domain = true
 

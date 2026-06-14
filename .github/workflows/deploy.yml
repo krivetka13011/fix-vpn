@@ -96,12 +96,11 @@ jobs:
           if [ -z "$PUBLIC_URL" ]; then
             PUBLIC_URL="https://app.fixvp.xyz"
           fi
-          if curl -fsS "$PUBLIC_URL/api/health" 2>/dev/null | grep -q '"ok":true'; then
-            URL="$PUBLIC_URL"
+          URL="$PUBLIC_URL"
+          if curl -fsS "$URL/api/health" 2>/dev/null | grep -q '"ok":true'; then
             echo "Public URL ready: $URL"
           else
-            URL="$WORKERS_URL"
-            echo "::warning::app.fixvp.xyz not ready — WEBAPP_URL stays on workers.dev until zone fixvp.xyz is on Cloudflare"
+            echo "::warning::Public URL health check pending — WEBAPP_URL still $URL (not workers.dev)"
           fi
           echo "url=$URL" >> "$GITHUB_OUTPUT"
           echo "workers_url=$WORKERS_URL" >> "$GITHUB_OUTPUT"

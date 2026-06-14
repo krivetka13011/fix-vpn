@@ -106,9 +106,19 @@ const LEGACY_PANEL_IP = "31.76.2.248";
 const DEFAULT_VPN_HOST = "fixvp.xyz";
 /** Публичный хост подписки — Worker custom domain (HTTPS :443). */
 export const SUBSCRIPTION_PUBLIC_HOST_DEFAULT = "sub.fixvp.xyz";
+export const WEBAPP_PUBLIC_URL_DEFAULT = "https://app.fixvp.xyz";
 
 export function subscriptionPublicHost(env: BotEnv): string {
   return env.VPN_SUBSCRIPTION_HOST?.trim() || SUBSCRIPTION_PUBLIC_HOST_DEFAULT;
+}
+
+/** Public Mini App / redirect base — never workers.dev in user-facing links. */
+export function webappPublicUrl(env: BotEnv): string {
+  const raw = (env.WEBAPP_URL || "").replace(/\/$/, "");
+  if (!raw || /\.workers\.dev$/i.test(raw)) {
+    return WEBAPP_PUBLIC_URL_DEFAULT;
+  }
+  return raw;
 }
 
 export function resolveVpnHost(env: BotEnv): string {

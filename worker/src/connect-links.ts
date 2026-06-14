@@ -3,6 +3,7 @@ import {
   resolveVpnHost,
   subscriptionBaseUrl,
   subscriptionClientBaseUrl,
+  subscriptionPublicHost,
   workerSubscriptionFetchBase,
 } from "./env";
 import { isPanelErrorBody, panelFetch } from "./panel-fetch";
@@ -48,11 +49,15 @@ export function buildPanelSubscriptionUrl(env: BotEnv, subId: string): string {
   return `${base}${path}/${subId}`;
 }
 
-/** Прямой URL панели для VPN-клиентов — IP:2096, как у рабочих подписок конкурентов в Happ. */
+/** Прямой URL подписки для VPN-клиентов — sub.fixvp.xyz:2096 (DNS only, без CF proxy). */
 export function buildClientSubscriptionUrl(env: BotEnv, subId: string): string {
   const trimmed = subId.trim();
   const path = (env.SUBSCRIPTION_PATH || "/sub").replace(/\/$/, "");
-  const host = env.VPN_SUBSCRIPTION_HOST?.trim() || PANEL_EGRESS_IP;
+  const base = subscriptionClientBaseUrl(env);
+  if (base) {
+    return `${base.replace(/\/$/, "")}${path}/${trimmed}`;
+  }
+  const host = subscriptionPublicHost(env);
   return `https://${host}:2096${path}/${trimmed}`;
 }
 

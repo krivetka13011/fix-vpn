@@ -14,7 +14,7 @@ redirect = requests.get(
 match = re.search(r'happ://[^"\']+', redirect.text)
 print("redirect deeplink:", match.group(0) if match else "MISSING")
 if match:
-    print("uses_add", match.group(0).startswith("happ://add/https://31.76.2.248"))
+    print("uses_sub_domain", "sub.fixvp.xyz" in (match.group(0) if match else ""))
     print("uses_install_sub", "install-sub" in match.group(0))
 
 panel = requests.get(

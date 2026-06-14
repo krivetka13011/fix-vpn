@@ -27,6 +27,9 @@ def main():
         if name == "redirect":
             match = re.search(r'happ://[^"\']+', text)
             print("deeplink", match.group(0) if match else "none")
+        if match:
+            print("is_install_sub", "install-sub" in match.group(0))
+            print("has_redirect_url", "api/redirect" in match.group(0))
             continue
         if name.endswith("json"):
             try:

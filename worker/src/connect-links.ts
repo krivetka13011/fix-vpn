@@ -48,9 +48,13 @@ export function buildPanelSubscriptionUrl(env: BotEnv, subId: string): string {
 }
 
 export function buildClientSubscriptionUrl(env: BotEnv, subId: string): string {
-  const base = subscriptionClientBaseUrl(env);
+  const trimmed = subId.trim();
   const path = (env.SUBSCRIPTION_PATH || "/sub").replace(/\/$/, "");
-  return `${base}${path}/${subId}`;
+  const base =
+    subscriptionClientBaseUrl(env) ||
+    subscriptionBaseUrl(env) ||
+    `https://${PANEL_EGRESS_IP}:2096`;
+  return `${base.replace(/\/$/, "")}${path}/${trimmed}`;
 }
 
 function subscriptionBodyLooksValid(body: string): boolean {
@@ -475,9 +479,9 @@ export async function panelSubscriptionIsLive(
   return false;
 }
 
-/** Happ: стандартная 3X-UI подписка /sub/ (base64), как в панели и у конкурентов. */
+/** Happ скачивает подписку с прямого URL панели 3X-UI /sub/, не с HTML-редиректа Worker. */
 export function buildHappSubscriptionUrl(env: BotEnv, subId: string): string {
-  return buildProtectedSubscriptionUrl(env, subId);
+  return buildClientSubscriptionUrl(env, subId);
 }
 
 export function buildPanelSubscriptionUrlForUser(env: BotEnv, subId: string): string {
@@ -538,8 +542,11 @@ export function buildDeepLink(client: VpnClientId, importTarget: string): string
   if (client === "happ") {
     const trimmed = importTarget.trim();
     if (isHappEncryptedLink(trimmed) || /^happ:\/\//i.test(trimmed)) return trimmed;
-    // 3X-UI / Happ: URL после happ://add/ без encodeURIComponent.
-    return `happ://add/${trimmed}`;
+    if (/\/api\/redirect\//i.test(trimmed) || /\/redirect\//i.test(trimmed)) {
+      throw new Error("Happ import must use direct panel /sub/ URL, not redirect HTML");
+    }
+    // Windows Happ: install-sub + encodeURIComponent(прямой URL панели 3X-UI).
+    return `happ://install-sub?url=${encodeURIComponent(trimmed)}`;
   }
   const encoded = encodeURIComponent(importTarget);
   switch (client) {
@@ -587,7 +594,7 @@ export function redirectHtml(client: VpnClientId, importTarget: string): string 
 <body>
   <div class="card">
     <p>Импорт подписки в <b>${label}</b></p>
-    <p class="hint">Подписка защищена: ссылку и настройки серверов нельзя просмотреть или изменить после импорта.</p>
+    <p class="hint">Подписка загружается напрямую с панели 3X-UI (base64). Ссылка на эту HTML-страницу в Happ не передаётся.</p>
     <a class="btn" id="open-app" href="${safeDeep}">Открыть ${label}</a>
   </div>
   <script>

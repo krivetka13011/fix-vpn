@@ -733,6 +733,11 @@ export class XuiApi {
       const globalRecord = this.inboundRowToRecord(primary.row, primary.email, telegramId);
       const globalOk = await this.patchGlobalClientEnabled(globalRecord);
 
+      if (globalOk) {
+        console.error("forceEnableClient:", telegramId, "global ok");
+        return;
+      }
+
       let inboundOk = 0;
       const seenInbound = new Set<number>();
       for (const { inboundId, obj, settings, email } of rows) {
@@ -783,7 +788,10 @@ export class XuiApi {
   async setClientLimitIp(email: string, limitIp: number): Promise<void> {
     const record = await this.fetchClientRecord(email);
     if (!record) throw new Error("getClient failed");
-    await this.updateClient({ ...record, limitIp });
+    if (record.limitIp === limitIp && record.enable) return;
+    await this.updateClient({ ...record, limitIp, enable: true });
+    const tgId = record.tgId || Number(email) || 0;
+    if (tgId) await this.forceEnableClient(tgId, email);
   }
 
   private async fetchClientRecord(email: string): Promise<XuiClientRecord | null> {
@@ -815,7 +823,7 @@ export class XuiApi {
         body: JSON.stringify({
           email: client.email,
           inboundIds: this.inboundIds,
-          client,
+          client: { ...client, enable: true },
         }),
       }
     );
@@ -1137,6 +1145,7 @@ export class XuiApi {
       telegramId: number;
       expiryMs: number;
       totalGb?: number;
+      limitIp?: number;
       dbSubscription?: {
         client_email?: string | null;
         xray_sub_id?: string | null;
@@ -1158,7 +1167,8 @@ export class XuiApi {
       params.expiryMs,
       params.totalGb ?? 0,
       true,
-      prepared.primaryUuid
+      prepared.primaryUuid,
+      params.limitIp
     );
     try {
       await this.updateClient(client);

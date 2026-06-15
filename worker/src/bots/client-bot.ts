@@ -489,6 +489,7 @@ async function activateTrial(env: BotEnv, tg: TelegramUser, chatId: number): Pro
       username: claimed.username ?? tg.username ?? null,
       telegramId: tg.id,
       expiryMs,
+      limitIp: 1,
       dbSubscription: sub,
     });
 

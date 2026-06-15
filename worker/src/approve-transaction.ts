@@ -1,5 +1,6 @@
 import { periodLabel, type BillingMonths } from "./bots/pricing";
 import { clientBotToken, type BotEnv } from "./env";
+import { panelLimitIpForSubscription } from "./device-limit";
 import { sendMessage } from "./bots/telegram-api";
 import { XuiApi } from "./xui";
 import {
@@ -66,6 +67,7 @@ export async function approvePaidTransaction(
     username: user.username,
     telegramId: user.telegram_id,
     expiryMs,
+    limitIp: panelLimitIpForSubscription(sub),
     dbSubscription: sub,
   });
 

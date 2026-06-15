@@ -50,6 +50,18 @@ export function buildPanelSubscriptionUrl(env: BotEnv, subId: string): string {
   return `${base}${path}/${subId}`;
 }
 
+/** Публичный JSON URL подписки — Happ (заблокированные настройки). */
+export function buildClientJsonSubscriptionUrl(env: BotEnv, subId: string): string {
+  const trimmed = subId.trim();
+  const base = subscriptionClientBaseUrl(env);
+  if (base) {
+    const origin = base.replace(/\/$/, "").replace(/\/sub$/i, "");
+    return `${origin}/json/${trimmed}`;
+  }
+  const host = subscriptionPublicHost(env);
+  return `https://${host}/json/${trimmed}`;
+}
+
 /** Публичный URL подписки — Worker custom domain sub.fixvp.xyz (HTTPS :443). */
 export function buildClientSubscriptionUrl(env: BotEnv, subId: string): string {
   const trimmed = subId.trim();
@@ -500,6 +512,31 @@ export function subscriptionUserinfoHeader(
   return `upload=0; download=0; total=0; expire=${expire}`;
 }
 
+export async function panelJsonSubscriptionIsLive(
+  env: BotEnv,
+  subId: string
+): Promise<boolean> {
+  if (!subId.trim()) return false;
+  const json = await fetchPanelJsonSubscription(env, subId);
+  if (json && json.length > 100) {
+    try {
+      const items = JSON.parse(json) as unknown;
+      return Array.isArray(items) && items.length > 0;
+    } catch {
+      // fall through
+    }
+  }
+  const url = buildClientJsonSubscriptionUrl(env, subId);
+  try {
+    const response = await fetch(url);
+    if (!response.ok) return false;
+    const items = (await response.json()) as unknown;
+    return Array.isArray(items) && items.length > 0;
+  } catch {
+    return false;
+  }
+}
+
 export async function panelSubscriptionIsLive(
   env: BotEnv,
   subId: string
@@ -522,9 +559,9 @@ export async function panelSubscriptionIsLive(
   return false;
 }
 
-/** Happ скачивает подписку с прямого URL панели 3X-UI /sub/, не с HTML-редиректа Worker. */
+/** Happ: JSON-подписка с Worker (hide-settings + ping-type в заголовках). */
 export function buildHappSubscriptionUrl(env: BotEnv, subId: string): string {
-  return buildClientSubscriptionUrl(env, subId);
+  return buildClientJsonSubscriptionUrl(env, subId);
 }
 
 export function buildPanelSubscriptionUrlForUser(env: BotEnv, subId: string): string {
@@ -562,9 +599,9 @@ export async function buildClientImportTarget(
   subId: string
 ): Promise<string> {
   if (client === "happ") {
-    const alive = await panelSubscriptionIsLive(env, subId);
+    const alive = await panelJsonSubscriptionIsLive(env, subId);
     if (!alive) {
-      console.error("panelSubscriptionIsLive false for", subId);
+      console.error("panelJsonSubscriptionIsLive false for", subId);
     }
     return buildHappImportTarget(env, subId);
   }
@@ -586,7 +623,7 @@ export function buildDeepLink(client: VpnClientId, importTarget: string): string
     const trimmed = importTarget.trim();
     if (isHappEncryptedLink(trimmed) || /^happ:\/\//i.test(trimmed)) return trimmed;
     if (/\/api\/redirect\//i.test(trimmed) || /\/redirect\//i.test(trimmed)) {
-      throw new Error("Happ import must use direct panel /sub/ URL, not redirect HTML");
+      throw new Error("Happ import must use direct JSON subscription URL, not redirect HTML");
     }
     // 3X-UI / Happ Windows: happ://add/ + прямой URL без encodeURIComponent (как в панели).
     return `happ://add/${trimmed}`;
@@ -640,7 +677,7 @@ export function redirectHtml(client: VpnClientId, importTarget: string): string 
 <body>
   <div class="card">
     <p>Импорт подписки в <b>${label}</b></p>
-    <p class="hint">Подписка скачивается с панели 3X-UI (base64). Если кнопка не сработала — скопируйте ссылку и вставьте в Happ вручную.</p>
+    <p class="hint">Подписка в формате JSON (настройки заблокированы). Если кнопка не сработала — скопируйте ссылку и вставьте в Happ вручную.</p>
     <a class="btn" id="open-app" href="${safeDeep}">Открыть ${label}</a>
     <button class="btn btn-secondary" id="copy-sub" type="button">Скопировать ссылку подписки</button>
     <p class="sub-url" id="sub-url">${safeSub}</p>

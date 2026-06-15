@@ -1,23 +1,26 @@
 import type { BotEnv } from "../env";
 import { partnerBotToken } from "../env";
 import {
-  addPartnerBalance,
   addRequisite,
   clearSession,
   createPartner,
   createPromoRequest,
-  createWithdrawal,
   getDefaultRequisite,
   getPartner,
   getSession,
   listRequisites,
-  patchWithdrawal,
   setDefaultRequisite,
   setSession,
 } from "../repository";
+import {
+  approveWithdrawalWithCardlink,
+  rejectWithdrawal,
+  submitPartnerWithdrawal,
+} from "../partner-withdrawal";
 import type { TelegramUser } from "../telegram";
 import { answerCallback, editMessage, sendMessage } from "./telegram-api";
-import { managerWithdrawKeyboard, notifyManager } from "./manager";
+import { notifyManager } from "./manager";
+import { sbpBankKeyboard, sbpBankLabel } from "../sbp-banks";
 
 type TgUpdate = {
   message?: {
@@ -92,22 +95,24 @@ function statsText(partner: {
 }
 
 function requisitesText(
-  reqs: Array<{ method: string; details: string; is_default: boolean }>
+  reqs: Array<{ method: string; details: string; is_default: boolean; sbp_bank_id?: string | null }>
 ): string {
   if (!reqs.length) {
     return (
       `💳 <b>Мои реквизиты</b>\n\n` +
-      `Пока пусто — добавь СБП или карту, чтобы выводить заработанное 🏧`
+      `Укажи СБП или карту — сюда уйдут выплаты через Cardlink 🏧`
     );
   }
   const lines = reqs
     .map((row) => {
       const icon = row.method === "sbp" ? "📱" : "💳";
       const star = row.is_default ? "⭐ " : "";
-      return `${star}${icon} <b>${row.method.toUpperCase()}</b>: <code>${row.details}</code>`;
+      const bank = row.method === "sbp" ? sbpBankLabel(row.sbp_bank_id) : null;
+      const bankSuffix = bank ? ` (${bank})` : "";
+      return `${star}${icon} <b>${row.method.toUpperCase()}</b>${bankSuffix}: <code>${row.details}</code>`;
     })
     .join("\n");
-  return `💳 <b>Мои реквизиты</b>\n\n${lines}\n\n⭐ — основной способ вывода`;
+  return `💳 <b>Мои реквизиты</b>\n\n${lines}\n\n⭐ — куда уходит вывод через Cardlink`;
 }
 
 function requisitesKeyboard(
@@ -196,18 +201,12 @@ export async function handleManagerPartnerCallback(
 
   if (data.startsWith("mgr:wd:ok:")) {
     const id = data.slice("mgr:wd:ok:".length);
-    await patchWithdrawal(env, id, { status: "approved" });
-    return "Вывод отмечен как выплаченный";
+    return approveWithdrawalWithCardlink(env, id);
   }
   if (data.startsWith("mgr:wd:no:")) {
     const id = data.slice("mgr:wd:no:".length);
-    const { getWithdrawal } = await import("../repository");
-    const wd = await getWithdrawal(env, id);
-    if (wd && wd.status === "pending") {
-      await addPartnerBalance(env, Number(wd.partner_id), Number(wd.amount));
-      await patchWithdrawal(env, id, { status: "rejected" });
-    }
-    return "Вывод отклонен";
+    await rejectWithdrawal(env, id);
+    return "Вывод отклонен, баланс возвращён";
   }
   return null;
 }
@@ -292,18 +291,57 @@ export async function handlePartnerBotUpdate(
 
     if (data.startsWith("p:addreq:")) {
       const method = data.split(":")[2] as "sbp" | "card";
-      await setSession(env, tg.id, "partner", "add_requisite", { method });
-      const label = method === "sbp" ? "СБП (телефон)" : "карту";
-      const warn =
-        method === "card"
-          ? `\n\n⚠️ Банк может взять свою комиссию — мы со своей стороны не дерём.`
-          : "";
+      if (method === "sbp") {
+        await setSession(env, tg.id, "partner", "add_requisite_sbp_phone", {});
+        await editMessage(
+          token,
+          chatId,
+          messageId,
+          `✍️ <b>СБП</b>\n\n` +
+            `Отправь номер телефона, привязанный к СБП — на него уйдёт выплата через Cardlink 📱`,
+          cancelKeyboard("p:reqs")
+        );
+      } else {
+        await setSession(env, tg.id, "partner", "add_requisite", { method });
+        await editMessage(
+          token,
+          chatId,
+          messageId,
+          `✍️ <b>Карта</b>\n\n` +
+            `Отправь номер карты одним сообщением.\n` +
+            `Выплата пойдёт через Cardlink на эту карту 💳\n\n` +
+            `⚠️ Банк может взять свою комиссию — мы со своей стороны не дерём.`,
+          cancelKeyboard("p:reqs")
+        );
+      }
+      await answerCallback(token, cq.id);
+      return;
+    }
+
+    if (data.startsWith("p:sbpbank:")) {
+      const bankId = data.split(":")[2];
+      const session = await getSession(env, tg.id, "partner");
+      const phone = session?.state === "add_requisite_sbp_bank" ? String(session.payload.phone || "") : "";
+      if (!phone) {
+        await answerCallback(token, cq.id, "Сначала укажи телефон СБП");
+        return;
+      }
+      await addRequisite(env, tg.id, "sbp", phone, false, bankId);
+      await clearSession(env, tg.id, "partner");
+      const bank = sbpBankLabel(bankId);
       await editMessage(
         token,
         chatId,
         messageId,
-        `✍️ <b>Добавляем реквизиты</b>\n\nОтправь ${label} одним сообщением:${warn}`,
-        cancelKeyboard("p:reqs")
+        `✅ <b>СБП сохранён</b>\n\n` +
+          `📱 <code>${phone}</code>${bank ? `\n🏦 ${bank}` : ""}\n\n` +
+          `Выплаты на эти реквизиты идут через Cardlink.`,
+        {
+          inline_keyboard: [
+            [{ text: "💳 Мои реквизиты", callback_data: "p:reqs" }],
+            backRow(),
+          ],
+        }
       );
       await answerCallback(token, cq.id);
       return;
@@ -359,8 +397,11 @@ export async function handlePartnerBotUpdate(
         messageId,
         `🏧 <b>Вывод средств</b>\n\n` +
           `💵 Доступно: <b>${partner.balance} ₽</b>\n` +
-          `📤 Куда: <b>${defaultReq.method.toUpperCase()}</b> · <code>${defaultReq.details}</code>\n\n` +
-          `Выводим всё или свою сумму?`,
+          `📤 Куда: <b>${defaultReq.method.toUpperCase()}</b> · <code>${defaultReq.details}</code>\n` +
+          (defaultReq.method === "sbp" && sbpBankLabel(defaultReq.sbp_bank_id)
+            ? `🏦 ${sbpBankLabel(defaultReq.sbp_bank_id)}\n`
+            : "") +
+          `\nВыплата на привязанные реквизиты через Cardlink.\n\nВыводим всё или свою сумму?`,
         {
           inline_keyboard: [
             [{ text: "💸 Вывести всё", callback_data: "p:wdall" }],
@@ -381,27 +422,25 @@ export async function handlePartnerBotUpdate(
       }
       const req = await getDefaultRequisite(env, tg.id);
       if (!req) return;
-      await addPartnerBalance(env, tg.id, -Number(partner.balance));
-      const wd = await createWithdrawal(env, {
-        partner_id: tg.id,
-        amount: partner.balance,
-        method: req.method,
+      const result = await submitPartnerWithdrawal(env, {
+        partnerId: tg.id,
+        amount: Number(partner.balance),
+        method: req.method as "sbp" | "card",
         details: req.details,
-        status: "pending",
+        sbpBankId: req.sbp_bank_id,
+        username: tg.username,
       });
-      await notifyManager(
-        env,
-        `Вывод FIX Partner\nПартнер: @${tg.username || "—"} (${tg.id})\n` +
-          `Сумма: ${partner.balance} ₽\nМетод: ${req.method}\nРеквизиты: ${req.details}`,
-        managerWithdrawKeyboard(wd.id)
-      );
+      const note =
+        result.mode === "cardlink"
+          ? `Отправлено на ваши реквизиты через Cardlink.`
+          : `В очереди — выплата через Cardlink, как только поступят средства.`;
       await editMessage(
         token,
         chatId,
         messageId,
-        `✅ <b>Заявка улетела!</b>\n\n` +
+        `✅ <b>Заявка принята!</b>\n\n` +
           `Сумма: <b>${partner.balance} ₽</b>\n` +
-          `Менеджер обработает — обычно быстро ⚡`,
+          `${note}`,
         partnerMenuKeyboard()
       );
       await answerCallback(token, cq.id);
@@ -483,15 +522,38 @@ export async function handlePartnerBotUpdate(
     return;
   }
 
+  if (session.state === "add_requisite_sbp_phone") {
+    const digits = text.replace(/\D/g, "");
+    if (digits.length < 10) {
+      await sendMessage(
+        token,
+        chatId,
+        `📱 Нужен номер телефона для СБП — например <code>+79001234567</code>`,
+        cancelKeyboard("p:reqs")
+      );
+      return;
+    }
+    await setSession(env, tg.id, "partner", "add_requisite_sbp_bank", { phone: text.trim() });
+    await sendMessage(
+      token,
+      chatId,
+      `🏦 <b>Выбери банк СБП</b>\n\nТелефон: <code>${text.trim()}</code>`,
+      {
+        inline_keyboard: [...sbpBankKeyboard(), ...cancelKeyboard("p:reqs").inline_keyboard],
+      }
+    );
+    return;
+  }
+
   if (session.state === "add_requisite") {
-    const method = session.payload.method as "sbp" | "card";
+    const method = session.payload.method as "card";
     await addRequisite(env, tg.id, method, text, false);
     await clearSession(env, tg.id, "partner");
     await sendMessage(
       token,
       chatId,
-      `✅ <b>Записали!</b>\n\n` +
-        `Реквизиты сохранены — можешь выводить, когда накопится 💳`,
+      `✅ <b>Карта сохранена</b>\n\n` +
+        `Выплаты на эти реквизиты идут через Cardlink 💳`,
       {
         inline_keyboard: [
           [{ text: "💳 Мои реквизиты", callback_data: "p:reqs" }],
@@ -542,27 +604,25 @@ export async function handlePartnerBotUpdate(
       );
       return;
     }
-    await addPartnerBalance(env, tg.id, -amount);
-    const wd = await createWithdrawal(env, {
-      partner_id: tg.id,
+    const result = await submitPartnerWithdrawal(env, {
+      partnerId: tg.id,
       amount,
-      method: req.method,
+      method: req.method as "sbp" | "card",
       details: req.details,
-      status: "pending",
+      sbpBankId: req.sbp_bank_id,
+      username: tg.username,
     });
     await clearSession(env, tg.id, "partner");
-    await notifyManager(
-      env,
-      `Вывод FIX Partner\nПартнер: @${tg.username || "—"} (${tg.id})\n` +
-        `Сумма: ${amount} ₽\nМетод: ${req.method}\nРеквизиты: ${req.details}`,
-      managerWithdrawKeyboard(wd.id)
-    );
+    const note =
+      result.mode === "cardlink"
+        ? `Средства отправлены на ваши реквизиты через Cardlink.`
+        : `В очереди — выплата через Cardlink, как только поступят средства.`;
     await sendMessage(
       token,
       chatId,
-      `✅ <b>Заявка улетела!</b>\n\n` +
+      `✅ <b>Заявка принята!</b>\n\n` +
         `Сумма: <b>${amount} ₽</b>\n` +
-        `Менеджер скоро обработает ⚡`,
+        `${note}`,
       partnerMenuKeyboard()
     );
   }

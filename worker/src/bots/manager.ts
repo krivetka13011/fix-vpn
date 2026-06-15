@@ -28,7 +28,7 @@ export function managerWithdrawKeyboard(withdrawalId: string) {
   return {
     inline_keyboard: [
       [
-        { text: "Выплачено", callback_data: `mgr:wd:ok:${withdrawalId}` },
+        { text: "Выплатить через Cardlink", callback_data: `mgr:wd:ok:${withdrawalId}` },
         { text: "Отклонить", callback_data: `mgr:wd:no:${withdrawalId}` },
       ],
     ],

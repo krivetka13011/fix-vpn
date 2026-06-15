@@ -67,6 +67,7 @@ create table if not exists partner_requisites (
   method text not null check (method in ('sbp', 'card')),
   details text not null,
   is_default boolean not null default false,
+  sbp_bank_id text,
   created_at timestamptz not null default now()
 );
 
@@ -104,8 +105,11 @@ create table if not exists withdrawals (
   amount numeric(12, 2) not null,
   method text not null check (method in ('sbp', 'card')),
   details text not null,
-  status text not null default 'pending' check (status in ('pending', 'approved', 'rejected')),
+  status text not null default 'pending' check (status in ('pending', 'processing', 'approved', 'rejected')),
   manager_note text,
+  cardlink_payout_id text,
+  payout_source text check (payout_source in ('manual', 'cardlink')),
+  sbp_bank_id text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );

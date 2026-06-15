@@ -418,11 +418,11 @@ export async function addPartnerBalance(
 export async function getDefaultRequisite(
   env: SupabaseEnv,
   partnerId: number
-): Promise<{ method: string; details: string } | null> {
-  const rows = await sbJson<Array<{ method: string; details: string }>>(
+): Promise<{ method: string; details: string; sbp_bank_id?: string | null } | null> {
+  const rows = await sbJson<Array<{ method: string; details: string; sbp_bank_id?: string | null }>>(
     await sbRequest(
       env,
-      `partner_requisites?partner_id=eq.${partnerId}&is_default=eq.true&select=method,details&limit=1`
+      `partner_requisites?partner_id=eq.${partnerId}&is_default=eq.true&select=method,details,sbp_bank_id&limit=1`
     )
   );
   return rows[0] ?? null;
@@ -431,11 +431,13 @@ export async function getDefaultRequisite(
 export async function listRequisites(
   env: SupabaseEnv,
   partnerId: number
-): Promise<Array<{ id: string; method: string; details: string; is_default: boolean }>> {
+): Promise<
+  Array<{ id: string; method: string; details: string; is_default: boolean; sbp_bank_id?: string | null }>
+> {
   return sbJson(
     await sbRequest(
       env,
-      `partner_requisites?partner_id=eq.${partnerId}&select=id,method,details,is_default&order=created_at.asc`
+      `partner_requisites?partner_id=eq.${partnerId}&select=id,method,details,is_default,sbp_bank_id&order=created_at.asc`
     )
   );
 }
@@ -445,7 +447,8 @@ export async function addRequisite(
   partnerId: number,
   method: "sbp" | "card",
   details: string,
-  makeDefault: boolean
+  makeDefault: boolean,
+  sbpBankId?: string | null
 ): Promise<void> {
   if (makeDefault) {
     await sbRequest(env, `partner_requisites?partner_id=eq.${partnerId}`, {
@@ -462,6 +465,7 @@ export async function addRequisite(
       partner_id: partnerId,
       method,
       details,
+      sbp_bank_id: method === "sbp" ? sbpBankId ?? null : null,
       is_default: makeDefault || existing.length === 0,
     }),
   });

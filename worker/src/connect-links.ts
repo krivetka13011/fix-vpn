@@ -313,37 +313,36 @@ export function sanitizeSubscriptionLineRemarks(body: string): string {
 
 type JsonRecord = Record<string, unknown>;
 
-function fixJsonInboundForHapp(inbounds: JsonRecord[]): JsonRecord[] {
-  const mixed = inbounds.find((row) => row.protocol === "mixed");
-  const http = inbounds.find((row) => row.protocol === "http");
-  const sniffing = mixed?.sniffing ?? {
-    enabled: true,
-    destOverride: ["http", "tls", "quic"],
-  };
-  const socks: JsonRecord = {
-    listen: "127.0.0.1",
-    port: 10808,
-    protocol: "socks",
-    settings: { auth: "noauth", udp: true, userLevel: 8 },
-    tag: "socks",
-    sniffing,
-  };
-  const next: JsonRecord[] = [socks];
-  if (http) {
-    next.push({
-      ...http,
-      listen: "127.0.0.1",
-      port: http.port ?? 10809,
-    });
-  } else if (mixed) {
-    next.push({
-      ...mixed,
-      listen: "127.0.0.1",
-      port: Number(mixed.port) || 10807,
-      sniffing,
-    });
-  }
-  return next;
+const HAPP_CHECK_URL_VIA_PROXY = "https://cp.cloudflare.com/generate_204";
+
+const HAPP_SUB_META_LINES = [
+  "#hide-settings: 1",
+  "#ping-type: proxy",
+  `#check-url-via-proxy: ${HAPP_CHECK_URL_VIA_PROXY}`,
+  "#subscription-ping-onopen-enabled: 1",
+  "#subscription-autoconnect: 1",
+  "#subscription-autoconnect-type: lowestdelay",
+];
+
+const HAPP_SUB_META_LINE_RE =
+  /^#(?:hide-settings|ping-type|check-url-via-proxy|subscription-ping-onopen-enabled|subscription-autoconnect(?:-type)?|subscription-auto-update)/i;
+
+function stripHappSubscriptionMetaLines(body: string): string {
+  return body
+    .split(/\r?\n/)
+    .filter((line) => {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith("#")) return true;
+      return !HAPP_SUB_META_LINE_RE.test(trimmed);
+    })
+    .join("\n")
+    .trim();
+}
+
+function withHappSubscriptionMetaLines(body: string): string {
+  const plain = stripHappSubscriptionMetaLines(body.trim());
+  if (!plain) return HAPP_SUB_META_LINES.join("\n");
+  return `${HAPP_SUB_META_LINES.join("\n")}\n${plain}`;
 }
 
 function jsonProxyPort(item: JsonRecord): number | null {
@@ -408,18 +407,7 @@ export function normalizeJsonSubscriptionForHapp(
     const item = raw as JsonRecord;
     const port = jsonProxyPort(item);
     if (port && DEAD_OUTBOUND_PORTS.has(port)) continue;
-    const inbounds = Array.isArray(item.inbounds)
-      ? (item.inbounds as JsonRecord[])
-      : [];
-    fixed.push(
-      rewriteJsonOutboundAddresses(
-        {
-          ...item,
-          inbounds: fixJsonInboundForHapp(inbounds),
-        },
-        host
-      )
-    );
+    fixed.push(rewriteJsonOutboundAddresses(item, host));
   }
   return JSON.stringify(fixed);
 }
@@ -463,9 +451,9 @@ export function buildProtectedSubscriptionUrl(env: BotEnv, subId: string): strin
   return `${base}/sub/${encodeURIComponent(subId)}`;
 }
 
-/** Standard 3X-UI /sub format: base64 blob of plain protocol lines. */
+/** Standard 3X-UI /sub format: base64 blob with Happ meta lines + protocol lines. */
 export function encodeStandardSubscriptionBody(body: string): string {
-  const plain = subscriptionBodyForClients(body);
+  const plain = withHappSubscriptionMetaLines(subscriptionBodyForClients(body));
   const bytes = new TextEncoder().encode(plain);
   let binary = "";
   for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
@@ -528,7 +516,10 @@ export function buildSubscriptionResponseHeaders(env: BotEnv): Record<string, st
   return {
     "hide-settings": "1",
     "ping-type": "proxy",
-    "check-url-via-proxy": "https://cp.cloudflare.com/generate_204",
+    "check-url-via-proxy": HAPP_CHECK_URL_VIA_PROXY,
+    "subscription-ping-onopen-enabled": "1",
+    "subscription-autoconnect": "1",
+    "subscription-autoconnect-type": "lowestdelay",
     "Profile-Update-Interval": "1",
     "Profile-Title": "base64:8J+Up0ZJWCBWUE4=",
     "Support-Url": supportTelegramUrl(env),
@@ -731,14 +722,14 @@ export function redirectHappTestHtml(jsonUrl: string, subUrl: string): string {
 <body>
   <div class="card">
     <p>Импорт подписки в <b>Happ</b></p>
-    <p class="hint">Для теста доступны оба формата. Настройки серверов скрыты (hide-settings). Пинг: via proxy.</p>
+    <p class="hint">Для теста доступны оба формата. Настройки скрыты, пинг via proxy, автоподключение к самому быстрому серверу.</p>
 
-    <p class="label">JSON — настройки заблокированы</p>
+    <p class="label">JSON — блокировка настроек через заголовки</p>
     <a class="btn" href="${jsonDeep.replace(/"/g, "&quot;")}">Открыть Happ (JSON)</a>
     <button class="btn btn-secondary" type="button" data-copy="${jsonUrl.replace(/"/g, "&quot;")}">Скопировать JSON-ссылку</button>
     <p class="sub-url">${jsonUrl.replace(/</g, "&lt;")}</p>
 
-    <p class="label">SUB (base64) — обычно пинги работают лучше</p>
+    <p class="label">SUB (base64) — hide-settings и пинг в теле подписки</p>
     <a class="btn btn-sub" href="${subDeep.replace(/"/g, "&quot;")}">Открыть Happ (SUB)</a>
     <button class="btn btn-secondary" type="button" data-copy="${subUrl.replace(/"/g, "&quot;")}">Скопировать SUB-ссылку</button>
     <p class="sub-url">${subUrl.replace(/</g, "&lt;")}</p>

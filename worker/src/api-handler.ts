@@ -201,6 +201,8 @@ export async function handleApiRequest(
         ...live.headers,
         ...buildSubscriptionResponseHeaders(env),
       };
+      // hide-settings всегда последним — не перезаписывать панелью
+      headers["hide-settings"] = "1";
       const userinfo = subscriptionUserinfoHeader(dbSub.ends_at ?? null);
       if (userinfo) headers["Subscription-Userinfo"] = userinfo;
       const body = encodeStandardSubscriptionBody(live.body);
@@ -215,6 +217,7 @@ export async function handleApiRequest(
           ...lockedHeaders,
           ...buildSubscriptionResponseHeaders(env),
         };
+        headers["hide-settings"] = "1";
         const userinfo = subscriptionUserinfoHeader(dbSub.ends_at ?? null);
         if (userinfo) headers["Subscription-Userinfo"] = userinfo;
         return new Response(body, { status: 200, headers });
@@ -273,6 +276,7 @@ export async function handleApiRequest(
         const value = upstreamRes.headers.get(name);
         if (value && !headers[name]) headers[name] = value;
       }
+      headers["hide-settings"] = "1";
       return new Response(body, { status: 200, headers });
     } catch (error) {
       console.error("subscription proxy:", error);

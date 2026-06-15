@@ -59,13 +59,13 @@ export function buildClientJsonSubscriptionUrl(env: BotEnv, subId: string): stri
 
 const SHORT_SUB_ID_RE = /^\/[a-zA-Z0-9]{8,40}$/;
 
-/** sub.fixvp.xyz/{subId} — короткий URL как у конкурентов (отдаёт JSON). */
+/** sub.fixvp.xyz/{subId} — короткий URL как у конкурентов (→ /sub/, base64 vless). */
 export function isShortSubscriptionPath(pathname: string): boolean {
   return SHORT_SUB_ID_RE.test(pathname);
 }
 
-export function shortSubscriptionPathToJson(pathname: string): string {
-  return `/json/${pathname.slice(1)}`;
+export function shortSubscriptionPathToSub(pathname: string): string {
+  return `/sub/${pathname.slice(1)}`;
 }
 
 /** Публичный URL подписки — Worker custom domain sub.fixvp.xyz (HTTPS :443). */
@@ -567,7 +567,7 @@ export function buildSubscriptionResponseHeaders(env: BotEnv): Record<string, st
   };
 }
 
-/** Happ import: JSON subscription (VLESS | JSON in UI, hide-settings via headers). */
+/** Happ import: https://sub.fixvp.xyz/{subId} — тот же формат, что sub.renawave.space/{id}. */
 export function buildHappImportTarget(env: BotEnv, subId: string): string {
   return buildHappDirectSubUrl(env, subId);
 }
@@ -714,7 +714,7 @@ export function redirectHtml(client: VpnClientId, importTarget: string): string 
   const label = clientLabel(client);
   const hint =
     client === "happ"
-      ? "Подписка: happ://add/https://sub.fixvp.xyz/{id} — как у конкурентов. Удалите старую подписку перед импортом."
+      ? "Подписка sub.fixvp.xyz/{id} — как у конкурентов. Удалите старую подписку в Happ перед импортом."
       : "Если кнопка не сработала — скопируйте ссылку и вставьте в клиент вручную.";
 
   return `<!DOCTYPE html>

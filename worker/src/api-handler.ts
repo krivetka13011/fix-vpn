@@ -224,6 +224,9 @@ export async function handleApiRequest(
       };
       // hide-settings всегда последним — не перезаписывать панелью
       headers["hide-settings"] = "1";
+      headers["ping-type"] = "tcp";
+      delete headers["check-url-via-proxy"];
+      headers["Content-Disposition"] = `attachment; filename=${subId}`;
       const userinfo = subscriptionUserinfoHeader(dbSub.ends_at ?? null);
       if (userinfo) headers["Subscription-Userinfo"] = userinfo;
       const body = encodeStandardSubscriptionBody(live.body);
@@ -239,6 +242,9 @@ export async function handleApiRequest(
           ...buildSubscriptionResponseHeaders(env),
         };
         headers["hide-settings"] = "1";
+        headers["ping-type"] = "tcp";
+        delete headers["check-url-via-proxy"];
+        headers["Content-Disposition"] = `attachment; filename=${subId}`;
         const userinfo = subscriptionUserinfoHeader(dbSub.ends_at ?? null);
         if (userinfo) headers["Subscription-Userinfo"] = userinfo;
         return new Response(body, { status: 200, headers });
@@ -298,6 +304,9 @@ export async function handleApiRequest(
         if (value && !headers[name]) headers[name] = value;
       }
       headers["hide-settings"] = "1";
+      headers["ping-type"] = "tcp";
+      delete headers["check-url-via-proxy"];
+      headers["Content-Disposition"] = `attachment; filename=${subId}`;
       return new Response(body, { status: 200, headers });
     } catch (error) {
       console.error("subscription proxy:", error);

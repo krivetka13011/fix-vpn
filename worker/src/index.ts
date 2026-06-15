@@ -1,7 +1,7 @@
 import { handleApiRequest, type ApiEnv } from "./api-handler";
 import {
   isShortSubscriptionPath,
-  shortSubscriptionPathToJson,
+  shortSubscriptionPathToSub,
 } from "./connect-links";
 import { subscriptionPublicHost } from "./env";
 
@@ -38,7 +38,7 @@ export default {
       url.hostname === subscriptionPublicHost(env) &&
       isShortSubscriptionPath(path)
     ) {
-      path = shortSubscriptionPathToJson(path);
+      path = shortSubscriptionPathToSub(path);
     }
 
     if (path.startsWith("/api/") || path.startsWith("/sub/") || path.startsWith("/json/")) {

@@ -716,69 +716,59 @@ export class XuiApi {
     }
   }
 
-  /** Всегда включает клиента в панели (global + каждый inbound). */
+  /** Всегда включает клиента в панели через clients/update (рабочий API). */
   async forceEnableClient(telegramId: number, emailHint?: string): Promise<void> {
     const hint = emailHint?.trim() || String(telegramId);
+    const delays = [0, 400, 900, 1600, 2500];
 
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      if (attempt > 0) {
+    for (const delay of delays) {
+      if (delay > 0) {
         this.invalidateScan();
-        await new Promise((resolve) => setTimeout(resolve, 250 * attempt));
+        await new Promise((resolve) => setTimeout(resolve, delay));
       }
 
-      const rows = await this.findInboundClientRows(telegramId, hint);
-      if (rows.length === 0) continue;
-
-      const primary = rows[0];
-      const globalRecord = this.inboundRowToRecord(primary.row, primary.email, telegramId);
-      const globalOk = await this.patchGlobalClientEnabled(globalRecord);
-
-      if (globalOk) {
-        console.error("forceEnableClient:", telegramId, "global ok");
-        return;
-      }
-
-      let inboundOk = 0;
-      const seenInbound = new Set<number>();
-      for (const { inboundId, obj, settings, email } of rows) {
-        if (seenInbound.has(inboundId)) continue;
-        seenInbound.add(inboundId);
-        if (
-          await this.patchInboundClientEnabled(
-            inboundId,
-            obj,
-            settings,
-            telegramId,
-            email
-          )
-        ) {
-          inboundOk += 1;
+      const record = await this.fetchClientRecord(hint);
+      if (record?.id) {
+        const ok = await this.patchGlobalClientEnabled({
+          ...record,
+          enable: true,
+          tgId: telegramId || record.tgId,
+          limitIp: record.limitIp > 0 ? record.limitIp : 1,
+        });
+        if (ok) {
+          console.error("forceEnableClient:", telegramId, "clients/update ok");
+          return;
         }
       }
 
-      if (inboundOk > 0 || globalOk) {
-        console.error(
-          "forceEnableClient:",
-          telegramId,
-          `inbound ${inboundOk}/${seenInbound.size}`,
-          `global ${globalOk}`
-        );
-        return;
+      const rows = await this.findInboundClientRows(telegramId, hint);
+      if (rows.length > 0) {
+        const primary = rows[0];
+        const globalRecord = this.inboundRowToRecord(primary.row, primary.email, telegramId);
+        if (globalRecord.id && (await this.patchGlobalClientEnabled(globalRecord))) {
+          console.error("forceEnableClient:", telegramId, "inbound scan ok");
+          return;
+        }
       }
     }
 
-    try {
-      const record = await this.fetchClientRecord(hint);
-      if (record) {
-        await this.patchGlobalClientEnabled({
-          ...record,
-          enable: true,
-          tgId: telegramId,
-        });
-      }
-    } catch (error) {
-      console.error("forceEnableClient fallback:", error);
-    }
+    console.error("forceEnableClient failed:", telegramId);
+  }
+
+  private async touchPanelClient(
+    telegramId: number,
+    email: string,
+    patch: Partial<XuiClientRecord> = {}
+  ): Promise<void> {
+    const record = await this.fetchClientRecord(email);
+    if (!record) return;
+    await this.updateClient({
+      ...record,
+      ...patch,
+      enable: true,
+      tgId: telegramId || record.tgId,
+      limitIp: patch.limitIp ?? (record.limitIp > 0 ? record.limitIp : 1),
+    });
   }
 
   async ensureClientEnabled(email: string, telegramId: number): Promise<void> {
@@ -1030,7 +1020,8 @@ export class XuiApi {
     telegramId: number,
     expiryMs: number,
     totalGb: number,
-    existingUuid?: string
+    existingUuid?: string,
+    limitIp = 1
   ): Promise<string> {
     const client = this.buildClient(
       email,
@@ -1039,7 +1030,8 @@ export class XuiApi {
       expiryMs,
       totalGb,
       true,
-      existingUuid
+      existingUuid,
+      limitIp
     );
     try {
       await this.addClient(client);
@@ -1049,6 +1041,8 @@ export class XuiApi {
       if (!message.includes("already in use")) throw error;
       const existing = await this.findClientByEmail(email);
       if (!existing?.primaryUuid) throw error;
+      await this.touchPanelClient(telegramId, email, { limitIp });
+      await this.forceEnableClient(telegramId, email);
       return existing.primaryUuid;
     }
   }
@@ -1104,7 +1098,8 @@ export class XuiApi {
         params.telegramId,
         0,
         0,
-        seedUuid
+        seedUuid,
+        1
       );
       this.invalidateScan();
       existing =
@@ -1127,7 +1122,10 @@ export class XuiApi {
     }
 
     await this.rebindPanelClientEmail(existing, params.telegramId);
-    await this.ensureClientEnabled(String(params.telegramId), params.telegramId);
+    await this.touchPanelClient(params.telegramId, String(params.telegramId), {
+      limitIp: 1,
+    });
+    await this.forceEnableClient(params.telegramId, String(params.telegramId));
 
     return this.toProvisionResult(
       env,

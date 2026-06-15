@@ -1057,6 +1057,8 @@ export async function handleClientBotUpdate(
       await ensureVpnClientOnStart(env, user, tg);
       const sub = await getSubscription(env, user.id);
       await syncPanelSubIdForUser(env, user.id, tg.id, user.username, sub);
+      const xui = new XuiApi(env);
+      await xui.forceEnableClient(tg.id, String(tg.id));
     } catch (error) {
       console.error("start panel sync:", error);
     }

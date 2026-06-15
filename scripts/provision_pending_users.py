@@ -125,6 +125,48 @@ def limit_ip_for_row(row):
     return 1 + int(row.get("extra_devices") or 0)
 
 
+def subscription_expiry_ms(row):
+    ends_at = str(row.get("ends_at") or "").strip()
+    if not ends_at:
+        return 0
+    try:
+        end = datetime.strptime(ends_at, "%Y-%m-%d").replace(
+            hour=23, minute=59, second=59, tzinfo=timezone.utc
+        )
+        return int(end.timestamp() * 1000)
+    except Exception:
+        return 0
+
+
+def panel_client_payload(panel, row, tg_id, *, expiry_ms=None, limit_ip=None):
+    resolved_expiry = expiry_ms
+    if resolved_expiry is None:
+        resolved_expiry = subscription_expiry_ms(row) or int(panel.get("expiryTime") or 0)
+    return {
+        "id": panel.get("uuid") or row.get("xray_uuid"),
+        "email": panel.get("email") or str(tg_id),
+        "subId": panel.get("subId") or row.get("xray_sub_id"),
+        "limitIp": limit_ip if limit_ip is not None else limit_ip_for_row(row),
+        "expiryTime": resolved_expiry,
+        "enable": True,
+        "tgId": int(tg_id or 0),
+        "totalGB": 0,
+        "flow": "",
+    }
+
+
+def update_panel_client(session, base, client):
+    email = str(client.get("email") or "").strip()
+    if not email:
+        return False
+    response = session.post(
+        f"{base}/panel/api/clients/update/{email}",
+        json={"email": email, "inboundIds": INBOUND_IDS, "client": client},
+        timeout=30,
+    )
+    return response.ok or "success" in response.text.lower()
+
+
 def update_panel_client_sub_id(session, base, panel, new_sub_id, tg_id, limit_ip=1):
     email = str(panel.get("email") or "").strip()
     client = {
@@ -167,14 +209,14 @@ def ensure_panel_client(session, base, clients, row, worker, sub_links_fn, panel
                 print("repaired stale subId", tg_id, target_sub)
 
     if panel:
-        force_enable_panel_client(session, base, tg_id, panel.get("email") or str(tg_id))
+        force_enable_panel_client(session, base, tg_id, panel.get("email") or str(tg_id), row)
         return panel
 
     email = str(tg_id)
     sub_id = str(row.get("xray_sub_id") or "").strip() or random_sub_id()
     client_uuid = str(row.get("xray_uuid") or "").strip() or str(uuid.uuid4())
     add_panel_client(session, base, email, sub_id, client_uuid, tg_id, limit_ip_for_row(row))
-    force_enable_panel_client(session, base, tg_id, email)
+    force_enable_panel_client(session, base, tg_id, email, row)
     refreshed = dedupe_clients_index(scan_clients(session, base))
     panel = find_panel_client(refreshed, tg_id, username)
     if not panel:
@@ -312,63 +354,24 @@ def find_inbound_client_rows(session, base, tg_id, email_hint=None):
     return hits
 
 
-def force_enable_panel_client(session, base, tg_id, email_hint=None):
+def force_enable_panel_client(session, base, tg_id, email_hint=None, subscription_row=None):
     tg_id = int(tg_id)
     hits = find_inbound_client_rows(session, base, tg_id, email_hint)
-    enabled_inbound = 0
-    for inbound_id, row, email in hits:
-        client_uuid = str(row.get("id") or "")
-        if not client_uuid:
-            continue
-        patched = dict(row)
-        patched["enable"] = True
-        patched["tgId"] = tg_id
-        response = session.post(
-            f"{base}/panel/api/inbounds/updateClient/{client_uuid}",
-            json={"id": inbound_id, "settings": json.dumps({"clients": [patched]})},
-            timeout=30,
-        )
-        if response.ok or "success" in response.text.lower():
-            enabled_inbound += 1
-        else:
-            print(
-                "inbound enable failed",
-                inbound_id,
-                response.status_code,
-                response.text[:160],
-                file=sys.stderr,
-            )
-
-    if hits:
-        _, row, email = hits[0]
-        client = {
-            "id": row.get("id"),
-            "email": row.get("email") or email,
-            "subId": row.get("subId"),
-            "limitIp": row.get("limitIp", 1),
-            "expiryTime": row.get("expiryTime", 0),
-            "enable": True,
-            "tgId": tg_id,
-            "totalGB": row.get("totalGB", 0),
-            "flow": row.get("flow", ""),
-        }
-        global_response = session.post(
-            f"{base}/panel/api/clients/update/{client['email']}",
-            json={"email": client["email"], "inboundIds": INBOUND_IDS, "client": client},
-            timeout=30,
-        )
-        if not (global_response.ok or "success" in global_response.text.lower()):
-            print(
-                "global enable failed",
-                tg_id,
-                global_response.status_code,
-                global_response.text[:160],
-                file=sys.stderr,
-            )
-
-    if hits:
-        print("force_enable", tg_id, "inbound", enabled_inbound, "/", len(hits))
-    return enabled_inbound > 0 or bool(hits)
+    panel = {
+        "email": hits[0][2] if hits else str(tg_id),
+        "uuid": hits[0][1].get("id") if hits else None,
+        "subId": hits[0][1].get("subId") if hits else None,
+        "expiryTime": hits[0][1].get("expiryTime") if hits else 0,
+        "limitIp": hits[0][1].get("limitIp") if hits else 1,
+    }
+    sub_row = subscription_row or {}
+    client = panel_client_payload(panel, sub_row, tg_id)
+    ok = update_panel_client(session, base, client)
+    if ok:
+        print("force_enable", tg_id, "clients/update ok", "expiry", client["expiryTime"])
+    else:
+        print("force_enable failed", tg_id, file=sys.stderr)
+    return ok
 
 
 def clear_pending_panel_ips(sb: str, session: requests.Session, base: str) -> int:
@@ -527,26 +530,47 @@ def sync_client_limits(sb: str, session: requests.Session, base: str, clients: l
         limit_ip = limit_ip_for_row(row)
         if int(panel.get("limitIp") or -1) == limit_ip:
             continue
-        client = {
-            "id": panel.get("uuid") or row.get("xray_uuid"),
-            "email": panel.get("email") or email,
-            "subId": panel.get("subId") or row.get("xray_sub_id"),
-            "limitIp": limit_ip,
-            "expiryTime": 0,
-            "enable": True,
-            "tgId": int(tg_id or 0),
-            "totalGB": 0,
-            "flow": "",
-        }
-        update_email = panel.get("email") or email
-        response = session.post(
-            f"{base}/panel/api/clients/update/{update_email}",
-            json={"email": update_email, "inboundIds": INBOUND_IDS, "client": client},
-            timeout=30,
+        client = panel_client_payload(
+            panel,
+            row,
+            tg_id,
+            limit_ip=limit_ip,
+            expiry_ms=int(panel.get("expiryTime") or 0) or subscription_expiry_ms(row),
         )
-        if response.ok or "success" in response.text.lower():
+        update_email = panel.get("email") or email
+        if update_panel_client(session, base, {**client, "email": update_email}):
             synced += 1
             print("sync limitIp", update_email, limit_ip)
+    return synced
+
+
+def sync_active_panel_clients(sb: str, session: requests.Session, base: str, clients: list) -> int:
+    rows = requests.get(
+        sb
+        + "subscriptions?status=eq.active&select=user_id,client_email,plan_type,extra_devices,xray_uuid,xray_sub_id,ends_at,users!inner(telegram_id)&client_email=not.is.null",
+        headers={**sb_headers("return=representation"), "Prefer": "return=representation"},
+        timeout=30,
+    ).json()
+    by_email = {str(c.get("email") or ""): c for c in clients}
+    by_tg = {}
+    for c in clients:
+        tg = str(c.get("tgId") or "")
+        if tg:
+            by_tg[tg] = c
+
+    synced = 0
+    for row in rows:
+        email = str(row.get("client_email") or "").strip()
+        tg_id = int((row.get("users") or {}).get("telegram_id") or 0)
+        if not tg_id:
+            continue
+        panel = by_email.get(email) or by_tg.get(str(tg_id))
+        if not panel:
+            continue
+        client = panel_client_payload(panel, row, tg_id)
+        if update_panel_client(session, base, client):
+            synced += 1
+            print("sync active panel", tg_id, "enable expiry", client["expiryTime"])
     return synced
 
 
@@ -561,7 +585,7 @@ def main():
 
     rows = requests.get(
         sb
-        + "subscriptions?select=user_id,xray_sub_id,xray_uuid,plan_type,extra_devices,pending_xray_sub_id,subscription_payload_cache,status,users!inner(telegram_id,username)",
+        + "subscriptions?select=user_id,xray_sub_id,xray_uuid,plan_type,extra_devices,pending_xray_sub_id,subscription_payload_cache,status,ends_at,starts_at,users!inner(telegram_id,username)",
         headers={**sb_headers("return=representation"), "Prefer": "return=representation"},
         timeout=30,
     ).json()
@@ -575,6 +599,7 @@ def main():
         clients = dedupe_clients_index(scan_clients(session, base))
     sub_rotated = process_pending_sub_rotations(sb, session, base, clients, worker)
     limits_synced = sync_client_limits(sb, session, base, clients)
+    active_synced = sync_active_panel_clients(sb, session, base, clients)
 
     if not rows:
         print(
@@ -609,7 +634,7 @@ def main():
         panel = ensure_panel_client(
             session, base, clients, row, worker, sub_links, panel_live
         )
-        force_enable_panel_client(session, base, tg_id, str(tg_id))
+        force_enable_panel_client(session, base, tg_id, str(tg_id), row)
         clients = dedupe_clients_index(scan_clients(session, base))
 
         sub_id = str(panel.get("subId") or "").strip()
@@ -641,7 +666,7 @@ def main():
 
     print(
         f"provisioned {provisioned}/{len(rows)}, flags {flags_cleared}, ip_clears {ip_cleared}, "
-        f"dupes {dupes_removed}, rotations {sub_rotated}, limits {limits_synced}"
+        f"dupes {dupes_removed}, rotations {sub_rotated}, limits {limits_synced}, active {active_synced}"
     )
 
 

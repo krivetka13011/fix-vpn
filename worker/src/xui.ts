@@ -581,10 +581,23 @@ export class XuiApi {
   private async findInboundClientRows(
     telegramId: number,
     emailHint?: string
-  ): Promise<Array<{ inboundId: number; row: Record<string, unknown>; email: string }>> {
+  ): Promise<
+    Array<{
+      inboundId: number;
+      row: Record<string, unknown>;
+      email: string;
+      obj: Record<string, unknown>;
+      settings: { clients?: Array<Record<string, unknown>> };
+    }>
+  > {
     const hint = emailHint?.trim() || String(telegramId);
-    const hits: Array<{ inboundId: number; row: Record<string, unknown>; email: string }> =
-      [];
+    const hits: Array<{
+      inboundId: number;
+      row: Record<string, unknown>;
+      email: string;
+      obj: Record<string, unknown>;
+      settings: { clients?: Array<Record<string, unknown>> };
+    }> = [];
 
     for (const inboundId of this.inboundIds) {
       try {
@@ -606,7 +619,13 @@ export class XuiApi {
           const email = String(row.email || "");
           const tgId = Number(row.tgId) || 0;
           if (tgId === telegramId || email === hint) {
-            hits.push({ inboundId, row, email });
+            hits.push({
+              inboundId,
+              row,
+              email,
+              obj,
+              settings: settings ?? {},
+            });
           }
         }
       } catch (error) {
@@ -637,29 +656,36 @@ export class XuiApi {
 
   private async patchInboundClientEnabled(
     inboundId: number,
-    row: Record<string, unknown>,
-    telegramId: number
+    obj: Record<string, unknown>,
+    settings: { clients?: Array<Record<string, unknown>> },
+    telegramId: number,
+    email: string
   ): Promise<boolean> {
-    const clientUuid = String(row.id || "");
-    if (!clientUuid) return false;
+    const clients = [...(settings.clients ?? [])];
+    let touched = false;
+    for (const row of clients) {
+      const rowEmail = String(row.email || "");
+      const tgId = Number(row.tgId) || 0;
+      if (tgId !== telegramId && rowEmail !== email) continue;
+      row.enable = true;
+      if (!row.tgId) row.tgId = telegramId;
+      touched = true;
+    }
+    if (!touched) return false;
 
-    const patched = {
-      ...row,
-      enable: true,
-      tgId: telegramId || Number(row.tgId) || 0,
+    const updateBody: Record<string, unknown> = {
+      ...obj,
+      settings: JSON.stringify({ ...settings, clients }),
     };
+    for (const key of Object.keys(updateBody)) {
+      if (updateBody[key] === null) delete updateBody[key];
+    }
 
     try {
-      const response = await this.request(
-        `/panel/api/inbounds/updateClient/${clientUuid}`,
-        {
-          method: "POST",
-          body: JSON.stringify({
-            id: inboundId,
-            settings: JSON.stringify({ clients: [patched] }),
-          }),
-        }
-      );
+      const response = await this.request(`/panel/api/inbounds/update/${inboundId}`, {
+        method: "POST",
+        body: JSON.stringify(updateBody),
+      });
       return await this.panelActionSucceeded(response);
     } catch (error) {
       console.error(`patchInboundClientEnabled ${inboundId}:`, error);
@@ -703,22 +729,33 @@ export class XuiApi {
       const rows = await this.findInboundClientRows(telegramId, hint);
       if (rows.length === 0) continue;
 
-      let inboundOk = 0;
-      for (const { inboundId, row } of rows) {
-        if (await this.patchInboundClientEnabled(inboundId, row, telegramId)) {
-          inboundOk += 1;
-        }
-      }
-
       const primary = rows[0];
       const globalRecord = this.inboundRowToRecord(primary.row, primary.email, telegramId);
       const globalOk = await this.patchGlobalClientEnabled(globalRecord);
+
+      let inboundOk = 0;
+      const seenInbound = new Set<number>();
+      for (const { inboundId, obj, settings, email } of rows) {
+        if (seenInbound.has(inboundId)) continue;
+        seenInbound.add(inboundId);
+        if (
+          await this.patchInboundClientEnabled(
+            inboundId,
+            obj,
+            settings,
+            telegramId,
+            email
+          )
+        ) {
+          inboundOk += 1;
+        }
+      }
 
       if (inboundOk > 0 || globalOk) {
         console.error(
           "forceEnableClient:",
           telegramId,
-          `inbound ${inboundOk}/${rows.length}`,
+          `inbound ${inboundOk}/${seenInbound.size}`,
           `global ${globalOk}`
         );
         return;

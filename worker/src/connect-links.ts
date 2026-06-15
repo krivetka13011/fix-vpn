@@ -594,48 +594,82 @@ export async function panelSubscriptionIsLive(
   return false;
 }
 
-export function buildHappTestTargets(
-  env: BotEnv,
-  subId: string
-): { json: string; sub: string } {
-  return {
-    json: buildClientJsonSubscriptionUrl(env, subId),
-    sub: buildClientSubscriptionUrl(env, subId),
-  };
+/** Прямой URL подписки для Happ: https://sub.fixvp.xyz/sub/{subId} (без портов). */
+export function buildHappDirectSubUrl(env: BotEnv, subId: string): string {
+  return buildClientSubscriptionUrl(env, subId);
 }
 
-/** Happ: JSON-подписка с Worker (hide-settings + ping-type в заголовках). */
+/** @deprecated use buildHappDirectSubUrl */
 export function buildHappSubscriptionUrl(env: BotEnv, subId: string): string {
-  return buildClientJsonSubscriptionUrl(env, subId);
+  return buildHappDirectSubUrl(env, subId);
 }
 
 export function buildPanelSubscriptionUrlForUser(env: BotEnv, subId: string): string {
   return buildProtectedSubscriptionUrl(env, subId);
 }
 
-export async function encryptHappLink(subscriptionUrl: string): Promise<string> {
-  const response = await fetch(HAPP_CRYPTO_API, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ url: subscriptionUrl }),
-  });
-  const payload = (await response.json()) as {
-    encrypted_link?: string;
-    error?: string;
-    message?: string;
-  };
-  const encrypted = payload.encrypted_link?.trim();
-  if (!response.ok || !encrypted) {
-    throw new Error(payload.error || payload.message || "Happ encrypt failed");
+const HAPP_CRYPTO_TIMEOUT_MS = 5000;
+
+/**
+ * Шифрует прямой URL подписки через официальное API Happ.
+ * При ошибке возвращает fallback: happ://add/{directSubUrl}.
+ */
+export async function getHappEncryptedLink(directSubUrl: string): Promise<string> {
+  const trimmed = directSubUrl.trim();
+  const fallback = `happ://add/${trimmed}`;
+  if (!trimmed) return fallback;
+
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), HAPP_CRYPTO_TIMEOUT_MS);
+    const response = await fetch(HAPP_CRYPTO_API, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url: trimmed }),
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+
+    if (response.status !== 200) {
+      console.error("getHappEncryptedLink HTTP", response.status, trimmed);
+      return fallback;
+    }
+
+    const raw = (await response.text()).trim();
+    try {
+      const payload = JSON.parse(raw) as {
+        encrypted_link?: string;
+        error?: string;
+        message?: string;
+      };
+      const encrypted = payload.encrypted_link?.trim();
+      if (encrypted && (isHappEncryptedLink(encrypted) || /^happ:\/\//i.test(encrypted))) {
+        return encrypted;
+      }
+      console.error("getHappEncryptedLink empty encrypted_link", payload.error || payload.message);
+    } catch {
+      if (isHappEncryptedLink(raw) || /^happ:\/\//i.test(raw)) return raw;
+      console.error("getHappEncryptedLink unexpected body", raw.slice(0, 120));
+    }
+  } catch (error) {
+    console.error("getHappEncryptedLink:", error);
   }
-  return encrypted;
+
+  return fallback;
 }
 
+/** @deprecated use getHappEncryptedLink */
+export async function encryptHappLink(subscriptionUrl: string): Promise<string> {
+  return getHappEncryptedLink(subscriptionUrl);
+}
+
+/** Итоговая ссылка для импорта в Happ (зашифрованная, hide-settings). */
 export async function buildHappImportTarget(
   env: BotEnv,
   subId: string
 ): Promise<string> {
-  return buildHappSubscriptionUrl(env, subId);
+  const directSubUrl = buildHappDirectSubUrl(env, subId);
+  return getHappEncryptedLink(directSubUrl);
 }
 
 export async function buildClientImportTarget(
@@ -644,10 +678,6 @@ export async function buildClientImportTarget(
   subId: string
 ): Promise<string> {
   if (client === "happ") {
-    const alive = await panelJsonSubscriptionIsLive(env, subId);
-    if (!alive) {
-      console.error("panelJsonSubscriptionIsLive false for", subId);
-    }
     return buildHappImportTarget(env, subId);
   }
   return buildProtectedSubscriptionUrl(env, subId);
@@ -668,7 +698,7 @@ export function buildDeepLink(client: VpnClientId, importTarget: string): string
     const trimmed = importTarget.trim();
     if (isHappEncryptedLink(trimmed) || /^happ:\/\//i.test(trimmed)) return trimmed;
     if (/\/api\/redirect\//i.test(trimmed) || /\/redirect\//i.test(trimmed)) {
-      throw new Error("Happ import must use direct JSON subscription URL, not redirect HTML");
+      throw new Error("Happ import must use direct subscription URL, not redirect HTML");
     }
     // 3X-UI / Happ Windows: happ://add/ + прямой URL без encodeURIComponent (как в панели).
     return `happ://add/${trimmed}`;
@@ -698,66 +728,15 @@ export function defaultClientForOs(os: string): VpnClientId {
   return DEFAULT_CLIENT_BY_OS[os] || "happ";
 }
 
-export function redirectHappTestHtml(jsonUrl: string, subUrl: string): string {
-  const jsonDeep = buildDeepLink("happ", jsonUrl);
-  const subDeep = buildDeepLink("happ", subUrl);
-
-  return `<!DOCTYPE html>
-<html lang="ru">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>FIX VPN · Happ</title>
-  <style>
-    body { font-family: system-ui, sans-serif; background: #0b1220; color: #e8eefc; display: grid; place-items: center; min-height: 100vh; margin: 0; padding: 24px; text-align: center; }
-    .card { max-width: 440px; width: 100%; }
-    .btn { display: block; width: 100%; box-sizing: border-box; margin: 8px 0; padding: 14px 18px; border-radius: 12px; border: 0; font-size: 16px; font-weight: 600; cursor: pointer; text-decoration: none; background: #3d7eff; color: #fff; }
-    .btn-sub { background: #2a9d6a; }
-    .btn-secondary { background: #243352; color: #e8eefc; font-size: 14px; padding: 10px 14px; }
-    .hint { color: #9db0d0; font-size: 14px; line-height: 1.5; }
-    .sub-url { word-break: break-all; font-size: 11px; color: #7f93b8; margin: 8px 0 16px; text-align: left; }
-    .label { font-size: 13px; color: #b8c7e6; margin-top: 14px; margin-bottom: 4px; text-align: left; }
-  </style>
-</head>
-<body>
-  <div class="card">
-    <p>Импорт подписки в <b>Happ</b></p>
-    <p class="hint">Для теста доступны оба формата. Настройки скрыты, пинг via proxy, автоподключение к самому быстрому серверу.</p>
-
-    <p class="label">JSON — блокировка настроек через заголовки</p>
-    <a class="btn" href="${jsonDeep.replace(/"/g, "&quot;")}">Открыть Happ (JSON)</a>
-    <button class="btn btn-secondary" type="button" data-copy="${jsonUrl.replace(/"/g, "&quot;")}">Скопировать JSON-ссылку</button>
-    <p class="sub-url">${jsonUrl.replace(/</g, "&lt;")}</p>
-
-    <p class="label">SUB (base64) — hide-settings и пинг в теле подписки</p>
-    <a class="btn btn-sub" href="${subDeep.replace(/"/g, "&quot;")}">Открыть Happ (SUB)</a>
-    <button class="btn btn-secondary" type="button" data-copy="${subUrl.replace(/"/g, "&quot;")}">Скопировать SUB-ссылку</button>
-    <p class="sub-url">${subUrl.replace(/</g, "&lt;")}</p>
-  </div>
-  <script>
-    document.querySelectorAll("[data-copy]").forEach(function (btn) {
-      btn.addEventListener("click", function () {
-        var text = btn.getAttribute("data-copy") || "";
-        var done = function () { btn.textContent = "Скопировано"; };
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-          navigator.clipboard.writeText(text).then(done).catch(function () {
-            window.prompt("Скопируйте:", text);
-          });
-        } else {
-          window.prompt("Скопируйте:", text);
-        }
-      });
-    });
-  </script>
-</body>
-</html>`;
-}
-
 export function redirectHtml(client: VpnClientId, importTarget: string): string {
   const deepLink = buildDeepLink(client, importTarget);
   const safeDeep = deepLink.replace(/"/g, "&quot;");
   const safeSub = importTarget.replace(/"/g, "&quot;");
   const label = clientLabel(client);
+  const hint =
+    client === "happ"
+      ? "Зашифрованная подписка — настройки серверов заблокированы. Если кнопка не сработала, скопируйте ссылку и вставьте в Happ вручную."
+      : "Если кнопка не сработала — скопируйте ссылку и вставьте в клиент вручную.";
 
   return `<!DOCTYPE html>
 <html lang="ru">
@@ -777,7 +756,7 @@ export function redirectHtml(client: VpnClientId, importTarget: string): string 
 <body>
   <div class="card">
     <p>Импорт подписки в <b>${label}</b></p>
-    <p class="hint">Подписка в формате JSON (настройки заблокированы). Если кнопка не сработала — скопируйте ссылку и вставьте в Happ вручную.</p>
+    <p class="hint">${hint}</p>
     <a class="btn" id="open-app" href="${safeDeep}">Открыть ${label}</a>
     <button class="btn btn-secondary" id="copy-sub" type="button">Скопировать ссылку подписки</button>
     <p class="sub-url" id="sub-url">${safeSub}</p>

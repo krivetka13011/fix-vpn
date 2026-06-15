@@ -50,13 +50,11 @@ import {
 } from "./miniapp-services";
 import {
   buildClientImportTarget,
-  buildHappTestTargets,
   buildSubscriptionResponseHeaders,
   fetchPanelJsonSubscription,
   encodeStandardSubscriptionBody,
   fetchPanelSubscriptionBody,
   normalizeSubscriptionBody,
-  redirectHappTestHtml,
   redirectHtml,
   subscriptionUserinfoHeader,
   type VpnClientId,
@@ -326,17 +324,6 @@ export async function handleApiRequest(
     const params = new URL(request.url).searchParams;
     const sid = params.get("sid")?.trim();
     const legacySub = params.get("sub")?.trim();
-
-    if (client === "happ" && sid) {
-      const targets = buildHappTestTargets(env, sid);
-      return new Response(redirectHappTestHtml(targets.json, targets.sub), {
-        headers: {
-          "Content-Type": "text/html; charset=utf-8",
-          "Cache-Control": "no-store",
-          ...CORS,
-        },
-      });
-    }
 
     let importTarget = legacySub || "";
     if (sid) {

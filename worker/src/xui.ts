@@ -432,6 +432,7 @@ export class XuiApi {
       }
 
       await this.rebindPanelClientEmail(panel, telegramId);
+      await this.ensureClientEnabled(String(telegramId), telegramId);
 
       return {
         email: String(telegramId),
@@ -613,21 +614,61 @@ export class XuiApi {
     this.invalidateScan();
   }
 
+  async setClientLimitIp(email: string, limitIp: number): Promise<void> {
+    const record = await this.fetchClientRecord(email);
+    if (!record) throw new Error("getClient failed");
+    await this.updateClient({ ...record, limitIp });
+  }
+
+  private async fetchClientRecord(email: string): Promise<XuiClientRecord | null> {
+    const response = await this.request(
+      `/panel/api/clients/get/${encodeURIComponent(email)}`
+    );
+    const payload = await this.readJsonBody(response);
+    if (!response.ok || payload.success === false) return null;
+    const row = (payload.obj as { client?: Record<string, unknown> } | undefined)?.client;
+    if (!row) return null;
+    return {
+      id: String(row.id ?? ""),
+      email: String(row.email ?? email),
+      subId: String(row.subId ?? ""),
+      limitIp: Number(row.limitIp ?? this.limitIp),
+      expiryTime: Number(row.expiryTime ?? 0),
+      enable: Boolean(row.enable ?? true),
+      tgId: Number(row.tgId ?? 0),
+      totalGB: Number(row.totalGB ?? 0),
+      flow: String(row.flow ?? ""),
+    };
+  }
+
   async ensureClientEnabled(email: string, telegramId: number): Promise<void> {
-    const found = await this.findClientByEmail(email);
-    if (!found) return;
+    const needle = email.trim();
+    if (!needle) return;
+
+    let globalTouched = false;
+    try {
+      const record = await this.fetchClientRecord(needle);
+      if (record && !record.enable) {
+        await this.updateClient({ ...record, enable: true, tgId: record.tgId || telegramId });
+        globalTouched = true;
+      }
+    } catch (error) {
+      console.error("ensureClientEnabled global:", error);
+    }
 
     const scanned = await this.scanAllClients();
-    const rows = scanned.filter((row) => row.email === email);
-    const needsEnable =
-      !found.enable || rows.length === 0 || rows.some((row) => !row.enable);
-    if (!needsEnable) return;
+    const rows = scanned.filter((row) => row.email === needle);
+    const inboundNeedsEnable = rows.length === 0 || rows.some((row) => !row.enable);
+    if (inboundNeedsEnable) {
+      try {
+        await this.enableClientOnInbounds(needle);
+      } catch (error) {
+        console.error("ensureClientEnabled inbounds:", error);
+      }
+    }
 
-    try {
-      await this.enableClientOnInbounds(email);
-      console.error("ensureClientEnabled: re-enabled", email);
-    } catch (error) {
-      console.error("ensureClientEnabled:", error);
+    if (globalTouched || inboundNeedsEnable) {
+      console.error("ensureClientEnabled: re-enabled", needle);
     }
   }
 
@@ -645,31 +686,6 @@ export class XuiApi {
     );
     await this.parseResponse(response, "updateClient");
     this.invalidateScan();
-  }
-
-  async setClientLimitIp(email: string, limitIp: number): Promise<void> {
-    const response = await this.request(
-      `/panel/api/clients/get/${encodeURIComponent(email)}`
-    );
-    const payload = await this.readJsonBody(response);
-    if (!response.ok || payload.success === false) {
-      throw new Error(String(payload.msg || "getClient failed"));
-    }
-    const obj = payload.obj as { client?: Record<string, unknown> } | undefined;
-    const row = obj?.client;
-    if (!row) throw new Error("getClient empty");
-
-    await this.updateClient({
-      id: String(row.id ?? ""),
-      email: String(row.email ?? email),
-      subId: String(row.subId ?? ""),
-      limitIp,
-      expiryTime: Number(row.expiryTime ?? 0),
-      enable: Boolean(row.enable ?? true),
-      tgId: Number(row.tgId ?? 0),
-      totalGB: Number(row.totalGB ?? 0),
-      flow: String(row.flow ?? ""),
-    });
   }
 
   async clearClientIps(email: string, options?: { timeoutMs?: number }): Promise<void> {
@@ -1000,10 +1016,6 @@ export class XuiApi {
       dbSubscription: params.dbSubscription,
     });
 
-    if (!params.dbSubscription?.client_email) {
-      return prepared;
-    }
-
     const client = this.buildClient(
       prepared.email,
       prepared.subId,
@@ -1016,8 +1028,9 @@ export class XuiApi {
     try {
       await this.updateClient(client);
     } catch (error) {
-      console.error("provisionUser update skipped:", error);
+      console.error("provisionUser update:", error);
     }
+    await this.ensureClientEnabled(prepared.email, params.telegramId);
 
     return this.toProvisionResult(
       env,

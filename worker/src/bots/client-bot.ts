@@ -468,6 +468,16 @@ async function activateTrial(env: BotEnv, tg: TelegramUser, chatId: number): Pro
   try {
     await ensureVpnClientOnStart(env, claimed, tg);
     let sub = await getSubscription(env, claimed.id);
+
+    const xui = new XuiApi(env);
+    await xui.provisionUser(env, {
+      userId: claimed.id,
+      username: claimed.username ?? tg.username ?? null,
+      telegramId: tg.id,
+      expiryMs,
+      dbSubscription: sub,
+    });
+
     let panelSubId = await resolvePanelSubId(env, claimed, tg);
     sub = await getSubscription(env, claimed.id);
 

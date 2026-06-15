@@ -325,11 +325,19 @@ def force_enable_panel_client(session, base, tg_id, email_hint=None):
         patched["tgId"] = tg_id
         response = session.post(
             f"{base}/panel/api/inbounds/updateClient/{client_uuid}",
-            data={"id": str(inbound_id), "settings": json.dumps({"clients": [patched]})},
+            json={"id": inbound_id, "settings": json.dumps({"clients": [patched]})},
             timeout=30,
         )
         if response.ok or "success" in response.text.lower():
             enabled_inbound += 1
+        else:
+            print(
+                "inbound enable failed",
+                inbound_id,
+                response.status_code,
+                response.text[:160],
+                file=sys.stderr,
+            )
 
     if hits:
         _, row, email = hits[0]
@@ -344,11 +352,19 @@ def force_enable_panel_client(session, base, tg_id, email_hint=None):
             "totalGB": row.get("totalGB", 0),
             "flow": row.get("flow", ""),
         }
-        session.post(
+        global_response = session.post(
             f"{base}/panel/api/clients/update/{client['email']}",
             json={"email": client["email"], "inboundIds": INBOUND_IDS, "client": client},
             timeout=30,
         )
+        if not (global_response.ok or "success" in global_response.text.lower()):
+            print(
+                "global enable failed",
+                tg_id,
+                global_response.status_code,
+                global_response.text[:160],
+                file=sys.stderr,
+            )
 
     if hits:
         print("force_enable", tg_id, "inbound", enabled_inbound, "/", len(hits))

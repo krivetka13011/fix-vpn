@@ -648,17 +648,16 @@ export class XuiApi {
       enable: true,
       tgId: telegramId || Number(row.tgId) || 0,
     };
-    const form = new URLSearchParams();
-    form.set("id", String(inboundId));
-    form.set("settings", JSON.stringify({ clients: [patched] }));
 
     try {
       const response = await this.request(
         `/panel/api/inbounds/updateClient/${clientUuid}`,
         {
           method: "POST",
-          headers: { "Content-Type": "application/x-www-form-urlencoded" },
-          body: form.toString(),
+          body: JSON.stringify({
+            id: inboundId,
+            settings: JSON.stringify({ clients: [patched] }),
+          }),
         }
       );
       return await this.panelActionSucceeded(response);

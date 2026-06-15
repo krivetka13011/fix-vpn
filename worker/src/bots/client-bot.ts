@@ -64,7 +64,7 @@ import {
   fetchDeviceSlotStatus,
   isDifferentDeviceAttempt,
 } from "../miniapp-services";
-import { syncPanelDeviceLimit } from "../device-limit";
+import { panelLimitIpForSubscription, subscriptionDeviceLimit, syncPanelDeviceLimit } from "../device-limit";
 
 type TgUpdate = {
   message?: {
@@ -408,6 +408,7 @@ async function ensureVpnClientOnStart(
       userId: user.id,
       username: user.username,
       telegramId: tg.id,
+      limitIp: panelLimitIpForSubscription(sub),
       dbSubscription: sub,
     });
     await persistProvision(env, user.id, provision, {
@@ -631,7 +632,8 @@ async function showProfile(
     }
   }
 
-  const used = bindings.length;
+  const limit = subscriptionDeviceLimit(sub);
+  const used = Math.max(bindings.length, panelIps.length);
   const hasSlot = used > 0 || panelIps.length > 0;
   const status = sub?.status || "none";
   const period = formatSubscriptionPeriod(sub?.starts_at, sub?.ends_at, sub?.plan_label);
@@ -644,16 +646,21 @@ async function showProfile(
         ? "истекла"
         : "нет подписки";
 
-  const deviceLine = hasSlot
-    ? `Устройства: <b>${Math.max(used, panelIps.length)}</b> · привязано`
-    : `Устройство: <b>свободно</b>`;
+  const deviceLine =
+    limit === 0
+      ? `Устройства: <b>${used}</b> · без лимита`
+      : hasSlot
+        ? `Устройства: <b>${Math.min(used, limit)} / ${limit}</b> слотов`
+        : `Устройства: <b>0 / ${limit}</b> · свободно`;
 
   const pendingClear = Boolean(sub?.panel_ip_clear_requested_at);
   const hint = pendingClear
     ? "Сброс IP в панели выполняется (до 2 мин). Затем подключите VPN на новом устройстве."
-    : hasSlot
+    : hasSlot && limit === 1
       ? "Нажмите «Сбросить привязку устройств» для смены телефона (раз в 24 ч)."
-      : "Подключите VPN в главном меню — устройство появится здесь.";
+      : hasSlot
+        ? "Отвяжите ненужное устройство или сбросьте все слоты (раз в 24 ч)."
+        : "Подключите VPN в главном меню — устройство появится здесь.";
 
   const text =
     (notice ? `${notice}\n\n` : "") +
@@ -677,11 +684,31 @@ async function unbindSingleDevice(
   if (!user) return;
   const sub = await getSubscription(env, user.id);
 
+  const bindings = await listVpnDeviceBindings(env, user.id);
+  const bindingToRemove = bindings.find((row) => row.id === bindingId);
+  if (!bindingToRemove) {
+    await showProfile(env, chatId, tg, messageId, "<b>Устройство не найдено.</b>");
+    return;
+  }
+
+  let panelIps: PanelDeviceIp[] = [];
+  if (sub?.client_email) {
+    try {
+      panelIps = await new XuiApi(env).getClientIps(sub.client_email);
+    } catch {
+      // ignore
+    }
+  }
+
   await deleteVpnDeviceBinding(env, user.id, bindingId);
+  const bindingsAfter = bindings.length - 1;
 
   let notice = "<b>Устройство отвязано.</b> Можно подключить другое.";
   try {
-    const mode = await unbindPanelClientIp(env, user.id, sub?.client_email);
+    const mode = await unbindPanelClientIp(env, user.id, sub?.client_email, {
+      bindingsAfterDelete: bindingsAfter,
+      panelIpCount: panelIps.length,
+    });
     if (mode === "queued") {
       notice = "<b>Устройство отвязано.</b> Сброс IP в панели — до 2 минут.";
     }

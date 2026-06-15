@@ -1,13 +1,16 @@
-import type { UserProfile } from "../types";
+import type { Catalog, UserProfile } from "../types";
 import { formatRuDate } from "../utils/copy";
-import { resetDevices, unbindDevice } from "../api/client";
+import { purchaseDevices, resetDevices, unbindDevice } from "../api/client";
 import { useState } from "react";
 
 interface Props {
   user: UserProfile;
+  catalog: Catalog;
   fallbackPhoto?: string;
   onRefresh: () => void;
 }
+
+const MAX_EXTRA_DEVICES = 10;
 
 function formatDateTime(iso: string): string {
   return new Date(iso).toLocaleString("ru-RU", {
@@ -18,12 +21,30 @@ function formatDateTime(iso: string): string {
   });
 }
 
-export function ProfileTab({ user, fallbackPhoto, onRefresh }: Props) {
+function deviceHint(
+  planType: UserProfile["subscription"]["planType"],
+  devicesMax: number,
+  devicesUsed: number
+): string {
+  if (planType === "personal") {
+    return "Тариф Про — без лимита устройств.";
+  }
+  if (devicesMax <= 1) {
+    return "1 устройство одновременно. Смена телефона: «Сбросить привязку» (раз в 24 ч) или докупите слоты.";
+  }
+  if (devicesUsed >= devicesMax) {
+    return `Все ${devicesMax} слотов заняты. Отвяжите ненужное устройство или докупите слоты.`;
+  }
+  return `До ${devicesMax} устройств одновременно. Свободно слотов: ${devicesMax - devicesUsed}.`;
+}
+
+export function ProfileTab({ user, catalog, fallbackPhoto, onRefresh }: Props) {
   const sub = user.subscription;
   const photo = user.photoUrl ?? fallbackPhoto;
   const isActive = sub.status === "active";
   const [resetting, setResetting] = useState(false);
   const [unbindingId, setUnbindingId] = useState<string | null>(null);
+  const [buyingDevices, setBuyingDevices] = useState(false);
   const [hint, setHint] = useState<string | null>(null);
 
   const statusLabel = isActive
@@ -53,6 +74,12 @@ export function ProfileTab({ user, fallbackPhoto, onRefresh }: Props) {
   const devicesUsed = sub.devicesUsed ?? 0;
   const devicesMax = sub.deviceTotal ?? sub.devicesMax ?? 1;
   const devices = sub.devices ?? [];
+  const canBuyMore =
+    isActive &&
+    sub.planType === "basic" &&
+    (sub.extraDevices ?? 0) < MAX_EXTRA_DEVICES;
+  const addonPrice =
+    catalog.extraDevicePricePerMonth * (sub.billingMonths ?? 1);
 
   async function handleUnbindDevice(bindingId: string) {
     setUnbindingId(bindingId);
@@ -73,12 +100,28 @@ export function ProfileTab({ user, fallbackPhoto, onRefresh }: Props) {
     setHint(null);
     try {
       await resetDevices();
-      setHint("Привязка сброшена. Можно подключить новый телефон. Следующий сброс — через 24 часа.");
+      setHint(
+        "Все слоты сброшены. Можно подключить новые устройства. Следующий полный сброс — через 24 часа."
+      );
       onRefresh();
     } catch (error) {
       setHint(error instanceof Error ? error.message : "Не удалось сбросить");
     } finally {
       setResetting(false);
+    }
+  }
+
+  async function handleBuyDevice() {
+    setBuyingDevices(true);
+    setHint(null);
+    try {
+      const result = await purchaseDevices(1);
+      setHint(result.message || "Дополнительный слот добавлен.");
+      onRefresh();
+    } catch (error) {
+      setHint(error instanceof Error ? error.message : "Не удалось докупить");
+    } finally {
+      setBuyingDevices(false);
     }
   }
 
@@ -164,11 +207,9 @@ export function ProfileTab({ user, fallbackPhoto, onRefresh }: Props) {
                   В панели есть активное подключение (по IP)
                 </p>
               )}
-              {sub.planType !== "personal" && (
-                <p className="profile-card-sub">
-                  Одновременно 1 устройство. Чтобы подключить другое — сбросьте привязку (раз в 24 ч).
-                </p>
-              )}
+              <p className="profile-card-sub">
+                {deviceHint(sub.planType, devicesMax, devicesUsed)}
+              </p>
               {devices.length === 0 ? (
                 <p className="profile-card-sub">
                   Подключитесь во вкладке «Помощь» — устройство появится здесь.
@@ -195,6 +236,19 @@ export function ProfileTab({ user, fallbackPhoto, onRefresh }: Props) {
                   ))}
                 </ul>
               )}
+              {canBuyMore && (
+                <button
+                  type="button"
+                  className="btn btn-fill btn-pill"
+                  style={{ marginTop: 10, width: "100%" }}
+                  disabled={buyingDevices}
+                  onClick={handleBuyDevice}
+                >
+                  {buyingDevices
+                    ? "Оформление…"
+                    : `+1 устройство · ${addonPrice} ₽`}
+                </button>
+              )}
               {(devices.length > 0 || devicesUsed > 0 || sub.panelOnline) && (
                 <button
                   type="button"
@@ -202,7 +256,7 @@ export function ProfileTab({ user, fallbackPhoto, onRefresh }: Props) {
                   disabled={resetting}
                   onClick={handleResetDevices}
                 >
-                  {resetting ? "Сброс…" : "Сбросить привязку устройств"}
+                  {resetting ? "Сброс…" : "Сбросить все слоты"}
                 </button>
               )}
             </div>

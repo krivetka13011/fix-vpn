@@ -151,7 +151,12 @@ export default function App() {
           <PlansTab catalog={catalog} onPurchased={load} />
         )}
         {tab === "profile" && (
-          <ProfileTab user={user} fallbackPhoto={tgPhoto} onRefresh={load} />
+          <ProfileTab
+            user={user}
+            catalog={catalog}
+            fallbackPhoto={tgPhoto}
+            onRefresh={load}
+          />
         )}
       </main>
       <TabBar active={tab} onChange={setTab} />

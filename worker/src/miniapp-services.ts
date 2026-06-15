@@ -1,5 +1,6 @@
 import type { BotEnv } from "./env";
 import { TARIFFS } from "./catalog";
+import { bundleToApiUser } from "./db";
 import {
   buildClientButtonUrl,
   buildClientConnectUrl,
@@ -19,6 +20,7 @@ import {
   deleteVpnDeviceBinding,
 } from "./repository";
 import type { TelegramUser } from "./telegram";
+import type { UserBundle } from "./types";
 import { XuiApi } from "./xui";
 import {
   deviceOccupiedMessage,
@@ -252,12 +254,32 @@ export async function unbindMiniappDevice(
   const user = await getUserByTelegramId(env, tg.id);
   if (!user) throw new Error("Пользователь не найден");
   const sub = await getSubscription(env, user.id);
+  const bindings = await listVpnDeviceBindings(env, user.id);
+  if (!bindings.some((row) => row.id === bindingId)) {
+    throw new Error("Устройство не найдено");
+  }
+
+  let panelIpCount = 0;
+  if (sub?.client_email) {
+    try {
+      panelIpCount = (await new XuiApi(env).getClientIps(sub.client_email)).length;
+    } catch {
+      // ignore
+    }
+  }
 
   await deleteVpnDeviceBinding(env, user.id, bindingId);
+  const bindingsAfter = bindings.length - 1;
 
-  let notice = "Устройство отвязано. Можно подключить другое.";
+  let notice =
+    bindingsAfter > 0
+      ? "Устройство отвязано. Остальные подключения не затронуты."
+      : "Устройство отвязано. Можно подключить другое.";
   try {
-    const mode = await unbindPanelClientIp(env, user.id, sub?.client_email);
+    const mode = await unbindPanelClientIp(env, user.id, sub?.client_email, {
+      bindingsAfterDelete: bindingsAfter,
+      panelIpCount,
+    });
     if (mode === "queued") {
       notice = "Устройство отвязано. Сброс IP в панели — до 2 минут.";
     }
@@ -311,4 +333,23 @@ export function deviceTotalForPlan(sub: {
 }): number | null {
   if (sub.plan_type === "personal") return null;
   return (TARIFFS.basic.includedDevices ?? 1) + sub.extra_devices;
+}
+
+export async function buildMiniappUserProfile(env: BotEnv, bundle: UserBundle) {
+  const deviceInfo = await fetchMiniappDevices(env, bundle.user.id);
+  const sub = bundle.subscription;
+  const base = bundleToApiUser(bundle);
+  return {
+    ...base,
+    subscription: {
+      ...base.subscription,
+      isTrial: Boolean(sub.is_trial),
+      canConnect: canConnectSubscription(sub),
+      periodText: subscriptionPeriodText(sub),
+      devicesUsed: deviceInfo.used,
+      devicesMax: deviceInfo.limit,
+      panelOnline: deviceInfo.panelOnline,
+      devices: deviceInfo.devices,
+    },
+  };
 }

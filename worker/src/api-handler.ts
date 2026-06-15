@@ -39,6 +39,7 @@ import { XuiApi } from "./xui";
 import { getSubscriptionBySubId } from "./repository";
 import {
   buildMiniappConnectUrl,
+  buildMiniappUserProfile,
   canConnectSubscription,
   fetchMiniappDevices,
   resetMiniappDevices,
@@ -704,7 +705,7 @@ export async function handleApiRequest(
       return json({
         ok: true,
         message: `Демо-оплата: ${total} ₽ · подписка активирована`,
-        user: bundleToApiUser(bundle),
+        user: await buildMiniappUserProfile(env, bundle),
       });
     } catch (e) {
       return json(
@@ -720,10 +721,12 @@ export async function handleApiRequest(
       const add = body.extraDevices ?? 0;
       if (add < 1) return json({ error: "Invalid device count" }, 400);
       const bundle = await purchaseExtraDevices(env, tgUser, add);
+      const sub = bundle.subscription;
+      const limit = (TARIFFS.basic.includedDevices ?? 1) + sub.extra_devices;
       return json({
         ok: true,
-        message: "Дополнительные устройства добавлены",
-        user: bundleToApiUser(bundle),
+        message: `Добавлено +${add} устройств. Доступно ${limit} слотов одновременно.`,
+        user: await buildMiniappUserProfile(env, bundle),
       });
     } catch (e) {
       return json(

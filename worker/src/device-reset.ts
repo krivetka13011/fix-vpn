@@ -3,10 +3,15 @@ import { isTesterAccount } from "./env";
 import {
   clearVpnDeviceBindings,
   getSubscription,
+  listVpnDeviceBindings,
   patchSubscription,
 } from "./repository";
 import { clearStuckRotationFlags } from "./subscription-rotate";
-import { syncPanelDeviceLimit } from "./device-limit";
+import {
+  shouldSkipPanelIpClearOnUnbind,
+  subscriptionDeviceLimit,
+  syncPanelDeviceLimit,
+} from "./device-limit";
 import { XuiApi } from "./xui";
 
 export const DEVICE_RESET_COOLDOWN_MS = 24 * 60 * 60 * 1000;
@@ -145,12 +150,29 @@ export async function resetPanelDeviceBinding(
 
 export async function unbindPanelClientIp(
   env: BotEnv,
-  _userId: string,
-  clientEmail: string | null | undefined
+  userId: string,
+  clientEmail: string | null | undefined,
+  options?: { bindingsAfterDelete?: number; panelIpCount?: number }
 ): Promise<"cleared" | "queued" | "skipped"> {
   if (!clientEmail?.trim()) return "skipped";
-  const mode = await clearPanelIpsOnly(env, clientEmail);
-  return mode;
+
+  const sub = await getSubscription(env, userId);
+  const limit = subscriptionDeviceLimit(sub);
+  const bindingsAfter =
+    options?.bindingsAfterDelete ??
+    (await listVpnDeviceBindings(env, userId)).length;
+  const panelIpCount = options?.panelIpCount ?? 0;
+
+  if (
+    shouldSkipPanelIpClearOnUnbind(
+      { limit, panelIps: Array.from({ length: panelIpCount }, () => ({ ip: "" })) },
+      bindingsAfter
+    )
+  ) {
+    return "skipped";
+  }
+
+  return clearPanelIpsOnly(env, clientEmail);
 }
 
 export function deviceResetNotice(mode: "cleared" | "queued"): string {

@@ -73,11 +73,25 @@ export function deviceOccupiedMessage(
       ? "\n\nВы подключаете другое устройство — сначала отвяжите текущее."
       : "";
 
+  const slotsWord =
+    status.limit === 1
+      ? "1 устройство"
+      : `${status.limit} устройства`;
   return (
-    `На этом аккаунте уже привязано устройство. Одновременно доступно ${status.limit}.\n\n` +
+    `Все слоты заняты (${slotsWord} одновременно).\n\n` +
     `Сейчас занято:\n${occupied}${replaceNote}\n\n` +
-    `Чтобы заменить: «Мой профиль» → нажмите устройство или «Сбросить все».`
+    `«Профиль» → отвязите ненужное устройство, «Сбросить все» (раз в 24 ч) или докупите слоты.`
   );
+}
+
+/** При нескольких слотах не сбрасывать IP в панели — иначе отключится другое устройство. */
+export function shouldSkipPanelIpClearOnUnbind(
+  status: Pick<DeviceSlotStatus, "limit" | "panelIps">,
+  bindingsAfterDelete: number
+): boolean {
+  if (status.limit <= 1) return false;
+  if (bindingsAfterDelete > 0) return true;
+  return status.panelIps.length > 1;
 }
 
 export async function syncPanelDeviceLimit(

@@ -1,6 +1,6 @@
 import { periodLabel, type BillingMonths } from "./bots/pricing";
 import { clientBotToken, type BotEnv } from "./env";
-import { panelLimitIpForSubscription } from "./device-limit";
+import { panelLimitIpForSubscription, syncPanelDeviceLimit } from "./device-limit";
 import { sendMessage } from "./bots/telegram-api";
 import { XuiApi } from "./xui";
 import {
@@ -102,6 +102,8 @@ export async function approvePaidTransaction(
     subscription_url: subscriptionUrl,
     updated_at: new Date().toISOString(),
   });
+
+  await syncPanelDeviceLimit(env, user.id);
 
   if (txn.is_first_payment && user.ref_by_partner_id) {
     const commissionPct = Number(env.PARTNER_DEFAULT_COMMISSION_PERCENT || "50");

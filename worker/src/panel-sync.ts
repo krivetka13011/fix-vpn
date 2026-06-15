@@ -4,6 +4,7 @@ import {
   fetchPanelSubscriptionBody,
   subscriptionBodyForClients,
 } from "./connect-links";
+import { panelLimitIpForSubscription } from "./device-limit";
 import { patchSubscription } from "./repository";
 import type { DbSubscription } from "./types";
 import { XuiApi } from "./xui";
@@ -47,6 +48,7 @@ export async function syncPanelSubIdForUser(
         userId,
         username,
         telegramId,
+        limitIp: panelLimitIpForSubscription(sub),
         dbSubscription: sub,
       });
       panel = {

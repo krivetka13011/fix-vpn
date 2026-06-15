@@ -6,6 +6,7 @@ import {
   type BillingMonths,
   type PlanType,
 } from "./catalog";
+import { syncPanelDeviceLimit } from "./device-limit";
 import { sbJson, sbRequest, type SupabaseEnv } from "./supabase";
 import type { DbAddon, DbSubscription, DbUser, UserBundle } from "./types";
 import type { TelegramUser } from "./telegram";
@@ -200,6 +201,7 @@ export async function purchaseSubscription(
     });
   }
   const fresh = await getBundle(env, tg.id);
+  await syncPanelDeviceLimit(env, fresh.user.id);
   return fresh!;
 }
 
@@ -214,6 +216,9 @@ export async function purchaseExtraDevices(
     throw new Error("Докупка доступна при активном базовом тарифе");
   }
   const add = Math.max(1, Math.min(10, addDevices));
+  if (sub.extra_devices + add > 10) {
+    throw new Error("Максимум 10 дополнительных устройств (11 слотов всего)");
+  }
   const months = (sub.billing_months ?? 1) as BillingMonths;
   const newExtra = sub.extra_devices + add;
   const price = add * EXTRA_DEVICE_PRICE_PER_MONTH * months;
@@ -237,6 +242,7 @@ export async function purchaseExtraDevices(
     }),
   });
   const fresh = await getBundle(env, tg.id);
+  await syncPanelDeviceLimit(env, fresh.user.id);
   return fresh!;
 }
 

@@ -1128,6 +1128,7 @@ export class XuiApi {
       userId: string;
       username: string | null;
       telegramId: number;
+      limitIp?: number;
       dbSubscription?: {
         client_email?: string | null;
         xray_sub_id?: string | null;
@@ -1135,6 +1136,7 @@ export class XuiApi {
       } | null;
     }
   ): Promise<ProvisionResult> {
+    const limitIp = params.limitIp ?? 1;
     await this.syncPanelWithDb(
       env,
       params.userId,
@@ -1174,7 +1176,7 @@ export class XuiApi {
         0,
         0,
         seedUuid,
-        1
+        limitIp
       );
       this.invalidateScan();
       existing =
@@ -1198,7 +1200,7 @@ export class XuiApi {
 
     await this.rebindPanelClientEmail(existing, params.telegramId);
     await this.touchPanelClient(params.telegramId, String(params.telegramId), {
-      limitIp: 1,
+      limitIp,
     });
     await this.forceEnableClient(params.telegramId, String(params.telegramId));
 
@@ -1230,6 +1232,7 @@ export class XuiApi {
       userId: params.userId,
       username: params.username,
       telegramId: params.telegramId,
+      limitIp: params.limitIp ?? 1,
       dbSubscription: params.dbSubscription,
     });
 

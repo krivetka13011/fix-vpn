@@ -716,7 +716,67 @@ export class XuiApi {
     }
   }
 
-  /** Всегда включает клиента в панели через clients/update (рабочий API). */
+  /** UI toggle reads enable from inbound settings — patch each inbound where client is disabled. */
+  private async syncInboundEnableFlags(
+    telegramId: number,
+    emailHint: string
+  ): Promise<boolean> {
+    const hint = emailHint.trim() || String(telegramId);
+    let anyFixed = false;
+
+    for (const inboundId of this.inboundIds) {
+      try {
+        const response = await this.request(`/panel/api/inbounds/get/${inboundId}`);
+        const payload = await this.readJsonBody(response);
+        if (!response.ok || payload.success === false) continue;
+        const obj = payload.obj as Record<string, unknown> | undefined;
+        if (!obj) continue;
+
+        const settingsRaw = obj.settings;
+        const settings =
+          typeof settingsRaw === "string"
+            ? (JSON.parse(settingsRaw) as {
+                clients?: Array<Record<string, unknown>>;
+              })
+            : ((settingsRaw as { clients?: Array<Record<string, unknown>> }) ?? {});
+
+        let needsPatch = false;
+        for (const row of settings.clients ?? []) {
+          const rowEmail = String(row.email || "");
+          const tgId = Number(row.tgId) || 0;
+          if (tgId !== telegramId && rowEmail !== hint) continue;
+          if (row.enable === true) continue;
+          needsPatch = true;
+          break;
+        }
+        if (!needsPatch) continue;
+
+        const ok = await this.patchInboundClientEnabled(
+          inboundId,
+          obj,
+          settings,
+          telegramId,
+          hint
+        );
+        if (ok) anyFixed = true;
+      } catch (error) {
+        console.error(`syncInboundEnableFlags ${inboundId}:`, error);
+      }
+    }
+
+    return anyFixed;
+  }
+
+  private async inboundClientsEnabled(
+    telegramId: number,
+    emailHint: string
+  ): Promise<boolean> {
+    const rows = await this.findInboundClientRows(telegramId, emailHint);
+    if (rows.length === 0) return false;
+    return rows.every((r) => r.row.enable === true);
+  }
+
+  /** Включает клиента: clients/update + enable:true в каждом inbound (тумблер в UI). */
   async forceEnableClient(telegramId: number, emailHint?: string): Promise<void> {
     const hint = emailHint?.trim() || String(telegramId);
     const delays = [0, 400, 900, 1600, 2500];
@@ -727,26 +787,39 @@ export class XuiApi {
         await new Promise((resolve) => setTimeout(resolve, delay));
       }
 
+      let globalOk = false;
       const record = await this.fetchClientRecord(hint);
       if (record?.id) {
-        const ok = await this.patchGlobalClientEnabled({
+        globalOk = await this.patchGlobalClientEnabled({
           ...record,
           enable: true,
           tgId: telegramId || record.tgId,
           limitIp: record.limitIp > 0 ? record.limitIp : 1,
         });
-        if (ok) {
-          console.error("forceEnableClient:", telegramId, "clients/update ok");
-          return;
+      } else {
+        const rows = await this.findInboundClientRows(telegramId, hint);
+        if (rows.length > 0) {
+          const primary = rows[0];
+          const globalRecord = this.inboundRowToRecord(
+            primary.row,
+            primary.email,
+            telegramId
+          );
+          if (globalRecord.id) {
+            globalOk = await this.patchGlobalClientEnabled(globalRecord);
+          }
         }
       }
 
-      const rows = await this.findInboundClientRows(telegramId, hint);
-      if (rows.length > 0) {
-        const primary = rows[0];
-        const globalRecord = this.inboundRowToRecord(primary.row, primary.email, telegramId);
-        if (globalRecord.id && (await this.patchGlobalClientEnabled(globalRecord))) {
-          console.error("forceEnableClient:", telegramId, "inbound scan ok");
+      const inboundOk = await this.syncInboundEnableFlags(telegramId, hint);
+      if (globalOk || inboundOk) {
+        const enabled = await this.inboundClientsEnabled(telegramId, hint);
+        if (enabled) {
+          console.error(
+            "forceEnableClient:",
+            telegramId,
+            `global=${globalOk} inbound=${inboundOk}`
+          );
           return;
         }
       }
@@ -819,6 +892,8 @@ export class XuiApi {
     );
     await this.parseResponse(response, "updateClient");
     this.invalidateScan();
+    const tgId = client.tgId || Number(client.email) || 0;
+    if (tgId) await this.syncInboundEnableFlags(tgId, client.email);
   }
 
   async clearClientIps(email: string, options?: { timeoutMs?: number }): Promise<void> {

@@ -10,6 +10,9 @@ from datetime import datetime, timezone
 import requests
 import urllib3
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from panel_enable_utils import enable_inbound_clients, force_enable_panel_client
+
 urllib3.disable_warnings()
 
 INBOUND_IDS = [19, 20, 21, 24]
@@ -185,7 +188,10 @@ def update_panel_client_sub_id(session, base, panel, new_sub_id, tg_id, limit_ip
         json={"email": email, "inboundIds": INBOUND_IDS, "client": client},
         timeout=30,
     )
-    return response.ok or "success" in response.text.lower()
+    ok = response.ok or "success" in response.text.lower()
+    if ok:
+        enable_inbound_clients(session, base, int(tg_id), email)
+    return ok
 
 
 def ensure_panel_client(session, base, clients, row, worker, sub_links_fn, panel_live_fn):
@@ -352,26 +358,6 @@ def find_inbound_client_rows(session, base, tg_id, email_hint=None):
             if tg == int(tg_id) or email == hint:
                 hits.append((inbound_id, client, email))
     return hits
-
-
-def force_enable_panel_client(session, base, tg_id, email_hint=None, subscription_row=None):
-    tg_id = int(tg_id)
-    hits = find_inbound_client_rows(session, base, tg_id, email_hint)
-    panel = {
-        "email": hits[0][2] if hits else str(tg_id),
-        "uuid": hits[0][1].get("id") if hits else None,
-        "subId": hits[0][1].get("subId") if hits else None,
-        "expiryTime": hits[0][1].get("expiryTime") if hits else 0,
-        "limitIp": hits[0][1].get("limitIp") if hits else 1,
-    }
-    sub_row = subscription_row or {}
-    client = panel_client_payload(panel, sub_row, tg_id)
-    ok = update_panel_client(session, base, client)
-    if ok:
-        print("force_enable", tg_id, "clients/update ok", "expiry", client["expiryTime"])
-    else:
-        print("force_enable failed", tg_id, file=sys.stderr)
-    return ok
 
 
 def clear_pending_panel_ips(sb: str, session: requests.Session, base: str) -> int:
@@ -569,6 +555,7 @@ def sync_active_panel_clients(sb: str, session: requests.Session, base: str, cli
             continue
         client = panel_client_payload(panel, row, tg_id)
         if update_panel_client(session, base, client):
+            enable_inbound_clients(session, base, tg_id, email)
             synced += 1
             print("sync active panel", tg_id, "enable expiry", client["expiryTime"])
     return synced

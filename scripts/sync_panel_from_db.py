@@ -6,6 +6,9 @@ import uuid
 import requests
 import urllib3
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from panel_enable_utils import force_enable_panel_client
+
 urllib3.disable_warnings()
 
 INBOUND_IDS = [19, 20, 21, 24]
@@ -102,7 +105,7 @@ def main():
     sb_base = os.environ["SUPABASE_URL"].rstrip("/") + "/rest/v1/"
     rows = requests.get(
         sb_base
-        + "subscriptions?select=user_id,client_email,xray_sub_id,xray_uuid,subscription_url,users(telegram_id)&client_email=not.is.null",
+        + "subscriptions?select=user_id,client_email,xray_sub_id,xray_uuid,subscription_url,status,ends_at,plan_type,extra_devices,users(telegram_id)&client_email=not.is.null",
         headers=sb_headers(),
         timeout=30,
     ).json()
@@ -116,6 +119,7 @@ def main():
     webapp = os.environ.get("WEBAPP_URL", "https://app.fixvp.xyz").rstrip("/")
     synced = 0
     cached = 0
+    enabled = 0
 
     for row in rows:
         email = str(row.get("client_email") or "").strip()
@@ -123,6 +127,8 @@ def main():
             continue
         user = row.get("users") or {}
         tg_id = int(user.get("telegram_id") or 0)
+        if not tg_id:
+            continue
         sub_id = str(row.get("xray_sub_id") or "").strip() or ("sub" + uuid.uuid4().hex[:12])
         client_uuid = str(row.get("xray_uuid") or "").strip() or str(uuid.uuid4())
         existing = panel_has_email(session, base, email)
@@ -130,6 +136,10 @@ def main():
             add_panel_client(session, base, email, sub_id, client_uuid, tg_id)
             existing = panel_has_email(session, base, email) or {"subId": sub_id, "uuid": client_uuid}
             synced += 1
+
+        if force_enable_panel_client(session, base, tg_id, email, row):
+            enabled += 1
+
         protected_url = f"{webapp}/api/sub/{existing['subId']}"
         fetch_url = f"{sub_base}{sub_path}/{existing['subId']}"
         payload_cache = None
@@ -154,7 +164,10 @@ def main():
             timeout=30,
         )
 
-    print(f"synced {synced} panel clients, cached {cached} payloads, checked {len(rows)} subscriptions")
+    print(
+        f"synced {synced} panel clients, enabled {enabled}/{len(rows)}, "
+        f"cached {cached} payloads, checked {len(rows)} subscriptions"
+    )
 
 
 if __name__ == "__main__":

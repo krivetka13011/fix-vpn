@@ -35,8 +35,6 @@ const CLIENTS_BY_OS: Record<string, VpnClientId[]> = {
 };
 
 const PANEL_EGRESS_IP = "31.76.2.248";
-const HAPP_CRYPTO_API = "https://crypto.happ.su/api-v2.php";
-const HAPP_CRYPTO_TIMEOUT_MS = 5000;
 
 export function workerBaseUrl(env: BotEnv): string {
   return webappPublicUrl(env);
@@ -529,55 +527,9 @@ export function buildSubscriptionResponseHeaders(env: BotEnv): Record<string, st
   };
 }
 
-/**
- * Шифрует прямой URL https://sub.fixvp.xyz/sub/{id} для Happ.
- * Зашифрованная ссылка принудительно блокирует настройки серверов в клиенте.
- */
-export async function getHappEncryptedLink(directSubUrl: string): Promise<string> {
-  const trimmed = directSubUrl.trim();
-  const fallback = `happ://add/${trimmed}`;
-  if (!trimmed) return fallback;
-
-  try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), HAPP_CRYPTO_TIMEOUT_MS);
-    const response = await fetch(HAPP_CRYPTO_API, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url: trimmed }),
-      signal: controller.signal,
-    });
-    clearTimeout(timer);
-
-    if (response.status !== 200) {
-      console.error("getHappEncryptedLink HTTP", response.status, trimmed);
-      return fallback;
-    }
-
-    const raw = (await response.text()).trim();
-    try {
-      const payload = JSON.parse(raw) as { encrypted_link?: string };
-      const encrypted = payload.encrypted_link?.trim();
-      if (encrypted && (isHappEncryptedLink(encrypted) || /^happ:\/\//i.test(encrypted))) {
-        return encrypted;
-      }
-    } catch {
-      if (isHappEncryptedLink(raw) || /^happ:\/\//i.test(raw)) return raw;
-    }
-  } catch (error) {
-    console.error("getHappEncryptedLink:", error);
-  }
-
-  return fallback;
-}
-
-/** Итоговая ссылка для импорта в Happ: encrypted (hide-settings) или happ://add/ fallback. */
-export async function buildHappImportTarget(
-  env: BotEnv,
-  subId: string
-): Promise<string> {
-  const directSubUrl = buildHappDirectSubUrl(env, subId);
-  return getHappEncryptedLink(directSubUrl);
+/** Итоговая ссылка для импорта в Happ — прямой /sub/ URL. */
+export function buildHappImportTarget(env: BotEnv, subId: string): string {
+  return buildHappDirectSubUrl(env, subId);
 }
 
 /** @deprecated use buildSubscriptionResponseHeaders(env) */
@@ -723,7 +675,7 @@ export function redirectHtml(client: VpnClientId, importTarget: string): string 
   const label = clientLabel(client);
   const hint =
     client === "happ"
-      ? "Настройки серверов заблокированы (hide-settings). Импорт через зашифрованную ссылку Happ. Если кнопка не сработала — скопируйте ссылку и вставьте в Happ вручную."
+      ? "Прямая подписка sub.fixvp.xyz. Настройки скрыты (hide-settings). Если кнопка не сработала — скопируйте ссылку и вставьте в Happ вручную."
       : "Если кнопка не сработала — скопируйте ссылку и вставьте в клиент вручную.";
 
   return `<!DOCTYPE html>

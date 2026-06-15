@@ -57,7 +57,7 @@ export function buildPublicSubscriptionUrl(env: BotEnv, subId: string): string {
   const host = subscriptionPublicHost(env);
   const base = `https://${host}/${trimmed}`;
   const pid = happProviderId(env);
-  return `${base}?providerid=${encodeURIComponent(pid)}`;
+  return pid ? `${base}?providerid=${encodeURIComponent(pid)}` : base;
 }
 
 /** @deprecated use buildPublicSubscriptionUrl */
@@ -343,7 +343,8 @@ function withHappLockedMetaLines(body: string, env: BotEnv): string {
   const plain = stripHappSubscriptionMetaLines(body.trim());
   if (!plain) return "";
   const pid = happProviderId(env);
-  return `#hide-settings: 1\n#providerid ${pid}\n${plain}`;
+  const providerLine = pid ? `#providerid ${pid}\n` : "";
+  return `#hide-settings: 1\n${providerLine}${plain}`;
 }
 
 function stripHappSubscriptionMetaLines(body: string): string {
@@ -567,12 +568,10 @@ export function subscriptionAnnounceHeader(env: BotEnv): string {
   );
 }
 
-/** Happ: hide-settings + providerid (header + body + URL). */
+/** Happ: hide-settings + опциональный providerid (header + body + URL). */
 export function buildSubscriptionResponseHeaders(env: BotEnv): Record<string, string> {
-  const providerId = happProviderId(env);
-  return {
+  const headers: Record<string, string> = {
     "hide-settings": "1",
-    providerid: providerId,
     "ping-type": "tcp",
     "subscription-ping-onopen-enabled": "1",
     "subscription-auto-update-enable": "1",
@@ -582,6 +581,9 @@ export function buildSubscriptionResponseHeaders(env: BotEnv): Record<string, st
     "Profile-Web-Page-Url": TELEGRAM_CHANNEL_URL,
     "Announce": subscriptionAnnounceHeader(env),
   };
+  const providerId = happProviderId(env);
+  if (providerId) headers.providerid = providerId;
+  return headers;
 }
 
 /** HTTPS-цель импорта Happ (внутри happ://add/…). */

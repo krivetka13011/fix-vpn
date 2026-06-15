@@ -11,8 +11,6 @@ import {
   getTransaction,
   claimTrialByTelegramId,
   clearVpnDeviceBindings,
-  deleteVpnDeviceBinding,
-  listVpnDeviceBindings,
   patchSubscription,
   patchTransaction,
   patchUser,
@@ -22,9 +20,8 @@ import {
   saveXuiInboundClients,
   setSession,
   upsertTelegramUser,
-  upsertVpnDeviceBinding,
 } from "../repository";
-import { XuiApi, type PanelDeviceIp } from "../xui";
+import { XuiApi } from "../xui";
 import type { TelegramUser } from "../telegram";
 import {
   answerCallback,
@@ -38,10 +35,8 @@ import { handleManagerPartnerCallback } from "./partner-bot";
 import { clearStuckRotationFlags } from "../subscription-rotate";
 import {
   DeviceResetCooldownError,
-  DeviceResetPendingError,
   deviceResetNotice,
-  resetPanelDeviceBinding,
-  unbindPanelClientIp,
+  resetPanelClient,
 } from "../device-reset";
 import { approvePaidTransaction } from "../approve-transaction";
 import {
@@ -60,11 +55,11 @@ import {
 } from "../connect-links";
 import { syncPanelSubIdForUser } from "../panel-sync";
 import {
-  deviceOccupiedMessage,
-  fetchDeviceSlotStatus,
-  isDifferentDeviceAttempt,
-} from "../miniapp-services";
-import { panelLimitIpForSubscription, subscriptionDeviceLimit, syncPanelDeviceLimit } from "../device-limit";
+  fetchPanelDeviceIps,
+  panelLimitIpForSubscription,
+  subscriptionDeviceLimit,
+  syncPanelDeviceLimit,
+} from "../device-limit";
 
 type TgUpdate = {
   message?: {
@@ -228,43 +223,16 @@ function deviceDisplayName(os: string, vpnClient: string): string {
 
 async function recordDeviceConnect(
   env: BotEnv,
-  userId: string,
-  os: string,
-  vpnClient: VpnClientId
+  userId: string
 ): Promise<void> {
-  const label = `${deviceDisplayName(os, vpnClient)}`;
-  await upsertVpnDeviceBinding(env, userId, os, vpnClient, label);
   await syncPanelDeviceLimit(env, userId);
 }
 
-function buildProfileKeyboard(
-  bindings: Awaited<ReturnType<typeof listVpnDeviceBindings>>,
-  panelIps: PanelDeviceIp[],
-  hasSlot: boolean
-): Record<string, unknown> {
+function buildProfileKeyboard(hasClient: boolean): Record<string, unknown> {
   const rows: Array<Array<{ text: string; callback_data: string }>> = [];
 
-  for (const row of bindings) {
-    rows.push([
-      {
-        text: `✕ ${row.label || deviceDisplayName(row.os, row.vpn_client)}`,
-        callback_data: `c:unbind:${row.id}`,
-      },
-    ]);
-  }
-
-  if (panelIps.length > 0 && bindings.length === 0) {
-    const ip = panelIps[0].ip;
-    rows.push([
-      {
-        text: `✕ Подключение · ${ip}`,
-        callback_data: "c:resetip",
-      },
-    ]);
-  }
-
-  if (hasSlot) {
-    rows.push([{ text: "Сбросить привязку устройств", callback_data: "c:resetip" }]);
+  if (hasClient) {
+    rows.push([{ text: "Сбросить подключение", callback_data: "c:resetip" }]);
   }
 
   rows.push([{ text: "Назад", callback_data: "c:menu" }]);
@@ -616,25 +584,11 @@ async function showProfile(
   if (sub?.panel_sub_rotate_requested_at || sub?.pending_xray_sub_id) {
     await clearStuckRotationFlags(env, user.id);
   }
-  const bindings = await listVpnDeviceBindings(env, user.id);
-  let panelIps: PanelDeviceIp[] = [];
-
-  if (sub?.client_email) {
-    try {
-      panelIps = await Promise.race([
-        new XuiApi(env).getClientIps(sub.client_email),
-        new Promise<PanelDeviceIp[]>((resolve) => {
-          setTimeout(() => resolve([]), 3000);
-        }),
-      ]);
-    } catch (error) {
-      console.error("showProfile panel ips:", error);
-    }
-  }
+  const panelIps = await fetchPanelDeviceIps(env, sub?.client_email);
 
   const limit = subscriptionDeviceLimit(sub);
-  const used = Math.max(bindings.length, panelIps.length);
-  const hasSlot = used > 0 || panelIps.length > 0;
+  const used = panelIps.length;
+  const hasClient = Boolean(sub?.client_email?.trim());
   const status = sub?.status || "none";
   const period = formatSubscriptionPeriod(sub?.starts_at, sub?.ends_at, sub?.plan_label);
   const statusLabel =
@@ -649,79 +603,34 @@ async function showProfile(
   const deviceLine =
     limit === 0
       ? `Устройства: <b>${used}</b> · без лимита`
-      : hasSlot
-        ? `Устройства: <b>${Math.min(used, limit)} / ${limit}</b> слотов`
-        : `Устройства: <b>0 / ${limit}</b> · свободно`;
+      : `Устройства: <b>${Math.min(used, limit)} / ${limit}</b> слотов`;
 
-  const pendingClear = Boolean(sub?.panel_ip_clear_requested_at);
-  const hint = pendingClear
-    ? "Сброс IP в панели выполняется (до 2 мин). Затем подключите VPN на новом устройстве."
-    : hasSlot && limit === 1
-      ? "Нажмите «Сбросить привязку устройств» для смены телефона (раз в 24 ч)."
-      : hasSlot
-        ? "Отвяжите ненужное устройство или сбросьте все слоты (раз в 24 ч)."
-        : "Подключите VPN в главном меню — устройство появится здесь.";
+  const ipLines =
+    panelIps.length > 0
+      ? `\n\nПодключения:\n${panelIps
+          .slice(0, 3)
+          .map((row) => `• ${row.ip}${row.seenAt ? ` (${row.seenAt})` : ""}`)
+          .join("\n")}`
+      : "";
+
+  const hint =
+    limit === 1
+      ? "Смена телефона: «Сбросить подключение» (раз в 24 ч) или докупите слоты в Mini App."
+      : used >= limit && limit > 0
+        ? "Все слоты заняты. Докупите слоты в Mini App или сбросьте подключение (раз в 24 ч)."
+        : hasClient
+          ? "Лимит IP задаётся в панели. Сброс удаляет клиента — при повторном подключении создаётся новый."
+          : "Подключите VPN в главном меню.";
 
   const text =
     (notice ? `${notice}\n\n` : "") +
     `<b>Мой профиль</b>\n\n` +
     `Статус: ${statusLabel}\n` +
     `Период: ${period}\n` +
-    `${deviceLine}\n\n` +
+    `${deviceLine}${ipLines}\n\n` +
     hint;
 
-  await editMessage(token, chatId, messageId, text, buildProfileKeyboard(bindings, panelIps, hasSlot));
-}
-
-async function unbindSingleDevice(
-  env: BotEnv,
-  tg: TelegramUser,
-  chatId: number,
-  messageId: number,
-  bindingId: string
-): Promise<void> {
-  const user = await getUserByTelegramId(env, tg.id);
-  if (!user) return;
-  const sub = await getSubscription(env, user.id);
-
-  const bindings = await listVpnDeviceBindings(env, user.id);
-  const bindingToRemove = bindings.find((row) => row.id === bindingId);
-  if (!bindingToRemove) {
-    await showProfile(env, chatId, tg, messageId, "<b>Устройство не найдено.</b>");
-    return;
-  }
-
-  let panelIps: PanelDeviceIp[] = [];
-  if (sub?.client_email) {
-    try {
-      panelIps = await new XuiApi(env).getClientIps(sub.client_email);
-    } catch {
-      // ignore
-    }
-  }
-
-  await deleteVpnDeviceBinding(env, user.id, bindingId);
-  const bindingsAfter = bindings.length - 1;
-
-  let notice = "<b>Устройство отвязано.</b> Можно подключить другое.";
-  try {
-    const mode = await unbindPanelClientIp(env, user.id, sub?.client_email, {
-      bindingsAfterDelete: bindingsAfter,
-      panelIpCount: panelIps.length,
-    });
-    if (mode === "queued") {
-      notice = "<b>Устройство отвязано.</b> Сброс IP в панели — до 2 минут.";
-    }
-    await syncPanelDeviceLimit(env, user.id);
-  } catch (error) {
-    if (error instanceof DeviceResetPendingError) {
-      notice = "<b>Устройство отвязано.</b> Сброс IP уже выполняется.";
-    } else {
-      console.error("unbindSingleDevice panel ip:", error);
-    }
-  }
-
-  await showProfile(env, chatId, tg, messageId, notice);
+  await editMessage(token, chatId, messageId, text, buildProfileKeyboard(hasClient));
 }
 
 async function resetDeviceBinding(
@@ -733,7 +642,7 @@ async function resetDeviceBinding(
   const user = await getUserByTelegramId(env, tg.id);
   if (!user) return;
 
-  const mode = await resetPanelDeviceBinding(env, user.id, {
+  await resetPanelClient(env, user.id, {
     telegramId: tg.id,
     isTester: user.is_tester,
   });
@@ -743,7 +652,7 @@ async function resetDeviceBinding(
     chatId,
     tg,
     messageId,
-    `<b>${deviceResetNotice(mode)}</b>`
+    `<b>${deviceResetNotice()}</b>`
   );
 }
 
@@ -919,32 +828,22 @@ export async function handleClientBotUpdate(
       await showProfile(env, chatId, tg, messageId);
       return;
     }
-    if (data.startsWith("c:unbind:")) {
-      const bindingId = data.slice("c:unbind:".length).trim();
-      if (!bindingId) {
-        await safeAnswerCallback(token, cq.id, "Устройство не найдено", { showAlert: true });
-        return;
-      }
-      await safeAnswerCallback(token, cq.id, "Отвязываем…");
-      await unbindSingleDevice(env, tg, chatId, messageId, bindingId);
-      return;
-    }
     if (data === "c:resetip") {
       const user = await getUserByTelegramId(env, tg.id);
       if (!user) {
         await safeAnswerCallback(token, cq.id, "Пользователь не найден", { showAlert: true });
         return;
       }
-      await safeAnswerCallback(token, cq.id, "Сбрасываем привязку…");
+      await safeAnswerCallback(token, cq.id, "Сбрасываем подключение…");
       try {
         await resetDeviceBinding(env, tg, chatId, messageId);
       } catch (error) {
-        if (error instanceof DeviceResetCooldownError || error instanceof DeviceResetPendingError) {
+        if (error instanceof DeviceResetCooldownError) {
           await showProfile(env, chatId, tg, messageId, `<b>${error.message}</b>`);
           return;
         }
         const message =
-          error instanceof Error ? error.message : "Не удалось сбросить привязку";
+          error instanceof Error ? error.message : "Не удалось сбросить подключение";
         await showProfile(env, chatId, tg, messageId, `<b>${message}</b>`);
       }
       return;
@@ -1006,17 +905,6 @@ export async function handleClientBotUpdate(
       }
 
       const defaultClient = defaultClientForOs(os);
-      const slot = await fetchDeviceSlotStatus(env, user.id, sub);
-      if (isDifferentDeviceAttempt(slot, os)) {
-        await editMessage(
-          token,
-          chatId,
-          messageId,
-          deviceOccupiedMessage(slot, os),
-          { inline_keyboard: [[{ text: "Назад", callback_data: "c:connect" }]] }
-        );
-        return;
-      }
 
       let redirects: Partial<Record<VpnClientId, string>>;
       try {
@@ -1054,7 +942,7 @@ export async function handleClientBotUpdate(
         await sendMessage(token, chatId, text, markup);
       }
 
-      await recordDeviceConnect(env, user.id, os, defaultClient);
+      await recordDeviceConnect(env, user.id);
       return;
     }
     return;

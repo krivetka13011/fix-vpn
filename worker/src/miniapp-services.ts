@@ -13,39 +13,18 @@ import { syncPanelSubIdForUser } from "./panel-sync";
 import {
   getSubscription,
   getUserByTelegramId,
-  listVpnDeviceBindings,
   patchSubscription,
   upsertTelegramUser,
-  upsertVpnDeviceBinding,
-  deleteVpnDeviceBinding,
 } from "./repository";
 import type { TelegramUser } from "./telegram";
 import type { UserBundle } from "./types";
 import { XuiApi } from "./xui";
 import {
-  deviceOccupiedMessage,
-  isDifferentDeviceAttempt,
+  fetchPanelDeviceIps,
   subscriptionDeviceLimit,
   syncPanelDeviceLimit,
-  type DeviceSlotStatus,
 } from "./device-limit";
-import { DeviceResetCooldownError, DeviceResetPendingError, deviceResetNotice, resetPanelDeviceBinding, unbindPanelClientIp } from "./device-reset";
-
-const OS_LABELS: Record<string, string> = {
-  android: "Android",
-  ios: "iOS",
-  windows: "Windows",
-  macos: "macOS",
-  mac: "macOS",
-};
-
-const CLIENT_LABELS: Record<string, string> = {
-  happ: "Happ",
-  v2rayng: "V2rayNG",
-  v2raytun: "v2rayTun",
-  hiddify: "Hiddify",
-  shadowrocket: "Shadowrocket",
-};
+import { DeviceResetCooldownError, deviceResetNotice, resetPanelClient } from "./device-reset";
 
 export type MiniappPlatform = "android" | "ios" | "windows" | "mac";
 export type MiniappClient = "happ" | "v2raytun" | "hiddify";
@@ -129,38 +108,6 @@ export interface MiniappDeviceRow {
   online: boolean;
 }
 
-export type { DeviceBindingRow, DeviceSlotStatus } from "./device-limit";
-
-export async function fetchDeviceSlotStatus(
-  env: BotEnv,
-  userId: string,
-  sub: Awaited<ReturnType<typeof getSubscription>>
-): Promise<DeviceSlotStatus> {
-  const limit = subscriptionDeviceLimit(sub);
-  const bindings = await listVpnDeviceBindings(env, userId);
-  let panelIps: Awaited<ReturnType<XuiApi["getClientIps"]>> = [];
-
-  if (sub?.client_email) {
-    try {
-      panelIps = await new XuiApi(env).getClientIps(sub.client_email);
-    } catch {
-      // panel unreachable from worker
-    }
-  }
-
-  return {
-    limit,
-    panelIps,
-    bindings: bindings.map((row) => ({
-      os: row.os,
-      vpn_client: row.vpn_client,
-      label: row.label,
-    })),
-  };
-}
-
-export { canRegisterDeviceBinding, deviceOccupiedMessage, isDifferentDeviceAttempt } from "./device-limit";
-
 export async function fetchMiniappDevices(
   env: BotEnv,
   userId: string
@@ -171,9 +118,8 @@ export async function fetchMiniappDevices(
   devices: MiniappDeviceRow[];
 }> {
   const sub = await getSubscription(env, userId);
-  const bindings = await listVpnDeviceBindings(env, userId);
   const limit = subscriptionDeviceLimit(sub);
-  const slot = await fetchDeviceSlotStatus(env, userId, sub);
+  const panelIps = await fetchPanelDeviceIps(env, sub?.client_email);
   let panelOnline = false;
 
   if (sub?.client_email) {
@@ -186,20 +132,19 @@ export async function fetchMiniappDevices(
     }
   }
 
-  const devices: MiniappDeviceRow[] = bindings.map((row) => ({
-    id: row.id,
-    label: row.label,
-    os: row.os,
-    client: row.vpn_client,
-    lastSeenAt: row.last_seen_at,
-    online: false,
+  const devices: MiniappDeviceRow[] = panelIps.map((row) => ({
+    id: row.ip,
+    label: row.seenAt ? `IP ${row.ip} (${row.seenAt})` : `IP ${row.ip}`,
+    os: "",
+    client: "",
+    lastSeenAt: row.seenAt || new Date().toISOString(),
+    online: panelOnline,
   }));
 
+  const used = limit === 0 ? panelIps.length : Math.min(limit, panelIps.length);
+
   return {
-    used:
-      limit === 0
-        ? bindings.length
-        : Math.min(limit, Math.max(bindings.length, slot.panelIps.length)),
+    used,
     limit,
     panelOnline,
     devices,
@@ -222,16 +167,9 @@ export async function buildMiniappConnectUrl(
     throw new Error("Подписка ещё синхронизируется. Повторите через минуту.");
   }
 
-  const mappedOs = mapPlatform(platform);
   const mappedClient = mapClient(client);
   const user = await getUserByTelegramId(env, tg.id);
   if (user) {
-    const slot = await fetchDeviceSlotStatus(env, user.id, sub);
-    if (isDifferentDeviceAttempt(slot, mappedOs)) {
-      throw new Error(deviceOccupiedMessage(slot, mappedOs));
-    }
-    const label = `${OS_LABELS[mappedOs] || mappedOs} · ${CLIENT_LABELS[client] || client}`;
-    await upsertVpnDeviceBinding(env, user.id, mappedOs, mappedClient, label);
     await syncPanelDeviceLimit(env, user.id);
   }
 
@@ -246,65 +184,14 @@ export async function buildMiniappConnectUrl(
   };
 }
 
-export async function unbindMiniappDevice(
-  env: BotEnv,
-  tg: TelegramUser,
-  bindingId: string
-): Promise<string> {
-  const user = await getUserByTelegramId(env, tg.id);
-  if (!user) throw new Error("Пользователь не найден");
-  const sub = await getSubscription(env, user.id);
-  const bindings = await listVpnDeviceBindings(env, user.id);
-  if (!bindings.some((row) => row.id === bindingId)) {
-    throw new Error("Устройство не найдено");
-  }
-
-  let panelIpCount = 0;
-  if (sub?.client_email) {
-    try {
-      panelIpCount = (await new XuiApi(env).getClientIps(sub.client_email)).length;
-    } catch {
-      // ignore
-    }
-  }
-
-  await deleteVpnDeviceBinding(env, user.id, bindingId);
-  const bindingsAfter = bindings.length - 1;
-
-  let notice =
-    bindingsAfter > 0
-      ? "Устройство отвязано. Остальные подключения не затронуты."
-      : "Устройство отвязано. Можно подключить другое.";
-  try {
-    const mode = await unbindPanelClientIp(env, user.id, sub?.client_email, {
-      bindingsAfterDelete: bindingsAfter,
-      panelIpCount,
-    });
-    if (mode === "queued") {
-      notice = "Устройство отвязано. Сброс IP в панели — до 2 минут.";
-    }
-    await syncPanelDeviceLimit(env, user.id);
-  } catch (error) {
-    console.error("unbindMiniappDevice panel:", error);
-  }
-  return notice;
-}
-
 export async function resetMiniappDevices(env: BotEnv, tg: TelegramUser): Promise<string> {
   const user = await getUserByTelegramId(env, tg.id);
   if (!user) throw new Error("Пользователь не найден");
-  try {
-    const mode = await resetPanelDeviceBinding(env, user.id, {
-      telegramId: tg.id,
-      isTester: user.is_tester,
-    });
-    return deviceResetNotice(mode);
-  } catch (error) {
-    if (error instanceof DeviceResetCooldownError || error instanceof DeviceResetPendingError) {
-      throw error;
-    }
-    throw error instanceof Error ? error : new Error("Не удалось сбросить привязку");
-  }
+  await resetPanelClient(env, user.id, {
+    telegramId: tg.id,
+    isTester: user.is_tester,
+  });
+  return deviceResetNotice();
 }
 
 export function subscriptionPeriodText(sub: {

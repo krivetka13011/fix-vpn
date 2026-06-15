@@ -41,7 +41,7 @@ export default {
       path = shortSubscriptionPathToSub(path);
     }
 
-    if (path.startsWith("/api/") || path.startsWith("/sub/") || path.startsWith("/json/")) {
+    if (path === "/health" || path.startsWith("/api/") || path.startsWith("/sub/") || path.startsWith("/json/")) {
       return handleApiRequest(request, env, path, ctx);
     }
 

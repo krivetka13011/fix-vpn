@@ -67,15 +67,6 @@ export function resetDevices(): Promise<{ ok: boolean; message?: string }> {
   return api("/api/devices/reset", { method: "POST", body: "{}" });
 }
 
-export function unbindDevice(
-  bindingId: string
-): Promise<{ ok: boolean; message?: string }> {
-  return api("/api/devices/unbind", {
-    method: "POST",
-    body: JSON.stringify({ bindingId }),
-  });
-}
-
 export function purchaseDevices(extraDevices: number): Promise<{
   ok: boolean;
   message: string;

@@ -216,6 +216,16 @@ export async function resetTesterSubscriptionState(
   });
 }
 
+export async function clearXuiInboundClients(
+  env: SupabaseEnv,
+  userId: string
+): Promise<void> {
+  await sbRequest(env, `xui_client_inbounds?user_id=eq.${userId}`, {
+    method: "DELETE",
+    headers: { Prefer: "return=minimal" },
+  });
+}
+
 export async function clearVpnUserData(
   env: SupabaseEnv,
   userId: string

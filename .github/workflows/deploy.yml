@@ -154,7 +154,7 @@ jobs:
           put_secret CLIENT_BOT_USERNAME "FIXVPNfast_bot"
           put_secret PARTNER_BOT_USERNAME "FIX_Partner_bot"
           put_secret PARTNER_DEFAULT_COMMISSION_PERCENT "50"
-          put_secret HAPP_PROVIDER_ID "${{ secrets.HAPP_PROVIDER_ID || '6Azh5Bya' }}"
+          put_secret HAPP_PROVIDER_ID "${{ secrets.HAPP_PROVIDER_ID }}"
 
       - name: Verify deployment
         run: |

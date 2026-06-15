@@ -4,7 +4,7 @@ import { getSubscription } from "./repository";
 import type { PanelDeviceIp } from "./xui";
 import { XuiApi } from "./xui";
 
-/** Bot-side device slots (not panel IP). */
+/** Лимит одновременных IP в панели (limitIp). */
 export function subscriptionDeviceLimit(
   sub: Pick<DbSubscription, "plan_type" | "extra_devices"> | null | undefined
 ): number {
@@ -19,81 +19,6 @@ export function panelLimitIpForSubscription(
   return subscriptionDeviceLimit(sub);
 }
 
-export type DeviceBindingRow = {
-  os: string;
-  vpn_client: string;
-  label: string;
-};
-
-export type DeviceSlotStatus = {
-  limit: number;
-  panelIps: PanelDeviceIp[];
-  bindings: DeviceBindingRow[];
-};
-
-export function effectiveDeviceUsage(
-  status: Pick<DeviceSlotStatus, "bindings" | "panelIps">
-): number {
-  return Math.max(status.bindings.length, status.panelIps.length);
-}
-
-export function canRegisterDeviceBinding(
-  status: DeviceSlotStatus,
-  targetOs: string
-): boolean {
-  if (status.limit === 0) return true;
-  if (status.bindings.some((row) => row.os === targetOs)) return true;
-  return effectiveDeviceUsage(status) < status.limit;
-}
-
-export function isDifferentDeviceAttempt(
-  status: DeviceSlotStatus,
-  targetOs: string
-): boolean {
-  return !canRegisterDeviceBinding(status, targetOs);
-}
-
-export function deviceOccupiedMessage(
-  status: DeviceSlotStatus,
-  targetOs?: string
-): string {
-  const occupiedLines: string[] = [];
-  for (const row of status.bindings.slice(0, 2)) {
-    occupiedLines.push(`• ${row.label}`);
-  }
-  for (const row of status.panelIps.slice(0, 2)) {
-    const seen = row.seenAt ? ` (${row.seenAt})` : "";
-    occupiedLines.push(`• IP ${row.ip}${seen}`);
-  }
-  const occupied =
-    occupiedLines.length > 0 ? occupiedLines.join("\n") : "• другое устройство";
-
-  const replaceNote =
-    targetOs && isDifferentDeviceAttempt(status, targetOs)
-      ? "\n\nВы подключаете другое устройство — сначала отвяжите текущее."
-      : "";
-
-  const slotsWord =
-    status.limit === 1
-      ? "1 устройство"
-      : `${status.limit} устройства`;
-  return (
-    `Все слоты заняты (${slotsWord} одновременно).\n\n` +
-    `Сейчас занято:\n${occupied}${replaceNote}\n\n` +
-    `«Профиль» → отвязите ненужное устройство, «Сбросить все» (раз в 24 ч) или докупите слоты.`
-  );
-}
-
-/** При нескольких слотах не сбрасывать IP в панели — иначе отключится другое устройство. */
-export function shouldSkipPanelIpClearOnUnbind(
-  status: Pick<DeviceSlotStatus, "limit" | "panelIps">,
-  bindingsAfterDelete: number
-): boolean {
-  if (status.limit <= 1) return false;
-  if (bindingsAfterDelete > 0) return true;
-  return status.panelIps.length > 1;
-}
-
 export async function syncPanelDeviceLimit(
   env: BotEnv,
   userId: string
@@ -106,5 +31,17 @@ export async function syncPanelDeviceLimit(
     await xui.setClientLimitIp(sub.client_email, limitIp);
   } catch (error) {
     console.error("syncPanelDeviceLimit:", error);
+  }
+}
+
+export async function fetchPanelDeviceIps(
+  env: BotEnv,
+  clientEmail: string | null | undefined
+): Promise<PanelDeviceIp[]> {
+  if (!clientEmail?.trim()) return [];
+  try {
+    return await new XuiApi(env).getClientIps(clientEmail);
+  } catch {
+    return [];
   }
 }

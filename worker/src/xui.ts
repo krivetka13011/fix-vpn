@@ -28,6 +28,7 @@ const ALLOWED_PREFIXES = [
   "/panel/api/clients/add",
   "/panel/api/clients/update/",
   "/panel/api/clients/clearIps/",
+  "/panel/api/clients/del/",
   "/panel/api/inbounds/clearClientIps/",
   "/panel/api/clients/ips/",
   "/panel/api/clients/onlines",
@@ -901,6 +902,33 @@ export class XuiApi {
     if (!cleared) {
       throw new Error("clearClientIps failed");
     }
+  }
+
+  /** Полное удаление клиента из панели (для сброса подключения). */
+  async tryDeletePanelClient(email: string, timeoutMs = 8000): Promise<boolean> {
+    const encoded = encodeURIComponent(email.trim());
+    if (!encoded) return false;
+    const path = `/panel/api/clients/del/${encoded}`;
+    const bases = [xuiWorkerBaseUrl(this.env), ...this.baseUrls].filter(
+      (base, index, list) => base && list.indexOf(base) === index
+    );
+
+    for (const baseUrl of bases) {
+      try {
+        const response = await this.requestTimed(
+          `${baseUrl}${path}`,
+          { method: "POST", body: "{}" },
+          timeoutMs
+        );
+        if (await this.panelActionSucceeded(response)) {
+          this.invalidateScan();
+          return true;
+        }
+      } catch {
+        // try next base
+      }
+    }
+    return false;
   }
 
   /** Fast panel IP reset — direct panel URL, short timeout, inbound API first. */

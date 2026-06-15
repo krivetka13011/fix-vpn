@@ -23,10 +23,7 @@ import { isPanelErrorBody, panelFetch } from "./panel-fetch";
 import { handleClientBotUpdate } from "./bots/client-bot";
 import { handlePartnerBotUpdate } from "./bots/partner-bot";
 import { beginE2eTrace, endE2eTrace } from "./e2e-trace";
-import {
-  DeviceResetCooldownError,
-  DeviceResetPendingError,
-} from "./device-reset";
+import { DeviceResetCooldownError } from "./device-reset";
 import { approvePaidTransaction } from "./approve-transaction";
 import {
   cardlinkResultHtml,
@@ -43,7 +40,6 @@ import {
   canConnectSubscription,
   fetchMiniappDevices,
   resetMiniappDevices,
-  unbindMiniappDevice,
   resolvePanelSubIdForUser,
   subscriptionPeriodText,
   type MiniappClient,
@@ -186,6 +182,15 @@ export async function handleApiRequest(
     return new Response(null, { headers: CORS });
   }
 
+  if (path === "/health" && request.method === "GET") {
+    return json({
+      ok: true,
+      service: "FIX VPN",
+      bot: "https://t.me/FIXVPNfast_bot",
+      site: "https://app.fixvp.xyz",
+    });
+  }
+
   if (
     (path.startsWith("/api/sub/") || path.startsWith("/sub/")) &&
     request.method === "GET"
@@ -225,7 +230,8 @@ export async function handleApiRequest(
       };
       // hide-settings всегда последним — не перезаписывать панелью
       headers["hide-settings"] = "1";
-      headers["providerid"] = happProviderId(env);
+      const happPid = happProviderId(env);
+      if (happPid) headers["providerid"] = happPid;
       headers["ping-type"] = "tcp";
       delete headers["check-url-via-proxy"];
       headers["Content-Disposition"] = `attachment; filename=${subId}`;
@@ -306,7 +312,8 @@ export async function handleApiRequest(
         if (value && !headers[name]) headers[name] = value;
       }
       headers["hide-settings"] = "1";
-      headers["providerid"] = happProviderId(env);
+      const happPid = happProviderId(env);
+      if (happPid) headers["providerid"] = happPid;
       headers["ping-type"] = "tcp";
       delete headers["check-url-via-proxy"];
       headers["Content-Disposition"] = `attachment; filename=${subId}`;
@@ -348,7 +355,8 @@ export async function handleApiRequest(
       ...CORS,
     };
     headers["hide-settings"] = "1";
-    headers["providerid"] = happProviderId(env);
+    const happPid = happProviderId(env);
+    if (happPid) headers["providerid"] = happPid;
     headers["ping-type"] = "tcp";
     delete headers["check-url-via-proxy"];
     const userinfo = subscriptionUserinfoHeader(dbSub.ends_at ?? null);
@@ -645,28 +653,8 @@ export async function handleApiRequest(
       if (e instanceof DeviceResetCooldownError) {
         return json({ error: e.message, cooldownMs: e.remainingMs }, 429);
       }
-      if (e instanceof DeviceResetPendingError) {
-        return json({ error: e.message }, 409);
-      }
       return json(
         { error: e instanceof Error ? e.message : "Reset failed" },
-        400
-      );
-    }
-  }
-
-  if (path === "/api/devices/unbind" && request.method === "POST") {
-    try {
-      const body = (await request.json()) as { bindingId?: string };
-      const bindingId = body.bindingId?.trim();
-      if (!bindingId) return json({ error: "bindingId required" }, 400);
-      const message = await unbindMiniappDevice(env, tgUser, bindingId);
-      const bundle = await ensureUser(env, tgUser);
-      const deviceInfo = await fetchMiniappDevices(env, bundle.user.id);
-      return json({ ok: true, message, devices: deviceInfo });
-    } catch (e) {
-      return json(
-        { error: e instanceof Error ? e.message : "Unbind failed" },
         400
       );
     }

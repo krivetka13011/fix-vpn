@@ -27,6 +27,8 @@ export interface BotEnv extends SupabaseEnv {
   VPN_SERVER_HOST?: string;
   /** Host in vless/trojan links inside subscription (default: panel IP). */
   VPN_SUBSCRIPTION_HOST?: string;
+  /** Happ Provider ID (8 chars) — hide-settings и расширенное управление. */
+  HAPP_PROVIDER_ID?: string;
   PARTNER_DEFAULT_COMMISSION_PERCENT?: string;
   BASE_PRICE_RUB_PER_MONTH?: string;
   DISCOUNT_3_MONTHS_PERCENT?: string;

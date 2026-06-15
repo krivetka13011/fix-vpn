@@ -495,9 +495,9 @@ export function buildProtectedSubscriptionUrl(env: BotEnv, subId: string): strin
   return `${base}/sub/${encodeURIComponent(subId)}`;
 }
 
-/** Standard 3X-UI /sub format: base64 blob with Happ meta lines + protocol lines. */
+/** Standard 3X-UI /sub format: base64 vless/trojan lines (meta только в HTTP headers). */
 export function encodeStandardSubscriptionBody(body: string): string {
-  const plain = withHappSubscriptionMetaLines(subscriptionBodyForClients(body));
+  const plain = subscriptionBodyForClients(body);
   const bytes = new TextEncoder().encode(plain);
   let binary = "";
   for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
@@ -555,21 +555,22 @@ export function subscriptionAnnounceHeader(env: BotEnv): string {
   );
 }
 
-/** Happ: hide-settings + tcp ping (как у конкурентов на sub.domain/{id}). */
+/** Happ: hide-settings в headers (как renawave), без meta в теле base64. */
 export function buildSubscriptionResponseHeaders(env: BotEnv): Record<string, string> {
-  return {
+  const headers: Record<string, string> = {
     "hide-settings": "1",
     "ping-type": "tcp",
     "subscription-ping-onopen-enabled": "1",
-    "subscription-autoconnect": "1",
-    "subscription-autoconnect-type": "lowestdelay",
+    "subscription-auto-update-enable": "1",
     "Profile-Update-Interval": "1",
     "Profile-Title": "base64:8J+Up0ZJWCBWUE4=",
-    "Content-Disposition": "attachment; filename=FIX-VPN",
     "Support-Url": supportTelegramUrl(env),
     "Profile-Web-Page-Url": TELEGRAM_CHANNEL_URL,
     "Announce": subscriptionAnnounceHeader(env),
   };
+  const providerId = env.HAPP_PROVIDER_ID?.trim();
+  if (providerId) headers.providerid = providerId;
+  return headers;
 }
 
 /** HTTPS-цель импорта Happ (внутри happ://add/…). */
@@ -582,15 +583,12 @@ export function buildHappDeepLink(env: BotEnv, subId: string): string {
   return buildDeepLink("happ", buildHappImportTarget(env, subId));
 }
 
-/** URL кнопки «Подключиться» в Telegram (только https). */
+/** URL кнопки в Telegram (https): Happ → страница подключения, не файл подписки. */
 export function buildClientButtonUrl(
   env: BotEnv,
   client: VpnClientId,
   subId: string
 ): string {
-  if (client === "happ") {
-    return buildPublicSubscriptionUrl(env, subId);
-  }
   return buildRedirectUrl(env, client, subId);
 }
 
@@ -778,7 +776,6 @@ export function redirectHtml(client: VpnClientId, importTarget: string): string 
     (function () {
       var deepLink = ${JSON.stringify(deepLink)};
       var subUrl = ${JSON.stringify(importTarget)};
-      setTimeout(function () { window.location.replace(deepLink); }, 80);
       var copyBtn = document.getElementById("copy-sub");
       if (copyBtn) {
         copyBtn.addEventListener("click", function () {

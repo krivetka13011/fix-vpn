@@ -198,7 +198,7 @@ export async function handleApiRequest(
     }
 
     const lockedHeaders: Record<string, string> = {
-      "Content-Type": "text/plain; charset=utf-8",
+      "Content-Type": "application/json",
       "Cache-Control": "no-store",
       ...buildSubscriptionResponseHeaders(env),
       ...CORS,
@@ -288,8 +288,7 @@ export async function handleApiRequest(
       const body = encodeStandardSubscriptionBody(normalizeSubscriptionBody(rawBody));
       const headers: Record<string, string> = {
         ...lockedHeaders,
-        "Content-Type":
-          upstreamRes.headers.get("Content-Type") || "text/plain; charset=utf-8",
+        "Content-Type": "application/json",
         ...buildSubscriptionResponseHeaders(env),
       };
       const userinfo = subscriptionUserinfoHeader(dbSub.ends_at ?? null);

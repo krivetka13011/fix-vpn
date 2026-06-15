@@ -35,6 +35,7 @@ const ALLOWED_PREFIXES = [
   "/panel/api/clients/subLinks/",
   "/panel/api/inbounds/get/",
   "/panel/api/inbounds/update/",
+  "/panel/api/inbounds/updateClient/",
 ];
 
 export interface PanelDeviceIp {
@@ -580,29 +581,23 @@ export class XuiApi {
               })
             : (settingsRaw as { clients?: Array<Record<string, unknown>> } | undefined);
         const clients = settings?.clients ?? [];
-        let touched = false;
-        for (const row of clients) {
-          if (String(row.email || "") !== needle) continue;
-          if (row.enable === true) continue;
-          row.enable = true;
-          touched = true;
-        }
-        if (!touched) continue;
+        const row = clients.find((client) => String(client.email || "") === needle);
+        if (!row) continue;
 
-        const updateBody: Record<string, unknown> = {
-          ...obj,
-          settings: JSON.stringify({ ...settings, clients }),
-        };
-        for (const key of Object.keys(updateBody)) {
-          if (updateBody[key] === null) delete updateBody[key];
-        }
+        const clientUuid = String(row.id || "");
+        if (!clientUuid) continue;
+
+        row.enable = true;
+        const form = new URLSearchParams();
+        form.set("id", String(inboundId));
+        form.set("settings", JSON.stringify({ clients: [row] }));
 
         const updateResponse = await this.request(
-          `/panel/api/inbounds/update/${inboundId}`,
+          `/panel/api/inbounds/updateClient/${clientUuid}`,
           {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(updateBody),
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body: form.toString(),
           }
         );
         await this.parseResponse(updateResponse, `enableClientOnInbounds:${inboundId}`);
@@ -629,7 +624,7 @@ export class XuiApi {
     const row = (payload.obj as { client?: Record<string, unknown> } | undefined)?.client;
     if (!row) return null;
     return {
-      id: String(row.id ?? ""),
+      id: String(row.uuid ?? row.id ?? ""),
       email: String(row.email ?? email),
       subId: String(row.subId ?? ""),
       limitIp: Number(row.limitIp ?? this.limitIp),
@@ -645,30 +640,23 @@ export class XuiApi {
     const needle = email.trim();
     if (!needle) return;
 
-    let globalTouched = false;
     try {
       const record = await this.fetchClientRecord(needle);
-      if (record && !record.enable) {
-        await this.updateClient({ ...record, enable: true, tgId: record.tgId || telegramId });
-        globalTouched = true;
+      if (record) {
+        await this.updateClient({
+          ...record,
+          enable: true,
+          tgId: record.tgId || telegramId,
+        });
       }
     } catch (error) {
       console.error("ensureClientEnabled global:", error);
     }
 
-    const scanned = await this.scanAllClients();
-    const rows = scanned.filter((row) => row.email === needle);
-    const inboundNeedsEnable = rows.length === 0 || rows.some((row) => !row.enable);
-    if (inboundNeedsEnable) {
-      try {
-        await this.enableClientOnInbounds(needle);
-      } catch (error) {
-        console.error("ensureClientEnabled inbounds:", error);
-      }
-    }
-
-    if (globalTouched || inboundNeedsEnable) {
-      console.error("ensureClientEnabled: re-enabled", needle);
+    try {
+      await this.enableClientOnInbounds(needle);
+    } catch (error) {
+      console.error("ensureClientEnabled inbounds:", error);
     }
   }
 
@@ -900,6 +888,7 @@ export class XuiApi {
     );
     try {
       await this.addClient(client);
+      await this.ensureClientEnabled(email, telegramId);
       return client.id;
     } catch (error) {
       const message = error instanceof Error ? error.message.toLowerCase() : "";

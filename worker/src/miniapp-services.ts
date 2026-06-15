@@ -1,6 +1,13 @@
 import type { BotEnv } from "./env";
 import { TARIFFS } from "./catalog";
-import { buildProtectedSubscriptionUrl, buildRedirectUrl, type VpnClientId } from "./connect-links";
+import {
+  buildClientButtonUrl,
+  buildClientConnectUrl,
+  buildHappDeepLink,
+  buildPublicSubscriptionUrl,
+  buildProtectedSubscriptionUrl,
+  type VpnClientId,
+} from "./connect-links";
 import { syncPanelSubIdForUser } from "./panel-sync";
 import {
   getSubscription,
@@ -202,7 +209,7 @@ export async function buildMiniappConnectUrl(
   tg: TelegramUser,
   platform: MiniappPlatform,
   client: MiniappClient
-): Promise<{ redirectUrl: string; subId: string }> {
+): Promise<{ connectUrl: string; subUrl: string; subId: string; redirectUrl: string }> {
   const sub = await getSubscription(env, (await upsertTelegramUser(env, tg)).id);
   if (sub?.status !== "active") {
     throw new Error("Сначала активируйте подписку или пробный период");
@@ -226,9 +233,14 @@ export async function buildMiniappConnectUrl(
     await syncPanelDeviceLimit(env, user.id);
   }
 
+  const subUrl = buildPublicSubscriptionUrl(env, subId);
+  const connectUrl = buildClientConnectUrl(env, mappedClient, subId);
+
   return {
     subId,
-    redirectUrl: buildRedirectUrl(env, mappedClient, subId),
+    subUrl,
+    connectUrl,
+    redirectUrl: connectUrl,
   };
 }
 

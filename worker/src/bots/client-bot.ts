@@ -49,8 +49,10 @@ import {
   shouldUseCardlink,
 } from "../cardlink";
 import {
+  buildClientButtonUrl,
+  buildHappDeepLink,
   buildPanelSubscriptionUrlForUser,
-  buildRedirectUrl,
+  buildPublicSubscriptionUrl,
   clientLabel,
   clientsForOs,
   defaultClientForOs,
@@ -160,7 +162,7 @@ function connectClientKeyboard(
     [
       {
         text: `Открыть ${clientLabel(defaultClient)}`,
-        url: redirectByClient[defaultClient] || buildRedirectUrl(env, defaultClient, subId),
+        url: redirectByClient[defaultClient] || buildClientButtonUrl(env, defaultClient, subId),
       },
     ],
   ];
@@ -169,7 +171,7 @@ function connectClientKeyboard(
     rows.push([
       {
         text: clientLabel(client),
-        url: redirectByClient[client] || buildRedirectUrl(env, client, subId),
+        url: redirectByClient[client] || buildClientButtonUrl(env, client, subId),
       },
     ]);
   }
@@ -311,19 +313,20 @@ function buildSubscriptionUrl(env: BotEnv, subId: string): string {
 }
 
 function connectOsMessage(
+  env: BotEnv,
   os: string,
-  defaultClient: VpnClientId
+  defaultClient: VpnClientId,
+  subId: string
 ): string {
   const happNote =
     defaultClient === "happ"
-      ? `\n\n⚠️ В Happ удалите <b>все</b> старые подписки (Encrypted, Russia Priority и др.) перед импортом.\nПодписка: 3 сервера (Vless, Xhttp, Trojan).`
+      ? `\n\nПодписка:\n<code>${buildPublicSubscriptionUrl(env, subId)}</code>\n\nИмпорт в Happ:\n<code>${buildHappDeepLink(env, subId)}</code>\n\n⚠️ Удалите <b>все</b> старые подписки в Happ перед импортом.`
       : "";
-  const osHint = `Нажмите <b>Открыть ${clientLabel(defaultClient)}</b> ниже — ссылка откроет Happ и добавит подписку.`;
-  return (
-    `<b>Подключение VPN</b>\n\n` +
-    `ОС: <b>${osLabel(os)}</b>\n` +
-    `${osHint}${happNote}`
-  );
+  const osHint =
+    defaultClient === "happ"
+      ? `ОС: <b>${osLabel(os)}</b>\nНажмите <b>Открыть Happ</b> или скопируйте ссылку импорта выше.`
+      : `Нажмите <b>Открыть ${clientLabel(defaultClient)}</b> ниже.`;
+  return `<b>Подключение VPN</b>\n\n${osHint}${happNote}`;
 }
 
 function buildConnectRedirects(
@@ -333,7 +336,7 @@ function buildConnectRedirects(
 ): Partial<Record<VpnClientId, string>> {
   const redirects: Partial<Record<VpnClientId, string>> = {};
   for (const client of clientsForOs(os)) {
-    redirects[client] = buildRedirectUrl(env, client, subId);
+    redirects[client] = buildClientButtonUrl(env, client, subId);
   }
   return redirects;
 }
@@ -1014,7 +1017,7 @@ export async function handleClientBotUpdate(
         return;
       }
 
-      const text = connectOsMessage(os, defaultClient);
+      const text = connectOsMessage(env, os, defaultClient, subId);
       const markup = connectClientKeyboard(env, os, subId, defaultClient, redirects);
 
       try {

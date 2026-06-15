@@ -50,11 +50,16 @@ export function buildPanelSubscriptionUrl(env: BotEnv, subId: string): string {
   return `${base}${path}/${subId}`;
 }
 
-/** Публичный JSON URL подписки — Happ (заблокированные настройки). */
-export function buildClientJsonSubscriptionUrl(env: BotEnv, subId: string): string {
+/** Публичный URL подписки — как sub.renawave.space/{id}. */
+export function buildPublicSubscriptionUrl(env: BotEnv, subId: string): string {
   const trimmed = subId.trim();
   const host = subscriptionPublicHost(env);
   return `https://${host}/${trimmed}`;
+}
+
+/** @deprecated use buildPublicSubscriptionUrl */
+export function buildClientJsonSubscriptionUrl(env: BotEnv, subId: string): string {
+  return buildPublicSubscriptionUrl(env, subId);
 }
 
 const SHORT_SUB_ID_RE = /^\/[a-zA-Z0-9]{8,40}$/;
@@ -567,9 +572,38 @@ export function buildSubscriptionResponseHeaders(env: BotEnv): Record<string, st
   };
 }
 
-/** Happ import: https://sub.fixvp.xyz/{subId} — тот же формат, что sub.renawave.space/{id}. */
+/** HTTPS-цель импорта Happ (внутри happ://add/…). */
 export function buildHappImportTarget(env: BotEnv, subId: string): string {
-  return buildHappDirectSubUrl(env, subId);
+  return buildPublicSubscriptionUrl(env, subId);
+}
+
+/** Deeplink Happ — happ://add/https://sub.fixvp.xyz/{subId}. */
+export function buildHappDeepLink(env: BotEnv, subId: string): string {
+  return buildDeepLink("happ", buildHappImportTarget(env, subId));
+}
+
+/** URL кнопки «Подключиться» в Telegram (только https). */
+export function buildClientButtonUrl(
+  env: BotEnv,
+  client: VpnClientId,
+  subId: string
+): string {
+  if (client === "happ") {
+    return buildPublicSubscriptionUrl(env, subId);
+  }
+  return buildRedirectUrl(env, client, subId);
+}
+
+/** URL для открытия клиента: Happ → deeplink, остальные → redirect. */
+export function buildClientConnectUrl(
+  env: BotEnv,
+  client: VpnClientId,
+  subId: string
+): string {
+  if (client === "happ") {
+    return buildHappDeepLink(env, subId);
+  }
+  return buildRedirectUrl(env, client, subId);
 }
 
 /** @deprecated use buildSubscriptionResponseHeaders(env) */
@@ -637,9 +671,9 @@ export async function panelSubscriptionIsLive(
   return false;
 }
 
-/** Прямой URL JSON-подписки для Happ: https://sub.fixvp.xyz/{subId}. */
+/** Прямой URL подписки: https://sub.fixvp.xyz/{subId}. */
 export function buildHappDirectSubUrl(env: BotEnv, subId: string): string {
-  return buildClientJsonSubscriptionUrl(env, subId);
+  return buildPublicSubscriptionUrl(env, subId);
 }
 
 /** @deprecated use buildHappDirectSubUrl */
@@ -714,7 +748,7 @@ export function redirectHtml(client: VpnClientId, importTarget: string): string 
   const label = clientLabel(client);
   const hint =
     client === "happ"
-      ? "Подписка sub.fixvp.xyz/{id} — как у конкурентов. Удалите старую подписку в Happ перед импортом."
+      ? "Импорт: happ://add/https://sub.fixvp.xyz/{id}. Удалите старую подписку в Happ перед импортом."
       : "Если кнопка не сработала — скопируйте ссылку и вставьте в клиент вручную.";
 
   return `<!DOCTYPE html>
@@ -744,10 +778,7 @@ export function redirectHtml(client: VpnClientId, importTarget: string): string 
     (function () {
       var deepLink = ${JSON.stringify(deepLink)};
       var subUrl = ${JSON.stringify(importTarget)};
-      var isAndroid = /Android/i.test(navigator.userAgent);
-      if (isAndroid) {
-        setTimeout(function () { window.location.replace(deepLink); }, 120);
-      }
+      setTimeout(function () { window.location.replace(deepLink); }, 80);
       var copyBtn = document.getElementById("copy-sub");
       if (copyBtn) {
         copyBtn.addEventListener("click", function () {

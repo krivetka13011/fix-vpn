@@ -52,7 +52,13 @@ export function purchasePlan(payload: {
 export function fetchConnect(
   platform: string,
   client: string
-): Promise<{ ok: boolean; redirectUrl: string; subId: string }> {
+): Promise<{
+  ok: boolean;
+  connectUrl: string;
+  subUrl: string;
+  subId: string;
+  redirectUrl: string;
+}> {
   const params = new URLSearchParams({ platform, client });
   return api(`/api/connect?${params.toString()}`);
 }

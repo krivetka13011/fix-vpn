@@ -78,12 +78,25 @@ export function HelpTab({ catalog, user }: Props) {
     try {
       const result = await fetchConnect(platform, client);
       const tg = window.Telegram?.WebApp;
-      if (tg?.openLink) {
-        tg.openLink(result.redirectUrl);
+      if (client === "happ" && platform === "android") {
+        const subUrl = result.subUrl || result.connectUrl.replace(/^happ:\/\/add\//i, "");
+        try {
+          if (navigator.clipboard?.writeText) {
+            await navigator.clipboard.writeText(subUrl);
+          } else {
+            window.prompt("Скопируйте ссылку подписки:", subUrl);
+          }
+          setHint("Ссылка скопирована. В Happ: Добавить → вставьте ссылку.");
+        } catch {
+          setHint(`Скопируйте: ${subUrl}`);
+        }
+      } else if (tg?.openLink) {
+        tg.openLink(result.connectUrl);
+        setHint("Открываем импорт подписки в клиент…");
       } else {
-        window.location.href = result.redirectUrl;
+        window.location.href = result.connectUrl;
+        setHint("Открываем импорт подписки в клиент…");
       }
-      setHint("Открываем импорт подписки в клиент…");
       tg?.HapticFeedback?.impactOccurred("medium");
     } catch (error) {
       setHint(error instanceof Error ? error.message : "Не удалось подключиться");

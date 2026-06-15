@@ -7,6 +7,7 @@ import {
   webappPublicUrl,
   workerSubscriptionFetchBase,
 } from "./env";
+import { TELEGRAM_CHANNEL_URL } from "./catalog";
 import { isPanelErrorBody, panelFetch } from "./panel-fetch";
 import { XuiApi } from "./xui";
 
@@ -315,21 +316,31 @@ type JsonRecord = Record<string, unknown>;
 function fixJsonInboundForHapp(inbounds: JsonRecord[]): JsonRecord[] {
   const mixed = inbounds.find((row) => row.protocol === "mixed");
   const http = inbounds.find((row) => row.protocol === "http");
-  const sniffing = mixed?.sniffing;
+  const sniffing = mixed?.sniffing ?? {
+    enabled: true,
+    destOverride: ["http", "tls", "quic"],
+  };
   const socks: JsonRecord = {
     listen: "127.0.0.1",
     port: 10808,
     protocol: "socks",
     settings: { auth: "noauth", udp: true, userLevel: 8 },
     tag: "socks",
+    sniffing,
   };
-  if (sniffing) socks.sniffing = sniffing;
   const next: JsonRecord[] = [socks];
   if (http) {
     next.push({
       ...http,
       listen: "127.0.0.1",
       port: http.port ?? 10809,
+    });
+  } else if (mixed) {
+    next.push({
+      ...mixed,
+      listen: "127.0.0.1",
+      port: Number(mixed.port) || 10807,
+      sniffing,
     });
   }
   return next;
@@ -493,7 +504,40 @@ export const LOCKED_SUBSCRIPTION_HEADERS: Record<string, string> = {
   "Profile-Title": "base64:8J+Up0ZJWCBWUE4=",
 };
 
-/** Headers for /sub — hide-settings via header; ping via proxy (TCP lies behind CDN). */
+function base64HeaderValue(text: string): string {
+  const bytes = new TextEncoder().encode(text);
+  let binary = "";
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+  return `base64:${btoa(binary)}`;
+}
+
+export function supportTelegramUrl(env: BotEnv): string {
+  const bot = (env.CLIENT_BOT_USERNAME || "FIXVPNfast_bot").replace(/^@/, "");
+  return `https://t.me/${bot}`;
+}
+
+export function subscriptionAnnounceHeader(env: BotEnv): string {
+  const bot = (env.CLIENT_BOT_USERNAME || "FIXVPNfast_bot").replace(/^@/, "");
+  return base64HeaderValue(
+    `@${bot} — У нас только белые IP для лучшей работы сервисов`
+  );
+}
+
+/** Happ headers: hide-settings, ping via proxy, Telegram support link. */
+export function buildSubscriptionResponseHeaders(env: BotEnv): Record<string, string> {
+  return {
+    "hide-settings": "1",
+    "ping-type": "proxy",
+    "check-url-via-proxy": "https://cp.cloudflare.com/generate_204",
+    "Profile-Update-Interval": "1",
+    "Profile-Title": "base64:8J+Up0ZJWCBWUE4=",
+    "Support-Url": supportTelegramUrl(env),
+    "Profile-Web-Page-Url": TELEGRAM_CHANNEL_URL,
+    "Announce": subscriptionAnnounceHeader(env),
+  };
+}
+
+/** @deprecated use buildSubscriptionResponseHeaders(env) */
 export const SUBSCRIPTION_RESPONSE_HEADERS: Record<string, string> = {
   "hide-settings": "1",
   "ping-type": "proxy",
@@ -557,6 +601,16 @@ export async function panelSubscriptionIsLive(
     }
   }
   return false;
+}
+
+export function buildHappTestTargets(
+  env: BotEnv,
+  subId: string
+): { json: string; sub: string } {
+  return {
+    json: buildClientJsonSubscriptionUrl(env, subId),
+    sub: buildClientSubscriptionUrl(env, subId),
+  };
 }
 
 /** Happ: JSON-подписка с Worker (hide-settings + ping-type в заголовках). */
@@ -651,6 +705,61 @@ export function clientsForOs(os: string): VpnClientId[] {
 
 export function defaultClientForOs(os: string): VpnClientId {
   return DEFAULT_CLIENT_BY_OS[os] || "happ";
+}
+
+export function redirectHappTestHtml(jsonUrl: string, subUrl: string): string {
+  const jsonDeep = buildDeepLink("happ", jsonUrl);
+  const subDeep = buildDeepLink("happ", subUrl);
+
+  return `<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>FIX VPN · Happ</title>
+  <style>
+    body { font-family: system-ui, sans-serif; background: #0b1220; color: #e8eefc; display: grid; place-items: center; min-height: 100vh; margin: 0; padding: 24px; text-align: center; }
+    .card { max-width: 440px; width: 100%; }
+    .btn { display: block; width: 100%; box-sizing: border-box; margin: 8px 0; padding: 14px 18px; border-radius: 12px; border: 0; font-size: 16px; font-weight: 600; cursor: pointer; text-decoration: none; background: #3d7eff; color: #fff; }
+    .btn-sub { background: #2a9d6a; }
+    .btn-secondary { background: #243352; color: #e8eefc; font-size: 14px; padding: 10px 14px; }
+    .hint { color: #9db0d0; font-size: 14px; line-height: 1.5; }
+    .sub-url { word-break: break-all; font-size: 11px; color: #7f93b8; margin: 8px 0 16px; text-align: left; }
+    .label { font-size: 13px; color: #b8c7e6; margin-top: 14px; margin-bottom: 4px; text-align: left; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <p>Импорт подписки в <b>Happ</b></p>
+    <p class="hint">Для теста доступны оба формата. Настройки серверов скрыты (hide-settings). Пинг: via proxy.</p>
+
+    <p class="label">JSON — настройки заблокированы</p>
+    <a class="btn" href="${jsonDeep.replace(/"/g, "&quot;")}">Открыть Happ (JSON)</a>
+    <button class="btn btn-secondary" type="button" data-copy="${jsonUrl.replace(/"/g, "&quot;")}">Скопировать JSON-ссылку</button>
+    <p class="sub-url">${jsonUrl.replace(/</g, "&lt;")}</p>
+
+    <p class="label">SUB (base64) — обычно пинги работают лучше</p>
+    <a class="btn btn-sub" href="${subDeep.replace(/"/g, "&quot;")}">Открыть Happ (SUB)</a>
+    <button class="btn btn-secondary" type="button" data-copy="${subUrl.replace(/"/g, "&quot;")}">Скопировать SUB-ссылку</button>
+    <p class="sub-url">${subUrl.replace(/</g, "&lt;")}</p>
+  </div>
+  <script>
+    document.querySelectorAll("[data-copy]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var text = btn.getAttribute("data-copy") || "";
+        var done = function () { btn.textContent = "Скопировано"; };
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text).then(done).catch(function () {
+            window.prompt("Скопируйте:", text);
+          });
+        } else {
+          window.prompt("Скопируйте:", text);
+        }
+      });
+    });
+  </script>
+</body>
+</html>`;
 }
 
 export function redirectHtml(client: VpnClientId, importTarget: string): string {

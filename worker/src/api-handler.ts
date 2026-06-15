@@ -50,12 +50,14 @@ import {
 } from "./miniapp-services";
 import {
   buildClientImportTarget,
+  buildHappTestTargets,
+  buildSubscriptionResponseHeaders,
   fetchPanelJsonSubscription,
   encodeStandardSubscriptionBody,
   fetchPanelSubscriptionBody,
   normalizeSubscriptionBody,
+  redirectHappTestHtml,
   redirectHtml,
-  SUBSCRIPTION_RESPONSE_HEADERS,
   subscriptionUserinfoHeader,
   type VpnClientId,
 } from "./connect-links";
@@ -179,7 +181,7 @@ export async function handleApiRequest(
     const lockedHeaders: Record<string, string> = {
       "Content-Type": "text/plain; charset=utf-8",
       "Cache-Control": "no-store",
-      ...SUBSCRIPTION_RESPONSE_HEADERS,
+      ...buildSubscriptionResponseHeaders(env),
       ...CORS,
     };
 
@@ -196,7 +198,11 @@ export async function handleApiRequest(
 
     const live = await fetchPanelSubscriptionBody(env, subId);
     if (live?.body) {
-      const headers: Record<string, string> = { ...lockedHeaders, ...live.headers };
+      const headers: Record<string, string> = {
+        ...lockedHeaders,
+        ...live.headers,
+        ...buildSubscriptionResponseHeaders(env),
+      };
       const userinfo = subscriptionUserinfoHeader(dbSub.ends_at ?? null);
       if (userinfo) headers["Subscription-Userinfo"] = userinfo;
       const body = encodeStandardSubscriptionBody(live.body);
@@ -207,7 +213,10 @@ export async function handleApiRequest(
       const cached = dbSub.subscription_payload_cache?.trim();
       if (cached && cached.length > 100) {
         const body = encodeStandardSubscriptionBody(normalizeSubscriptionBody(cached));
-        const headers: Record<string, string> = { ...lockedHeaders };
+        const headers: Record<string, string> = {
+          ...lockedHeaders,
+          ...buildSubscriptionResponseHeaders(env),
+        };
         const userinfo = subscriptionUserinfoHeader(dbSub.ends_at ?? null);
         if (userinfo) headers["Subscription-Userinfo"] = userinfo;
         return new Response(body, { status: 200, headers });
@@ -253,6 +262,7 @@ export async function handleApiRequest(
         ...lockedHeaders,
         "Content-Type":
           upstreamRes.headers.get("Content-Type") || "text/plain; charset=utf-8",
+        ...buildSubscriptionResponseHeaders(env),
       };
       const userinfo = subscriptionUserinfoHeader(dbSub.ends_at ?? null);
       if (userinfo) headers["Subscription-Userinfo"] = userinfo;
@@ -263,7 +273,7 @@ export async function handleApiRequest(
         "Announce",
       ]) {
         const value = upstreamRes.headers.get(name);
-        if (value) headers[name] = value;
+        if (value && !headers[name]) headers[name] = value;
       }
       return new Response(body, { status: 200, headers });
     } catch (error) {
@@ -298,7 +308,7 @@ export async function handleApiRequest(
     const headers: Record<string, string> = {
       "Content-Type": "application/json; charset=utf-8",
       "Cache-Control": "no-store",
-      ...SUBSCRIPTION_RESPONSE_HEADERS,
+      ...buildSubscriptionResponseHeaders(env),
       ...CORS,
     };
     const userinfo = subscriptionUserinfoHeader(dbSub.ends_at ?? null);
@@ -316,6 +326,18 @@ export async function handleApiRequest(
     const params = new URL(request.url).searchParams;
     const sid = params.get("sid")?.trim();
     const legacySub = params.get("sub")?.trim();
+
+    if (client === "happ" && sid) {
+      const targets = buildHappTestTargets(env, sid);
+      return new Response(redirectHappTestHtml(targets.json, targets.sub), {
+        headers: {
+          "Content-Type": "text/html; charset=utf-8",
+          "Cache-Control": "no-store",
+          ...CORS,
+        },
+      });
+    }
+
     let importTarget = legacySub || "";
     if (sid) {
       try {

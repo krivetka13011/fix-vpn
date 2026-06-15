@@ -126,7 +126,8 @@ function e2eTraceResponse(
 
 async function handleLegacyTelegramWebhook(
   request: Request,
-  env: ApiEnv
+  env: ApiEnv,
+  ctx?: ExecutionContext
 ): Promise<Response> {
   const e2eSecret = env.E2E_TRACE_SECRET?.trim();
   const e2eHeader = request.headers.get("X-Fix-Vpn-E2E")?.trim();
@@ -137,28 +138,47 @@ async function handleLegacyTelegramWebhook(
     beginE2eTrace(dry);
   }
 
-  let handlerError: unknown = null;
+  let update: unknown;
   try {
-    const update = await request.json();
-    await handleClientBotUpdate(env, update);
+    update = await request.json();
   } catch (error) {
-    handlerError = error;
-    console.error("client webhook:", error);
+    console.error("client webhook parse:", error);
+    return new Response("ok");
   }
 
+  const run = async (): Promise<void> => {
+    try {
+      await handleClientBotUpdate(env, update);
+    } catch (error) {
+      console.error("client webhook:", error);
+      if (tracing) throw error;
+    }
+  };
+
   if (tracing) {
+    let handlerError: unknown = null;
+    try {
+      await run();
+    } catch (error) {
+      handlerError = error;
+    }
     return e2eTraceResponse(!handlerError, endE2eTrace(), handlerError);
   }
-  if (handlerError) {
-    return new Response("error", { status: 500 });
+
+  if (ctx) {
+    ctx.waitUntil(run());
+    return new Response("ok");
   }
+
+  await run();
   return new Response("ok");
 }
 
 export async function handleApiRequest(
   request: Request,
   env: ApiEnv,
-  path: string
+  path: string,
+  ctx?: ExecutionContext
 ): Promise<Response> {
   if (request.method === "OPTIONS") {
     return new Response(null, { headers: CORS });
@@ -494,15 +514,24 @@ export async function handleApiRequest(
     (path === "/api/webhook/client" || path === "/api/webhook/telegram") &&
     request.method === "POST"
   ) {
-    return handleLegacyTelegramWebhook(request, env);
+    return handleLegacyTelegramWebhook(request, env, ctx);
   }
 
   if (path === "/api/webhook/partner" && request.method === "POST") {
+    let update: unknown;
     try {
-      const update = await request.json();
-      await handlePartnerBotUpdate(env, update);
+      update = await request.json();
     } catch (error) {
+      console.error("partner webhook parse:", error);
+      return new Response("ok");
+    }
+    const run = handlePartnerBotUpdate(env, update).catch((error) => {
       console.error("partner webhook:", error);
+    });
+    if (ctx) {
+      ctx.waitUntil(run);
+    } else {
+      await run;
     }
     return new Response("ok");
   }

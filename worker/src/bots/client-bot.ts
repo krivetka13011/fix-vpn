@@ -80,6 +80,20 @@ type TgUpdate = {
   };
 };
 
+/** Снимает «часики» Telegram сразу; повторный answerCallback на тот же id запрещён. */
+async function safeAnswerCallback(
+  token: string,
+  callbackQueryId: string,
+  text?: string,
+  options?: { url?: string; showAlert?: boolean }
+): Promise<void> {
+  try {
+    await answerCallback(token, callbackQueryId, text, options);
+  } catch (error) {
+    console.error("safeAnswerCallback:", error);
+  }
+}
+
 function mainMenuKeyboard(env: BotEnv, hasUsedTrial: boolean) {
   const rows: Array<Array<Record<string, string>>> = [];
   if (!hasUsedTrial) {
@@ -743,10 +757,10 @@ export async function handleClientBotUpdate(
     if (!chatId || !messageId) return;
 
     if (data.startsWith("mgr:")) {
+      await safeAnswerCallback(token, cq.id);
       const note =
         (await handleManagerClientCallback(env, data, tg.id)) ||
         (await handleManagerPartnerCallback(env, data, tg.id));
-      await answerCallback(token, cq.id, note || undefined);
       if (note) {
         await sendMessage(token, chatId, note);
       }
@@ -754,21 +768,22 @@ export async function handleClientBotUpdate(
     }
 
     if (data === "c:menu") {
+      await safeAnswerCallback(token, cq.id);
       await showMainMenu(env, chatId, tg, messageId);
-      await answerCallback(token, cq.id);
       return;
     }
     if (data === "c:trial") {
-      await answerCallback(token, cq.id, "Активируем пробный период…");
+      await safeAnswerCallback(token, cq.id, "Активируем пробный период…");
       await activateTrial(env, tg, chatId);
       return;
     }
     if (data === "c:buy") {
+      await safeAnswerCallback(token, cq.id);
       await editMessage(token, chatId, messageId, "Выберите период подписки:", periodsKeyboard());
-      await answerCallback(token, cq.id);
       return;
     }
     if (data.startsWith("c:period:")) {
+      await safeAnswerCallback(token, cq.id);
       const months = Number(data.split(":")[2]) as BillingMonths;
       const price = calcPrice(env, months);
       await editMessage(
@@ -778,17 +793,17 @@ export async function handleClientBotUpdate(
         `Период: <b>${periodLabel(months)}</b>\nСумма: <b>${price} ₽</b>\n\nВыберите способ оплаты:`,
         paymentMethodsKeyboard(months)
       );
-      await answerCallback(token, cq.id);
       return;
     }
     if (data.startsWith("c:promo:")) {
+      await safeAnswerCallback(token, cq.id);
       const months = Number(data.split(":")[2]);
       await setSession(env, tg.id, "client", "await_promo", { months });
       await editMessage(token, chatId, messageId, "Введите промокод сообщением:");
-      await answerCallback(token, cq.id);
       return;
     }
     if (data.startsWith("c:pay:")) {
+      await safeAnswerCallback(token, cq.id);
       const [, , method, monthsRaw, promoRaw] = data.split(":");
       const months = Number(monthsRaw) as BillingMonths;
       const promo = Number(promoRaw || "0");
@@ -842,7 +857,6 @@ export async function handleClientBotUpdate(
             { inline_keyboard: [[{ text: "Назад", callback_data: "c:buy" }]] }
           );
         }
-        await answerCallback(token, cq.id);
         return;
       }
 
@@ -867,50 +881,52 @@ export async function handleClientBotUpdate(
           `Первая оплата: ${!user.first_payment_done ? "да" : "нет"}`,
         managerTxnKeyboard(txn.id)
       );
-      await answerCallback(token, cq.id);
       return;
     }
     if (data === "c:profile" || data === "c:devices") {
+      await safeAnswerCallback(token, cq.id);
       await showProfile(env, chatId, tg, messageId);
-      await answerCallback(token, cq.id);
       return;
     }
     if (data.startsWith("c:unbind:")) {
       const bindingId = data.slice("c:unbind:".length).trim();
       if (!bindingId) {
-        await answerCallback(token, cq.id, "Устройство не найдено", { showAlert: true });
+        await safeAnswerCallback(token, cq.id, "Устройство не найдено", { showAlert: true });
         return;
       }
-      await answerCallback(token, cq.id, "Отвязываем…");
+      await safeAnswerCallback(token, cq.id, "Отвязываем…");
       await unbindSingleDevice(env, tg, chatId, messageId, bindingId);
       return;
     }
     if (data === "c:resetip") {
       const user = await getUserByTelegramId(env, tg.id);
       if (!user) {
-        await answerCallback(token, cq.id, "Пользователь не найден", { showAlert: true });
+        await safeAnswerCallback(token, cq.id, "Пользователь не найден", { showAlert: true });
         return;
       }
+      await safeAnswerCallback(token, cq.id, "Сбрасываем привязку…");
       try {
-        await answerCallback(token, cq.id, "Сбрасываем привязку…");
         await resetDeviceBinding(env, tg, chatId, messageId);
       } catch (error) {
-        if (error instanceof DeviceResetCooldownError) {
-          await answerCallback(token, cq.id, error.message, { showAlert: true });
-          return;
-        }
-        if (error instanceof DeviceResetPendingError) {
-          await answerCallback(token, cq.id, error.message, { showAlert: true });
+        if (error instanceof DeviceResetCooldownError || error instanceof DeviceResetPendingError) {
+          await showProfile(env, chatId, tg, messageId, `<b>${error.message}</b>`);
           return;
         }
         const message =
           error instanceof Error ? error.message : "Не удалось сбросить привязку";
         await showProfile(env, chatId, tg, messageId, `<b>${message}</b>`);
-        await answerCallback(token, cq.id);
       }
       return;
     }
     if (data === "c:connect") {
+      await safeAnswerCallback(token, cq.id);
+      await editMessage(
+        token,
+        chatId,
+        messageId,
+        "Подготовка подключения…",
+        { inline_keyboard: [[{ text: "Назад", callback_data: "c:menu" }]] }
+      );
       const user = await upsertTelegramUser(env, tg);
       await resolvePanelSubId(env, user, tg);
       const sub = await getSubscription(env, user.id);
@@ -933,7 +949,6 @@ export async function handleClientBotUpdate(
           connectOsKeyboard()
         );
       }
-      await answerCallback(token, cq.id);
       return;
     }
     if (data.startsWith("c:os:")) {
@@ -941,17 +956,20 @@ export async function handleClientBotUpdate(
       const user = await upsertTelegramUser(env, tg);
       const sub = await getSubscription(env, user.id);
       if (sub?.status !== "active") {
-        await answerCallback(token, cq.id, "Сначала активируйте подписку", { showAlert: true });
+        await safeAnswerCallback(token, cq.id, "Сначала активируйте подписку", { showAlert: true });
         return;
       }
 
+      await safeAnswerCallback(token, cq.id);
+
       const subId = await resolvePanelSubId(env, user, tg);
       if (!subId) {
-        await answerCallback(
+        await editMessage(
           token,
-          cq.id,
-          "Ссылка подписки временно недоступна. Удалите старую подписку в Happ и повторите через минуту.",
-          { showAlert: true }
+          chatId,
+          messageId,
+          "Ссылка подписки временно недоступна. Подождите минуту и попробуйте снова.",
+          { inline_keyboard: [[{ text: "Назад", callback_data: "c:menu" }]] }
         );
         return;
       }
@@ -959,11 +977,12 @@ export async function handleClientBotUpdate(
       const defaultClient = defaultClientForOs(os);
       const slot = await fetchDeviceSlotStatus(env, user.id, sub);
       if (isDifferentDeviceAttempt(slot, os)) {
-        await answerCallback(
+        await editMessage(
           token,
-          cq.id,
+          chatId,
+          messageId,
           deviceOccupiedMessage(slot, os),
-          { showAlert: true }
+          { inline_keyboard: [[{ text: "Назад", callback_data: "c:connect" }]] }
         );
         return;
       }
@@ -974,13 +993,23 @@ export async function handleClientBotUpdate(
       } catch (error) {
         const detail = error instanceof Error ? error.message : "import prep failed";
         console.error("buildConnectRedirects:", detail);
-        await answerCallback(token, cq.id, "Не удалось подготовить импорт. Повторите позже.", {
-          showAlert: true,
-        });
+        await editMessage(
+          token,
+          chatId,
+          messageId,
+          "Не удалось подготовить импорт. Повторите позже.",
+          { inline_keyboard: [[{ text: "Назад", callback_data: "c:connect" }]] }
+        );
         return;
       }
       if (!redirects[defaultClient]) {
-        await answerCallback(token, cq.id, "Импорт недоступен", { showAlert: true });
+        await editMessage(
+          token,
+          chatId,
+          messageId,
+          "Импорт недоступен. Повторите позже.",
+          { inline_keyboard: [[{ text: "Назад", callback_data: "c:connect" }]] }
+        );
         return;
       }
 
@@ -995,7 +1024,6 @@ export async function handleClientBotUpdate(
       }
 
       await recordDeviceConnect(env, user.id, os, defaultClient);
-      await answerCallback(token, cq.id);
       return;
     }
     return;
@@ -1023,6 +1051,7 @@ export async function handleClientBotUpdate(
     } else {
       user = await upsertTelegramUser(env, tg);
     }
+    await showMainMenu(env, chatId, tg);
     try {
       await ensureVpnClientOnStart(env, user, tg);
       const sub = await getSubscription(env, user.id);
@@ -1030,7 +1059,6 @@ export async function handleClientBotUpdate(
     } catch (error) {
       console.error("start panel sync:", error);
     }
-    await showMainMenu(env, chatId, tg);
     return;
   }
 

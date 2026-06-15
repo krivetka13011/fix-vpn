@@ -109,6 +109,11 @@ const DEFAULT_VPN_HOST = "fixvp.xyz";
 /** Публичный хост подписки — Worker custom domain (HTTPS :443). */
 export const SUBSCRIPTION_PUBLIC_HOST_DEFAULT = "sub.fixvp.xyz";
 export const WEBAPP_PUBLIC_URL_DEFAULT = "https://app.fixvp.xyz";
+export const HAPP_PROVIDER_ID_DEFAULT = "6Azh5Bya";
+
+export function happProviderId(env: BotEnv): string {
+  return env.HAPP_PROVIDER_ID?.trim() || HAPP_PROVIDER_ID_DEFAULT;
+}
 
 export function subscriptionPublicHost(env: BotEnv): string {
   return env.VPN_SUBSCRIPTION_HOST?.trim() || SUBSCRIPTION_PUBLIC_HOST_DEFAULT;

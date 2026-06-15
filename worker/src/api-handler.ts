@@ -18,7 +18,7 @@ import {
 import { sbRequest } from "./supabase";
 import { validateInitData, type TelegramUser } from "./telegram";
 import type { BotEnv } from "./env";
-import { clientBotToken, partnerBotToken, subscriptionBaseUrl, subscriptionClientBaseUrl, workerSubscriptionFetchBase, xuiBaseUrl } from "./env";
+import { clientBotToken, partnerBotToken, subscriptionBaseUrl, subscriptionClientBaseUrl, workerSubscriptionFetchBase, xuiBaseUrl, happProviderId } from "./env";
 import { isPanelErrorBody, panelFetch } from "./panel-fetch";
 import { handleClientBotUpdate } from "./bots/client-bot";
 import { handlePartnerBotUpdate } from "./bots/partner-bot";
@@ -224,29 +224,31 @@ export async function handleApiRequest(
       };
       // hide-settings всегда последним — не перезаписывать панелью
       headers["hide-settings"] = "1";
+      headers["providerid"] = happProviderId(env);
       headers["ping-type"] = "tcp";
       delete headers["check-url-via-proxy"];
       headers["Content-Disposition"] = `attachment; filename=${subId}`;
       const userinfo = subscriptionUserinfoHeader(dbSub.ends_at ?? null);
       if (userinfo) headers["Subscription-Userinfo"] = userinfo;
-      const body = encodeStandardSubscriptionBody(live.body);
+      const body = encodeStandardSubscriptionBody(live.body, env);
       return new Response(body, { status: 200, headers });
     }
 
     try {
       const cached = dbSub.subscription_payload_cache?.trim();
       if (cached && cached.length > 100) {
-        const body = encodeStandardSubscriptionBody(normalizeSubscriptionBody(cached));
         const headers: Record<string, string> = {
           ...lockedHeaders,
           ...buildSubscriptionResponseHeaders(env),
         };
         headers["hide-settings"] = "1";
+        headers["providerid"] = happProviderId(env);
         headers["ping-type"] = "tcp";
         delete headers["check-url-via-proxy"];
         headers["Content-Disposition"] = `attachment; filename=${subId}`;
         const userinfo = subscriptionUserinfoHeader(dbSub.ends_at ?? null);
         if (userinfo) headers["Subscription-Userinfo"] = userinfo;
+        const body = encodeStandardSubscriptionBody(normalizeSubscriptionBody(cached), env);
         return new Response(body, { status: 200, headers });
       }
     } catch (error) {
@@ -285,7 +287,7 @@ export async function handleApiRequest(
       if (isPanelErrorBody(rawBody, upstreamRes.status)) {
         return new Response("subscription unavailable", { status: 503, headers: CORS });
       }
-      const body = encodeStandardSubscriptionBody(normalizeSubscriptionBody(rawBody));
+      const body = encodeStandardSubscriptionBody(normalizeSubscriptionBody(rawBody), env);
       const headers: Record<string, string> = {
         ...lockedHeaders,
         "Content-Type": "application/json",
@@ -303,6 +305,7 @@ export async function handleApiRequest(
         if (value && !headers[name]) headers[name] = value;
       }
       headers["hide-settings"] = "1";
+      headers["providerid"] = happProviderId(env);
       headers["ping-type"] = "tcp";
       delete headers["check-url-via-proxy"];
       headers["Content-Disposition"] = `attachment; filename=${subId}`;
@@ -344,6 +347,7 @@ export async function handleApiRequest(
       ...CORS,
     };
     headers["hide-settings"] = "1";
+    headers["providerid"] = happProviderId(env);
     headers["ping-type"] = "tcp";
     delete headers["check-url-via-proxy"];
     const userinfo = subscriptionUserinfoHeader(dbSub.ends_at ?? null);

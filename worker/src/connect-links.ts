@@ -4,6 +4,7 @@ import {
   subscriptionBaseUrl,
   subscriptionClientBaseUrl,
   subscriptionPublicHost,
+  happProviderId,
   webappPublicUrl,
   workerSubscriptionFetchBase,
 } from "./env";
@@ -54,7 +55,9 @@ export function buildPanelSubscriptionUrl(env: BotEnv, subId: string): string {
 export function buildPublicSubscriptionUrl(env: BotEnv, subId: string): string {
   const trimmed = subId.trim();
   const host = subscriptionPublicHost(env);
-  return `https://${host}/${trimmed}`;
+  const base = `https://${host}/${trimmed}`;
+  const pid = happProviderId(env);
+  return `${base}?providerid=${encodeURIComponent(pid)}`;
 }
 
 /** @deprecated use buildPublicSubscriptionUrl */
@@ -334,7 +337,14 @@ const HAPP_SUB_META_LINES = [
 ];
 
 const HAPP_SUB_META_LINE_RE =
-  /^#(?:hide-settings|ping-type|check-url-via-proxy|subscription-ping-onopen-enabled|subscription-autoconnect(?:-type)?|subscription-auto-update)/i;
+  /^#(?:hide-settings|providerid|ping-type|check-url-via-proxy|subscription-ping-onopen-enabled|subscription-autoconnect(?:-type)?|subscription-auto-update)/i;
+
+function withHappLockedMetaLines(body: string, env: BotEnv): string {
+  const plain = stripHappSubscriptionMetaLines(body.trim());
+  if (!plain) return "";
+  const pid = happProviderId(env);
+  return `#hide-settings: 1\n#providerid ${pid}\n${plain}`;
+}
 
 function stripHappSubscriptionMetaLines(body: string): string {
   return body
@@ -495,9 +505,11 @@ export function buildProtectedSubscriptionUrl(env: BotEnv, subId: string): strin
   return `${base}/sub/${encodeURIComponent(subId)}`;
 }
 
-/** Standard 3X-UI /sub format: base64 vless/trojan lines (meta только в HTTP headers). */
-export function encodeStandardSubscriptionBody(body: string): string {
-  const plain = subscriptionBodyForClients(body);
+/** Standard 3X-UI /sub: base64 + Happ lock meta (#hide-settings, #providerid). */
+export function encodeStandardSubscriptionBody(body: string, env?: BotEnv): string {
+  const plain = env
+    ? withHappLockedMetaLines(subscriptionBodyForClients(body), env)
+    : subscriptionBodyForClients(body);
   const bytes = new TextEncoder().encode(plain);
   let binary = "";
   for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
@@ -555,10 +567,12 @@ export function subscriptionAnnounceHeader(env: BotEnv): string {
   );
 }
 
-/** Happ: hide-settings в headers (как renawave), без meta в теле base64. */
+/** Happ: hide-settings + providerid (header + body + URL). */
 export function buildSubscriptionResponseHeaders(env: BotEnv): Record<string, string> {
-  const headers: Record<string, string> = {
+  const providerId = happProviderId(env);
+  return {
     "hide-settings": "1",
+    providerid: providerId,
     "ping-type": "tcp",
     "subscription-ping-onopen-enabled": "1",
     "subscription-auto-update-enable": "1",
@@ -568,9 +582,6 @@ export function buildSubscriptionResponseHeaders(env: BotEnv): Record<string, st
     "Profile-Web-Page-Url": TELEGRAM_CHANNEL_URL,
     "Announce": subscriptionAnnounceHeader(env),
   };
-  const providerId = env.HAPP_PROVIDER_ID?.trim();
-  if (providerId) headers.providerid = providerId;
-  return headers;
 }
 
 /** HTTPS-цель импорта Happ (внутри happ://add/…). */

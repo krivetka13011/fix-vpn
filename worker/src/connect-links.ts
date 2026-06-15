@@ -413,7 +413,27 @@ export function normalizeJsonSubscriptionForHapp(
     if (port && DEAD_OUTBOUND_PORTS.has(port)) continue;
     fixed.push(rewriteJsonOutboundAddresses(item, host));
   }
-  return JSON.stringify(fixed);
+  return JSON.stringify(fixed, null, 2);
+}
+
+/** Happ wire format for JSON subs: base64 blob in text/plain (like sub.renawave.space). */
+export function encodeJsonSubscriptionBodyForHapp(jsonBody: string): string {
+  const bytes = new TextEncoder().encode(jsonBody.trim());
+  let binary = "";
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+  return btoa(binary);
+}
+
+export function decodeJsonSubscriptionBody(wire: string): string {
+  const trimmed = wire.trim();
+  if (trimmed.startsWith("[") || trimmed.startsWith("{")) return trimmed;
+  try {
+    const binary = atob(trimmed.replace(/\s/g, ""));
+    const bytes = Uint8Array.from(binary, (ch) => ch.charCodeAt(0));
+    return new TextDecoder().decode(bytes);
+  } catch {
+    return trimmed;
+  }
 }
 
 export async function fetchPanelJsonSubscription(
@@ -588,7 +608,7 @@ export async function panelJsonSubscriptionIsLive(
   try {
     const response = await fetch(url);
     if (!response.ok) return false;
-    const items = JSON.parse(await response.text()) as unknown;
+    const items = JSON.parse(decodeJsonSubscriptionBody(await response.text())) as unknown;
     return Array.isArray(items) && items.length > 0;
   } catch {
     return false;
@@ -694,7 +714,7 @@ export function redirectHtml(client: VpnClientId, importTarget: string): string 
   const label = clientLabel(client);
   const hint =
     client === "happ"
-      ? "JSON-подписка sub.fixvp.xyz — серверы VLESS | JSON, настройки скрыты. Если кнопка не сработала — скопируйте ссылку и вставьте в Happ вручную."
+      ? "Подписка: happ://add/https://sub.fixvp.xyz/{id} — как у конкурентов. Удалите старую подписку перед импортом."
       : "Если кнопка не сработала — скопируйте ссылку и вставьте в клиент вручную.";
 
   return `<!DOCTYPE html>

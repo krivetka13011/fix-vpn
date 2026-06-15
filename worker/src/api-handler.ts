@@ -51,6 +51,7 @@ import {
 import {
   buildClientImportTarget,
   buildSubscriptionResponseHeaders,
+  encodeJsonSubscriptionBodyForHapp,
   fetchPanelJsonSubscription,
   encodeStandardSubscriptionBody,
   fetchPanelSubscriptionBody,
@@ -339,7 +340,9 @@ export async function handleApiRequest(
     delete headers["check-url-via-proxy"];
     const userinfo = subscriptionUserinfoHeader(dbSub.ends_at ?? null);
     if (userinfo) headers["Subscription-Userinfo"] = userinfo;
-    return new Response(live.body, { status: 200, headers });
+    headers["Content-Disposition"] = `attachment; filename=${subId}`;
+    const wireBody = encodeJsonSubscriptionBodyForHapp(live.body);
+    return new Response(wireBody, { status: 200, headers });
   }
 
   if (path.startsWith("/api/redirect/") && request.method === "GET") {

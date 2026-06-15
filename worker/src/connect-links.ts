@@ -53,13 +53,19 @@ export function buildPanelSubscriptionUrl(env: BotEnv, subId: string): string {
 /** Публичный JSON URL подписки — Happ (заблокированные настройки). */
 export function buildClientJsonSubscriptionUrl(env: BotEnv, subId: string): string {
   const trimmed = subId.trim();
-  const base = subscriptionClientBaseUrl(env);
-  if (base) {
-    const origin = base.replace(/\/$/, "").replace(/\/sub$/i, "");
-    return `${origin}/json/${trimmed}`;
-  }
   const host = subscriptionPublicHost(env);
-  return `https://${host}/json/${trimmed}`;
+  return `https://${host}/${trimmed}`;
+}
+
+const SHORT_SUB_ID_RE = /^\/[a-zA-Z0-9]{8,40}$/;
+
+/** sub.fixvp.xyz/{subId} — короткий URL как у конкурентов (отдаёт JSON). */
+export function isShortSubscriptionPath(pathname: string): boolean {
+  return SHORT_SUB_ID_RE.test(pathname);
+}
+
+export function shortSubscriptionPathToJson(pathname: string): string {
+  return `/json/${pathname.slice(1)}`;
 }
 
 /** Публичный URL подписки — Worker custom domain sub.fixvp.xyz (HTTPS :443). */
@@ -528,7 +534,7 @@ export function buildSubscriptionResponseHeaders(env: BotEnv): Record<string, st
   };
 }
 
-/** Happ import: direct sub URL (crypt5 gives "Invalid subscription link format" on Happ 2.7). */
+/** Happ import: JSON subscription (VLESS | JSON in UI, hide-settings via headers). */
 export function buildHappImportTarget(env: BotEnv, subId: string): string {
   return buildHappDirectSubUrl(env, subId);
 }
@@ -599,9 +605,9 @@ export async function panelSubscriptionIsLive(
   return false;
 }
 
-/** Прямой URL подписки для Happ: https://sub.fixvp.xyz/sub/{subId}. */
+/** Прямой URL JSON-подписки для Happ: https://sub.fixvp.xyz/{subId}. */
 export function buildHappDirectSubUrl(env: BotEnv, subId: string): string {
-  return buildClientSubscriptionUrl(env, subId);
+  return buildClientJsonSubscriptionUrl(env, subId);
 }
 
 /** @deprecated use buildHappDirectSubUrl */
@@ -676,7 +682,7 @@ export function redirectHtml(client: VpnClientId, importTarget: string): string 
   const label = clientLabel(client);
   const hint =
     client === "happ"
-      ? "Прямая подписка sub.fixvp.xyz. Если кнопка не сработала — скопируйте ссылку и вставьте в Happ вручную."
+      ? "JSON-подписка sub.fixvp.xyz — серверы VLESS | JSON, настройки скрыты. Если кнопка не сработала — скопируйте ссылку и вставьте в Happ вручную."
       : "Если кнопка не сработала — скопируйте ссылку и вставьте в клиент вручную.";
 
   return `<!DOCTYPE html>

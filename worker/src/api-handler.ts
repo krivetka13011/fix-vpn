@@ -333,6 +333,7 @@ export async function handleApiRequest(
       ...buildSubscriptionResponseHeaders(env),
       ...CORS,
     };
+    headers["hide-settings"] = "1";
     const userinfo = subscriptionUserinfoHeader(dbSub.ends_at ?? null);
     if (userinfo) headers["Subscription-Userinfo"] = userinfo;
     return new Response(jsonBody, { status: 200, headers });

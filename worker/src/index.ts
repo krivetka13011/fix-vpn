@@ -1,4 +1,9 @@
 import { handleApiRequest, type ApiEnv } from "./api-handler";
+import {
+  isShortSubscriptionPath,
+  shortSubscriptionPathToJson,
+} from "./connect-links";
+import { subscriptionPublicHost } from "./env";
 
 export interface Env extends ApiEnv {
   ASSETS: Fetcher;
@@ -28,8 +33,16 @@ export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
 
-    if (url.pathname.startsWith("/api/") || url.pathname.startsWith("/sub/") || url.pathname.startsWith("/json/")) {
-      return handleApiRequest(request, env, url.pathname, ctx);
+    let path = url.pathname;
+    if (
+      url.hostname === subscriptionPublicHost(env) &&
+      isShortSubscriptionPath(path)
+    ) {
+      path = shortSubscriptionPathToJson(path);
+    }
+
+    if (path.startsWith("/api/") || path.startsWith("/sub/") || path.startsWith("/json/")) {
+      return handleApiRequest(request, env, path, ctx);
     }
 
     return withAssetCors(request, await env.ASSETS.fetch(request));

@@ -559,11 +559,32 @@ export class XuiApi {
     });
     await this.parseResponse(response, "addClient");
     this.invalidateScan();
+    await this.forceEnableClient(client.tgId, client.email);
   }
 
-  private async enableClientOnInbounds(email: string): Promise<void> {
-    const needle = email.trim();
-    if (!needle) return;
+  private async panelActionSucceeded(response: Response): Promise<boolean> {
+    if (!response.ok) return false;
+    const text = (await response.text()).trim();
+    if (!text) return true;
+    try {
+      const payload = JSON.parse(text) as { success?: boolean; msg?: string };
+      if (payload.success === false) {
+        console.error("panel action failed:", payload.msg || text.slice(0, 120));
+        return false;
+      }
+      return true;
+    } catch {
+      return !isPanelHtmlError(text, response.status);
+    }
+  }
+
+  private async findInboundClientRows(
+    telegramId: number,
+    emailHint?: string
+  ): Promise<Array<{ inboundId: number; row: Record<string, unknown>; email: string }>> {
+    const hint = emailHint?.trim() || String(telegramId);
+    const hits: Array<{ inboundId: number; row: Record<string, unknown>; email: string }> =
+      [];
 
     for (const inboundId of this.inboundIds) {
       try {
@@ -580,33 +601,147 @@ export class XuiApi {
                 clients?: Array<Record<string, unknown>>;
               })
             : (settingsRaw as { clients?: Array<Record<string, unknown>> } | undefined);
-        const clients = settings?.clients ?? [];
-        const row = clients.find((client) => String(client.email || "") === needle);
-        if (!row) continue;
 
-        const clientUuid = String(row.id || "");
-        if (!clientUuid) continue;
-
-        row.enable = true;
-        const form = new URLSearchParams();
-        form.set("id", String(inboundId));
-        form.set("settings", JSON.stringify({ clients: [row] }));
-
-        const updateResponse = await this.request(
-          `/panel/api/inbounds/updateClient/${clientUuid}`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/x-www-form-urlencoded" },
-            body: form.toString(),
+        for (const row of settings?.clients ?? []) {
+          const email = String(row.email || "");
+          const tgId = Number(row.tgId) || 0;
+          if (tgId === telegramId || email === hint) {
+            hits.push({ inboundId, row, email });
           }
-        );
-        await this.parseResponse(updateResponse, `enableClientOnInbounds:${inboundId}`);
+        }
       } catch (error) {
-        console.error(`enableClientOnInbounds ${inboundId}:`, error);
+        console.error(`findInboundClientRows ${inboundId}:`, error);
       }
     }
 
-    this.invalidateScan();
+    return hits;
+  }
+
+  private inboundRowToRecord(
+    row: Record<string, unknown>,
+    email: string,
+    telegramId: number
+  ): XuiClientRecord {
+    return {
+      id: String(row.id || ""),
+      email: String(row.email || email),
+      subId: String(row.subId ?? ""),
+      limitIp: Number(row.limitIp ?? this.limitIp),
+      expiryTime: Number(row.expiryTime ?? 0),
+      enable: true,
+      tgId: Number(row.tgId) || telegramId,
+      totalGB: Number(row.totalGB ?? 0),
+      flow: String(row.flow ?? ""),
+    };
+  }
+
+  private async patchInboundClientEnabled(
+    inboundId: number,
+    row: Record<string, unknown>,
+    telegramId: number
+  ): Promise<boolean> {
+    const clientUuid = String(row.id || "");
+    if (!clientUuid) return false;
+
+    const patched = {
+      ...row,
+      enable: true,
+      tgId: telegramId || Number(row.tgId) || 0,
+    };
+    const form = new URLSearchParams();
+    form.set("id", String(inboundId));
+    form.set("settings", JSON.stringify({ clients: [patched] }));
+
+    try {
+      const response = await this.request(
+        `/panel/api/inbounds/updateClient/${clientUuid}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: form.toString(),
+        }
+      );
+      return await this.panelActionSucceeded(response);
+    } catch (error) {
+      console.error(`patchInboundClientEnabled ${inboundId}:`, error);
+      return false;
+    }
+  }
+
+  private async patchGlobalClientEnabled(record: XuiClientRecord): Promise<boolean> {
+    if (!record.id || !record.email) return false;
+    try {
+      const response = await this.request(
+        `/panel/api/clients/update/${encodeURIComponent(record.email)}`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            email: record.email,
+            inboundIds: this.inboundIds,
+            client: { ...record, enable: true },
+          }),
+        }
+      );
+      await this.parseResponse(response, "patchGlobalClientEnabled");
+      this.invalidateScan();
+      return true;
+    } catch (error) {
+      console.error("patchGlobalClientEnabled:", error);
+      return false;
+    }
+  }
+
+  /** Всегда включает клиента в панели (global + каждый inbound). */
+  async forceEnableClient(telegramId: number, emailHint?: string): Promise<void> {
+    const hint = emailHint?.trim() || String(telegramId);
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      if (attempt > 0) {
+        this.invalidateScan();
+        await new Promise((resolve) => setTimeout(resolve, 250 * attempt));
+      }
+
+      const rows = await this.findInboundClientRows(telegramId, hint);
+      if (rows.length === 0) continue;
+
+      let inboundOk = 0;
+      for (const { inboundId, row } of rows) {
+        if (await this.patchInboundClientEnabled(inboundId, row, telegramId)) {
+          inboundOk += 1;
+        }
+      }
+
+      const primary = rows[0];
+      const globalRecord = this.inboundRowToRecord(primary.row, primary.email, telegramId);
+      const globalOk = await this.patchGlobalClientEnabled(globalRecord);
+
+      if (inboundOk > 0 || globalOk) {
+        console.error(
+          "forceEnableClient:",
+          telegramId,
+          `inbound ${inboundOk}/${rows.length}`,
+          `global ${globalOk}`
+        );
+        return;
+      }
+    }
+
+    try {
+      const record = await this.fetchClientRecord(hint);
+      if (record) {
+        await this.patchGlobalClientEnabled({
+          ...record,
+          enable: true,
+          tgId: telegramId,
+        });
+      }
+    } catch (error) {
+      console.error("forceEnableClient fallback:", error);
+    }
+  }
+
+  async ensureClientEnabled(email: string, telegramId: number): Promise<void> {
+    await this.forceEnableClient(telegramId, email);
   }
 
   async setClientLimitIp(email: string, limitIp: number): Promise<void> {
@@ -634,30 +769,6 @@ export class XuiApi {
       totalGB: Number(row.totalGB ?? 0),
       flow: String(row.flow ?? ""),
     };
-  }
-
-  async ensureClientEnabled(email: string, telegramId: number): Promise<void> {
-    const needle = email.trim();
-    if (!needle) return;
-
-    try {
-      const record = await this.fetchClientRecord(needle);
-      if (record) {
-        await this.updateClient({
-          ...record,
-          enable: true,
-          tgId: record.tgId || telegramId,
-        });
-      }
-    } catch (error) {
-      console.error("ensureClientEnabled global:", error);
-    }
-
-    try {
-      await this.enableClientOnInbounds(needle);
-    } catch (error) {
-      console.error("ensureClientEnabled inbounds:", error);
-    }
   }
 
   async updateClient(client: XuiClientRecord): Promise<void> {
@@ -888,7 +999,6 @@ export class XuiApi {
     );
     try {
       await this.addClient(client);
-      await this.ensureClientEnabled(email, telegramId);
       return client.id;
     } catch (error) {
       const message = error instanceof Error ? error.message.toLowerCase() : "";
@@ -1018,8 +1128,9 @@ export class XuiApi {
       await this.updateClient(client);
     } catch (error) {
       console.error("provisionUser update:", error);
+    } finally {
+      await this.forceEnableClient(params.telegramId, prepared.email);
     }
-    await this.ensureClientEnabled(prepared.email, params.telegramId);
 
     return this.toProvisionResult(
       env,

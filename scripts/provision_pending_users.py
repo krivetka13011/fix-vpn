@@ -167,12 +167,14 @@ def ensure_panel_client(session, base, clients, row, worker, sub_links_fn, panel
                 print("repaired stale subId", tg_id, target_sub)
 
     if panel:
+        force_enable_panel_client(session, base, tg_id, panel.get("email") or str(tg_id))
         return panel
 
     email = str(tg_id)
     sub_id = str(row.get("xray_sub_id") or "").strip() or random_sub_id()
     client_uuid = str(row.get("xray_uuid") or "").strip() or str(uuid.uuid4())
     add_panel_client(session, base, email, sub_id, client_uuid, tg_id, limit_ip_for_row(row))
+    force_enable_panel_client(session, base, tg_id, email)
     refreshed = dedupe_clients_index(scan_clients(session, base))
     panel = find_panel_client(refreshed, tg_id, username)
     if not panel:
@@ -290,6 +292,67 @@ def add_panel_client(session, base, email, sub_id, client_uuid, tg_id, limit_ip=
     if "already in use" in str(data.get("msg", "")).lower():
         return True
     raise RuntimeError(data)
+
+
+def find_inbound_client_rows(session, base, tg_id, email_hint=None):
+    hint = str(email_hint or tg_id).strip()
+    hits = []
+    for inbound_id in INBOUND_IDS:
+        payload = session.get(f"{base}/panel/api/inbounds/get/{inbound_id}", timeout=30).json()
+        if not payload.get("success"):
+            continue
+        settings = payload["obj"]["settings"]
+        if isinstance(settings, str):
+            settings = json.loads(settings)
+        for client in settings.get("clients", []):
+            email = str(client.get("email", ""))
+            tg = int(client.get("tgId") or 0)
+            if tg == int(tg_id) or email == hint:
+                hits.append((inbound_id, client, email))
+    return hits
+
+
+def force_enable_panel_client(session, base, tg_id, email_hint=None):
+    tg_id = int(tg_id)
+    hits = find_inbound_client_rows(session, base, tg_id, email_hint)
+    enabled_inbound = 0
+    for inbound_id, row, email in hits:
+        client_uuid = str(row.get("id") or "")
+        if not client_uuid:
+            continue
+        patched = dict(row)
+        patched["enable"] = True
+        patched["tgId"] = tg_id
+        response = session.post(
+            f"{base}/panel/api/inbounds/updateClient/{client_uuid}",
+            data={"id": str(inbound_id), "settings": json.dumps({"clients": [patched]})},
+            timeout=30,
+        )
+        if response.ok or "success" in response.text.lower():
+            enabled_inbound += 1
+
+    if hits:
+        _, row, email = hits[0]
+        client = {
+            "id": row.get("id"),
+            "email": row.get("email") or email,
+            "subId": row.get("subId"),
+            "limitIp": row.get("limitIp", 1),
+            "expiryTime": row.get("expiryTime", 0),
+            "enable": True,
+            "tgId": tg_id,
+            "totalGB": row.get("totalGB", 0),
+            "flow": row.get("flow", ""),
+        }
+        session.post(
+            f"{base}/panel/api/clients/update/{client['email']}",
+            json={"email": client["email"], "inboundIds": INBOUND_IDS, "client": client},
+            timeout=30,
+        )
+
+    if hits:
+        print("force_enable", tg_id, "inbound", enabled_inbound, "/", len(hits))
+    return enabled_inbound > 0 or bool(hits)
 
 
 def clear_pending_panel_ips(sb: str, session: requests.Session, base: str) -> int:
@@ -530,6 +593,7 @@ def main():
         panel = ensure_panel_client(
             session, base, clients, row, worker, sub_links, panel_live
         )
+        force_enable_panel_client(session, base, tg_id, str(tg_id))
         clients = dedupe_clients_index(scan_clients(session, base))
 
         sub_id = str(panel.get("subId") or "").strip()

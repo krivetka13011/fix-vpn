@@ -322,21 +322,24 @@ export async function handleApiRequest(
       return new Response("subscription revoked", { status: 404, headers: CORS });
     }
 
-    const jsonBody = await fetchPanelJsonSubscription(env, subId);
-    if (!jsonBody) {
+    const live = await fetchPanelJsonSubscription(env, subId);
+    if (!live?.body) {
       return new Response("json subscription unavailable", { status: 503, headers: CORS });
     }
 
     const headers: Record<string, string> = {
-      "Content-Type": "application/json; charset=utf-8",
+      "Content-Type": "text/plain; charset=utf-8",
       "Cache-Control": "no-store",
+      ...live.headers,
       ...buildSubscriptionResponseHeaders(env),
       ...CORS,
     };
     headers["hide-settings"] = "1";
+    headers["ping-type"] = "tcp";
+    delete headers["check-url-via-proxy"];
     const userinfo = subscriptionUserinfoHeader(dbSub.ends_at ?? null);
     if (userinfo) headers["Subscription-Userinfo"] = userinfo;
-    return new Response(jsonBody, { status: 200, headers });
+    return new Response(live.body, { status: 200, headers });
   }
 
   if (path.startsWith("/api/redirect/") && request.method === "GET") {

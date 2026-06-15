@@ -322,8 +322,7 @@ const HAPP_CHECK_URL_VIA_PROXY = "https://cp.cloudflare.com/generate_204";
 
 const HAPP_SUB_META_LINES = [
   "#hide-settings: 1",
-  "#ping-type: proxy",
-  `#check-url-via-proxy: ${HAPP_CHECK_URL_VIA_PROXY}`,
+  "#ping-type: tcp",
   "#subscription-ping-onopen-enabled: 1",
   "#subscription-autoconnect: 1",
   "#subscription-autoconnect-type: lowestdelay",
@@ -420,7 +419,7 @@ export function normalizeJsonSubscriptionForHapp(
 export async function fetchPanelJsonSubscription(
   env: BotEnv,
   subId: string
-): Promise<string | null> {
+): Promise<{ body: string; headers: Record<string, string> } | null> {
   if (!subId.trim()) return null;
   const encoded = encodeURIComponent(subId);
   const bases = [
@@ -436,7 +435,22 @@ export async function fetchPanelJsonSubscription(
       if (!response.ok) continue;
       const payload = (await response.json()) as unknown;
       if (!Array.isArray(payload) || payload.length === 0) continue;
-      return normalizeJsonSubscriptionForHapp(payload, subscriptionEgressHost(env));
+      const headers: Record<string, string> = {};
+      for (const name of [
+        "Profile-Title",
+        "Subscription-Userinfo",
+        "Profile-Web-Page-Url",
+        "Support-Url",
+        "Announce",
+        "Profile-Update-Interval",
+      ]) {
+        const value = response.headers.get(name);
+        if (value) headers[name] = value;
+      }
+      return {
+        body: normalizeJsonSubscriptionForHapp(payload, subscriptionEgressHost(env)),
+        headers,
+      };
     } catch {
       // try next base
     }
@@ -516,18 +530,17 @@ export function subscriptionAnnounceHeader(env: BotEnv): string {
   );
 }
 
-/** Happ: hide-settings в заголовках и в теле /sub/ (всегда). */
+/** Happ: hide-settings + tcp ping (как у конкурентов на sub.domain/{id}). */
 export function buildSubscriptionResponseHeaders(env: BotEnv): Record<string, string> {
   return {
     "hide-settings": "1",
-    "ping-type": "proxy",
-    "check-url-via-proxy": HAPP_CHECK_URL_VIA_PROXY,
+    "ping-type": "tcp",
     "subscription-ping-onopen-enabled": "1",
     "subscription-autoconnect": "1",
     "subscription-autoconnect-type": "lowestdelay",
     "Profile-Update-Interval": "1",
     "Profile-Title": "base64:8J+Up0ZJWCBWUE4=",
-    "Content-Disposition": 'attachment; filename="FIX-VPN"',
+    "Content-Disposition": "attachment; filename=FIX-VPN",
     "Support-Url": supportTelegramUrl(env),
     "Profile-Web-Page-Url": TELEGRAM_CHANNEL_URL,
     "Announce": subscriptionAnnounceHeader(env),
@@ -542,8 +555,7 @@ export function buildHappImportTarget(env: BotEnv, subId: string): string {
 /** @deprecated use buildSubscriptionResponseHeaders(env) */
 export const SUBSCRIPTION_RESPONSE_HEADERS: Record<string, string> = {
   "hide-settings": "1",
-  "ping-type": "proxy",
-  "check-url-via-proxy": "https://cp.cloudflare.com/generate_204",
+  "ping-type": "tcp",
   "Profile-Update-Interval": "1",
   "Profile-Title": "base64:8J+Up0ZJWCBWUE4=",
 };
@@ -563,10 +575,10 @@ export async function panelJsonSubscriptionIsLive(
   subId: string
 ): Promise<boolean> {
   if (!subId.trim()) return false;
-  const json = await fetchPanelJsonSubscription(env, subId);
-  if (json && json.length > 100) {
+  const live = await fetchPanelJsonSubscription(env, subId);
+  if (live?.body && live.body.length > 100) {
     try {
-      const items = JSON.parse(json) as unknown;
+      const items = JSON.parse(live.body) as unknown;
       return Array.isArray(items) && items.length > 0;
     } catch {
       // fall through
@@ -576,7 +588,7 @@ export async function panelJsonSubscriptionIsLive(
   try {
     const response = await fetch(url);
     if (!response.ok) return false;
-    const items = (await response.json()) as unknown;
+    const items = JSON.parse(await response.text()) as unknown;
     return Array.isArray(items) && items.length > 0;
   } catch {
     return false;

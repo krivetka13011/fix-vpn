@@ -23,7 +23,7 @@ import { isPanelErrorBody, panelFetch } from "./panel-fetch";
 import { handleClientBotUpdate } from "./bots/client-bot";
 import { handlePartnerBotUpdate } from "./bots/partner-bot";
 import { beginE2eTrace, endE2eTrace } from "./e2e-trace";
-import { DeviceResetCooldownError } from "./device-reset";
+import { DeviceResetCooldownError, DeviceResetPanelError } from "./device-reset";
 import { approvePaidTransaction } from "./approve-transaction";
 import {
   cardlinkResultHtml,
@@ -652,6 +652,9 @@ export async function handleApiRequest(
     } catch (e) {
       if (e instanceof DeviceResetCooldownError) {
         return json({ error: e.message, cooldownMs: e.remainingMs }, 429);
+      }
+      if (e instanceof DeviceResetPanelError) {
+        return json({ error: e.message }, 502);
       }
       return json(
         { error: e instanceof Error ? e.message : "Reset failed" },

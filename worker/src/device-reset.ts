@@ -10,7 +10,6 @@ import { clearStuckRotationFlags } from "./subscription-rotate";
 import { XuiApi } from "./xui";
 
 export const DEVICE_RESET_COOLDOWN_MS = 24 * 60 * 60 * 1000;
-const PANEL_DELETE_TRY_TIMEOUT_MS = 8000;
 
 export function deviceResetCooldownRemaining(
   lastReset: string | null | undefined
@@ -41,6 +40,15 @@ export class DeviceResetCooldownError extends Error {
   }
 }
 
+export class DeviceResetPanelError extends Error {
+  constructor() {
+    super(
+      "Не удалось удалить клиента из панели. Подождите 1–2 минуты и повторите сброс."
+    );
+    this.name = "DeviceResetPanelError";
+  }
+}
+
 export const DEVICE_RESET_SUCCESS_NOTICE =
   "Подключение сброшено. Клиент удалён из панели — подключите VPN заново. Следующий сброс — через 24 часа.";
 
@@ -48,18 +56,22 @@ export function deviceResetNotice(): string {
   return DEVICE_RESET_SUCCESS_NOTICE;
 }
 
-async function clearPanelClientDbState(env: BotEnv, userId: string): Promise<void> {
+async function clearPanelClientDbState(
+  env: BotEnv,
+  userId: string,
+  telegramId: number
+): Promise<void> {
   await clearVpnDeviceBindings(env, userId);
   await clearXuiInboundClients(env, userId);
   await patchSubscription(env, userId, {
-    client_email: null,
+    client_email: String(telegramId),
     xray_uuid: null,
     panel_ip_clear_requested_at: null,
     subscription_payload_cache: null,
   });
 }
 
-/** Удаляет клиента из панели и очищает привязки; при повторном подключении создаётся новый клиент с тем же Telegram ID. */
+/** Удаляет клиента из панели; при следующем подключении создаётся заново с тем же Telegram ID. */
 export async function resetPanelClient(
   env: BotEnv,
   userId: string,
@@ -67,6 +79,12 @@ export async function resetPanelClient(
 ): Promise<void> {
   const sub = await getSubscription(env, userId);
   if (!sub) throw new Error("Подписка не найдена");
+
+  const telegramId =
+    options?.telegramId ?? Number(sub.client_email?.trim()) ?? 0;
+  if (!Number.isFinite(telegramId) || telegramId <= 0) {
+    throw new Error("Не удалось определить Telegram ID");
+  }
 
   const bypass =
     options?.bypassCooldown ||
@@ -78,24 +96,22 @@ export async function resetPanelClient(
     if (remaining > 0) throw new DeviceResetCooldownError(remaining);
   }
 
-  const telegramId =
-    options?.telegramId ?? Number(sub.client_email?.trim()) ?? 0;
-  const now = new Date().toISOString();
-
-  if (Number.isFinite(telegramId) && telegramId > 0) {
-    const xui = new XuiApi(env);
-    const panelEmail =
-      (await xui.resolvePanelEmail(telegramId)) || String(telegramId);
-    const deleted = await xui.tryDeletePanelClient(
-      panelEmail,
-      PANEL_DELETE_TRY_TIMEOUT_MS
+  const xui = new XuiApi(env);
+  const deleted = await xui.deletePanelClientByTelegramId(telegramId);
+  const stillThere = await xui.findClientByTelegramId(telegramId);
+  if (stillThere) {
+    console.error(
+      "resetPanelClient: delete failed for",
+      telegramId,
+      stillThere.email,
+      "removed=",
+      deleted
     );
-    if (!deleted) {
-      console.error("resetPanelClient: panel delete failed for", panelEmail);
-    }
+    throw new DeviceResetPanelError();
   }
 
-  await clearPanelClientDbState(env, userId);
+  const now = new Date().toISOString();
+  await clearPanelClientDbState(env, userId, telegramId);
   await patchSubscription(env, userId, {
     last_device_reset: now,
   });

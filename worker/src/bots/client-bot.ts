@@ -35,6 +35,7 @@ import { handleManagerPartnerCallback } from "./partner-bot";
 import { clearStuckRotationFlags } from "../subscription-rotate";
 import {
   DeviceResetCooldownError,
+  DeviceResetPanelError,
   deviceResetNotice,
   resetPanelClient,
 } from "../device-reset";
@@ -890,6 +891,10 @@ export async function handleClientBotUpdate(
         await resetDeviceBinding(env, tg, chatId, messageId);
       } catch (error) {
         if (error instanceof DeviceResetCooldownError) {
+          await showProfile(env, chatId, tg, messageId, `<b>${error.message}</b>`);
+          return;
+        }
+        if (error instanceof DeviceResetPanelError) {
           await showProfile(env, chatId, tg, messageId, `<b>${error.message}</b>`);
           return;
         }

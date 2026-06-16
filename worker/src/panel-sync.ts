@@ -93,5 +93,11 @@ export async function syncPanelSubIdForUser(
 
   await patchSubscription(env, userId, patch);
 
+  try {
+    await new XuiApi(env).ensureClientEnabledByTelegramId(telegramId);
+  } catch (error) {
+    console.error("syncPanelSubId enable:", error);
+  }
+
   return subId;
 }

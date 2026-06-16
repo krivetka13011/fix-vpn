@@ -181,6 +181,12 @@ export async function buildMiniappConnectUrl(
     throw new Error("Подписка ещё синхронизируется. Повторите через минуту.");
   }
 
+  try {
+    await new XuiApi(env).ensureClientEnabledByTelegramId(tg.id);
+  } catch (error) {
+    console.error("buildMiniappConnectUrl enable:", error);
+  }
+
   const mappedClient = mapClient(client);
   const user = await getUserByTelegramId(env, tg.id);
   if (user) {

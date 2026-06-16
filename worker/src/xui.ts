@@ -693,7 +693,13 @@ export class XuiApi {
     for (const row of clients) {
       const rowEmail = String(row.email || "");
       const tgId = Number(row.tgId) || 0;
-      if (tgId !== telegramId && rowEmail !== email) continue;
+      if (
+        tgId !== telegramId &&
+        rowEmail !== email &&
+        rowEmail !== String(telegramId)
+      ) {
+        continue;
+      }
       row.enable = true;
       if (!row.tgId) row.tgId = telegramId;
       touched = true;
@@ -771,7 +777,9 @@ export class XuiApi {
         for (const row of settings.clients ?? []) {
           const rowEmail = String(row.email || "");
           const tgId = Number(row.tgId) || 0;
-          if (tgId !== telegramId && rowEmail !== hint) continue;
+          if (tgId !== telegramId && rowEmail !== hint && rowEmail !== String(telegramId)) {
+            continue;
+          }
           if (row.enable === true) continue;
           needsPatch = true;
           break;
@@ -805,7 +813,10 @@ export class XuiApi {
 
   /** Включает клиента: clients/update + enable:true в каждом inbound (тумблер в UI). */
   async forceEnableClient(telegramId: number, emailHint?: string): Promise<void> {
-    const hint = emailHint?.trim() || String(telegramId);
+    const resolved =
+      (await this.resolvePanelEmail(telegramId)) ||
+      emailHint?.trim() ||
+      String(telegramId);
     const delays = [0, 400, 900, 1600, 2500];
 
     for (const delay of delays) {
@@ -815,7 +826,7 @@ export class XuiApi {
       }
 
       let globalOk = false;
-      const record = await this.fetchClientRecord(hint);
+      const record = await this.fetchClientRecord(resolved);
       if (record?.id) {
         globalOk = await this.patchGlobalClientEnabled({
           ...record,
@@ -824,7 +835,7 @@ export class XuiApi {
           limitIp: record.limitIp > 0 ? record.limitIp : 1,
         });
       } else {
-        const rows = await this.findInboundClientRows(telegramId, hint);
+        const rows = await this.findInboundClientRows(telegramId, resolved);
         if (rows.length > 0) {
           const primary = rows[0];
           const globalRecord = this.inboundRowToRecord(
@@ -838,9 +849,9 @@ export class XuiApi {
         }
       }
 
-      const inboundOk = await this.syncInboundEnableFlags(telegramId, hint);
+      const inboundOk = await this.syncInboundEnableFlags(telegramId, resolved);
       if (globalOk || inboundOk) {
-        const enabled = await this.inboundClientsEnabled(telegramId, hint);
+        const enabled = await this.inboundClientsEnabled(telegramId, resolved);
         if (enabled) {
           console.error(
             "forceEnableClient:",
@@ -930,28 +941,123 @@ export class XuiApi {
     }
   }
 
+  /** Полное удаление клиента из панели (inbound + global). */
+  async deletePanelClientByTelegramId(telegramId: number): Promise<boolean> {
+    if (!Number.isFinite(telegramId) || telegramId <= 0) return false;
+
+    this.invalidateScan();
+    const emails = new Set<string>([String(telegramId)]);
+
+    const byTg = await this.findClientByTelegramId(telegramId);
+    if (byTg?.email) emails.add(byTg.email);
+
+    const inboundRows = await this.findInboundClientRows(
+      telegramId,
+      String(telegramId)
+    );
+    for (const hit of inboundRows) emails.add(hit.email);
+
+    let removed = false;
+    const processedInbounds = new Set<number>();
+
+    for (const inboundId of this.inboundIds) {
+      if (processedInbounds.has(inboundId)) continue;
+      try {
+        const response = await this.request(`/panel/api/inbounds/get/${inboundId}`);
+        const payload = await this.readJsonBody(response);
+        if (!response.ok || payload.success === false) continue;
+        const obj = payload.obj as Record<string, unknown> | undefined;
+        if (!obj) continue;
+
+        const settingsRaw = obj.settings;
+        const settings =
+          typeof settingsRaw === "string"
+            ? (JSON.parse(settingsRaw) as {
+                clients?: Array<Record<string, unknown>>;
+              })
+            : ((settingsRaw as { clients?: Array<Record<string, unknown>> }) ?? {});
+
+        const clients = [...(settings.clients ?? [])];
+        const filtered = clients.filter((row) => {
+          const tgId = Number(row.tgId) || 0;
+          const rowEmail = String(row.email || "");
+          if (tgId === telegramId) return false;
+          if (emails.has(rowEmail)) return false;
+          if (rowEmail === String(telegramId)) return false;
+          return true;
+        });
+
+        if (filtered.length === clients.length) continue;
+
+        const updateBody: Record<string, unknown> = {
+          ...obj,
+          settings: JSON.stringify({ ...settings, clients: filtered }),
+        };
+        for (const key of Object.keys(updateBody)) {
+          if (updateBody[key] === null) delete updateBody[key];
+        }
+
+        const upd = await this.request(`/panel/api/inbounds/update/${inboundId}`, {
+          method: "POST",
+          body: JSON.stringify(updateBody),
+        });
+        if (await this.panelActionSucceeded(upd)) removed = true;
+        processedInbounds.add(inboundId);
+      } catch (error) {
+        console.error(`deletePanelClientByTelegramId inbound ${inboundId}:`, error);
+      }
+    }
+
+    for (const email of emails) {
+      if (await this.tryDeletePanelClient(email, 15_000)) removed = true;
+    }
+
+    this.invalidateScan();
+    const stillThere = await this.findClientByTelegramId(telegramId);
+    if (stillThere) {
+      console.error(
+        "deletePanelClientByTelegramId: still in panel",
+        telegramId,
+        stillThere.email
+      );
+      return false;
+    }
+
+    return removed || emails.size > 0;
+  }
+
   /** Полное удаление клиента из панели (для сброса подключения). */
   async tryDeletePanelClient(email: string, timeoutMs = 8000): Promise<boolean> {
-    const encoded = encodeURIComponent(email.trim());
-    if (!encoded) return false;
-    const path = `/panel/api/clients/del/${encoded}`;
+    const trimmed = email.trim();
+    if (!trimmed) return false;
+
+    const encodedCandidates = [
+      encodeURIComponent(trimmed),
+      ...(trimmed.includes("@") ? [trimmed] : []),
+    ].filter((value, index, list) => list.indexOf(value) === index);
+
+    const pathVariants = encodedCandidates.map(
+      (encoded) => `/panel/api/clients/del/${encoded}`
+    );
     const bases = [xuiWorkerBaseUrl(this.env), ...this.baseUrls].filter(
       (base, index, list) => base && list.indexOf(base) === index
     );
 
     for (const baseUrl of bases) {
-      try {
-        const response = await this.requestTimed(
-          `${baseUrl}${path}`,
-          { method: "POST", body: "{}" },
-          timeoutMs
-        );
-        if (await this.panelActionSucceeded(response)) {
-          this.invalidateScan();
-          return true;
+      for (const path of pathVariants) {
+        try {
+          const response = await this.requestTimed(
+            `${baseUrl}${path}`,
+            { method: "POST", body: "{}" },
+            timeoutMs
+          );
+          if (await this.panelActionSucceeded(response)) {
+            this.invalidateScan();
+            return true;
+          }
+        } catch {
+          // try next path/base
         }
-      } catch {
-        // try next base
       }
     }
     return false;

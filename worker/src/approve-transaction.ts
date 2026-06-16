@@ -12,6 +12,7 @@ import {
   patchUser,
   saveXuiInboundClients,
 } from "./repository";
+import { applyReferralPaymentBonuses } from "./referral-bonus";
 import { sbJson, sbRequest } from "./supabase";
 
 function formatDateFromMs(ms: number): string {
@@ -29,13 +30,14 @@ async function sbUserById(env: BotEnv, userId: string) {
       id: string;
       telegram_id: number;
       username: string | null;
+      display_name: string | null;
       ref_by_partner_id: number | null;
       first_payment_done: boolean;
     }>
   >(
     await sbRequest(
       env,
-      `users?id=eq.${userId}&select=id,telegram_id,username,ref_by_partner_id,first_payment_done&limit=1`
+      `users?id=eq.${userId}&select=id,telegram_id,username,display_name,ref_by_partner_id,first_payment_done&limit=1`
     )
   );
   return rows[0] ?? null;
@@ -54,8 +56,14 @@ export async function approvePaidTransaction(
   if (!user) return { ok: false, message: "Пользователь не найден" };
 
   const months = txn.billing_months as BillingMonths;
+  const extraDevices = Number(txn.extra_devices ?? 0);
   const xui = new XuiApi(env);
   const sub = await getSubscription(env, user.id);
+  const subWithDevices = {
+    ...(sub ?? { plan_type: "basic" as const, extra_devices: 0 }),
+    extra_devices: extraDevices,
+    plan_type: "basic" as const,
+  };
   const extendDays = months * 30;
   const baseMs =
     sub?.status === "active" && sub.ends_at
@@ -68,7 +76,7 @@ export async function approvePaidTransaction(
     displayName: user.display_name,
     telegramId: user.telegram_id,
     expiryMs,
-    limitIp: panelLimitIpForSubscription(sub),
+    limitIp: panelLimitIpForSubscription(subWithDevices),
     dbSubscription: sub,
   });
 
@@ -94,6 +102,7 @@ export async function approvePaidTransaction(
     plan_type: "basic",
     plan_label: `Базовый · ${periodLabel(months)}`,
     billing_months: months,
+    extra_devices: extraDevices,
     starts_at: sub?.starts_at || formatDateFromMs(Date.now()),
     ends_at: formatDateFromMs(expiryMs),
     is_trial: false,
@@ -106,16 +115,33 @@ export async function approvePaidTransaction(
 
   await syncPanelDeviceLimit(env, user.id);
 
+  let commission = 0;
+  if (user.ref_by_partner_id) {
+    const commissionPct = Number(env.PARTNER_DEFAULT_COMMISSION_PERCENT || "30");
+    commission = Math.round((Number(txn.amount) * commissionPct) / 100);
+    if (commission > 0) {
+      await addPartnerBalance(env, user.ref_by_partner_id, commission);
+    }
+  }
+
+  await patchTransaction(env, txnId, {
+    status: "approved",
+    ...(commission > 0 ? { partner_commission_amount: commission } : {}),
+  });
+
   if (txn.is_first_payment && user.ref_by_partner_id) {
-    const commissionPct = Number(env.PARTNER_DEFAULT_COMMISSION_PERCENT || "50");
-    const commission = Math.round((Number(txn.amount) * commissionPct) / 100);
-    await addPartnerBalance(env, user.ref_by_partner_id, commission);
-    await patchTransaction(env, txnId, {
-      status: "approved",
-      partner_commission_amount: commission,
-    });
-  } else {
-    await patchTransaction(env, txnId, { status: "approved" });
+    try {
+      await applyReferralPaymentBonuses(env, {
+        partnerTelegramId: user.ref_by_partner_id,
+        refereeUserId: user.id,
+        refereeTelegramId: user.telegram_id,
+        refereeUsername: user.username,
+        refereeDisplayName: user.display_name,
+        billingMonths: months,
+      });
+    } catch (error) {
+      console.error("applyReferralPaymentBonuses:", error);
+    }
   }
 
   if (!user.first_payment_done) {
@@ -127,7 +153,7 @@ export async function approvePaidTransaction(
     await sendMessage(
       clientToken,
       user.telegram_id,
-      `Оплата подтверждена. Подписка продлена на ${periodLabel(months)}.`
+      `✅ Оплата подтверждена. Подписка продлена на ${periodLabel(months)}.`
     );
   }
 

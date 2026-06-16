@@ -18,6 +18,7 @@ export interface TransactionRow {
   user_id: string;
   amount: number;
   billing_months: number;
+  extra_devices?: number;
   promo_code_id: string | null;
   payment_method: string;
   status: string;
@@ -370,6 +371,19 @@ export async function getPartner(
     await sbRequest(env, `partners?id=eq.${telegramId}&select=*&limit=1`)
   );
   return rows[0] ?? null;
+}
+
+export async function countPartnerPaidReferrals(
+  env: SupabaseEnv,
+  partnerId: number
+): Promise<number> {
+  const rows = await sbJson<Array<{ id: string }>>(
+    await sbRequest(
+      env,
+      `users?ref_by_partner_id=eq.${partnerId}&first_payment_done=eq.true&select=id`
+    )
+  );
+  return rows.length;
 }
 
 export async function createPartner(

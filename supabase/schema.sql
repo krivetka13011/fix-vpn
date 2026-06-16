@@ -85,6 +85,7 @@ create table if not exists transactions (
   user_id uuid not null references users(id) on delete cascade,
   amount numeric(12, 2) not null,
   billing_months int not null,
+  extra_devices int not null default 0,
   promo_code_id uuid references promo_codes(id) on delete set null,
   payment_method text not null check (payment_method in ('sbp', 'card', 'crypto_usdt')),
   status text not null default 'pending' check (status in ('pending', 'approved', 'rejected')),

@@ -28,7 +28,17 @@ import {
   forwardMessage,
   sendMessage,
 } from "./telegram-api";
-import { BILLING_OPTIONS, calcPrice, periodLabel, type BillingMonths } from "./pricing";
+import { periodLabel, type BillingMonths } from "./pricing";
+import {
+  calcCheckoutPrice,
+  defaultCheckoutDevices,
+  extraDevicesForTotal,
+  includedDevices,
+  paymentMethodsKeyboard,
+  periodsKeyboard,
+  tariffConfigKeyboard,
+  tariffConfigText,
+} from "./checkout-ui";
 import { PRIVACY_POLICY_URL, SUPPORT_TELEGRAM_USERNAME, TERMS_OF_SERVICE_URL } from "../catalog";
 import { managerTxnKeyboard, notifyManager } from "./manager";
 import { handleManagerPartnerCallback } from "./partner-bot";
@@ -93,19 +103,34 @@ async function safeAnswerCallback(
   }
 }
 
+function mainMenuText(env: BotEnv, displayName: string): string {
+  const trialDays = Number(env.TRIAL_DAYS || env.XUI_TRIAL_DAYS || "1");
+  const dayLabel =
+    trialDays === 1 ? "день" : trialDays >= 2 && trialDays <= 4 ? "дня" : "дней";
+  return (
+    `Привет, <b>${displayName}</b>! 👋\n` +
+    `⚡️ VPN нового уровня\n\n` +
+    `🌍 Свободный доступ к сайтам и сервисам\n` +
+    `📞 Звонки и видео без ограничений\n` +
+    `🧪 Пробный период — ${trialDays} ${dayLabel}\n` +
+    `🔐 Полная защита и конфиденциальность\n` +
+    `📶 Работает стабильно даже в мобильных сетях`
+  );
+}
+
 function mainMenuKeyboard(env: BotEnv, hasUsedTrial: boolean) {
   const rows: Array<Array<Record<string, string>>> = [];
   if (!hasUsedTrial) {
-    rows.push([{ text: "Пробный период", callback_data: "c:trial" }]);
+    rows.push([{ text: "🧪 Пробный период", callback_data: "c:trial" }]);
   }
   rows.push(
-    [{ text: "Оформить подписку", callback_data: "c:buy" }],
-    [{ text: "Мой профиль", callback_data: "c:profile" }],
-    [{ text: "Подключить VPN", callback_data: "c:connect" }],
-    [{ text: "Поддержка", callback_data: "c:support" }],
+    [{ text: "💳 Оформить подписку", callback_data: "c:buy" }],
+    [{ text: "👤 Мой профиль", callback_data: "c:profile" }],
+    [{ text: "🔌 Подключить VPN", callback_data: "c:connect" }],
+    [{ text: "💬 Поддержка", callback_data: "c:support" }],
     [
       {
-        text: "Партнерство",
+        text: "🤝 Партнерство",
         url: `https://t.me/${env.PARTNER_BOT_USERNAME || "FIX_Partner_bot"}`,
       },
     ]
@@ -121,10 +146,10 @@ function supportMenuKeyboard(env: BotEnv): Record<string, unknown> {
   const support = supportUsername(env);
   return {
     inline_keyboard: [
-      [{ text: "Написать менеджеру", url: `https://t.me/${support}` }],
-      [{ text: "Политика конфиденциальности", url: PRIVACY_POLICY_URL }],
-      [{ text: "Пользовательское соглашение", url: TERMS_OF_SERVICE_URL }],
-      [{ text: "Назад", callback_data: "c:menu" }],
+      [{ text: "✉️ Написать менеджеру", url: `https://t.me/${support}` }],
+      [{ text: "📄 Политика конфиденциальности", url: PRIVACY_POLICY_URL }],
+      [{ text: "📋 Пользовательское соглашение", url: TERMS_OF_SERVICE_URL }],
+      [{ text: "◀️ Назад", callback_data: "c:menu" }],
     ],
   };
 }
@@ -140,44 +165,21 @@ async function showSupportMenu(
     token,
     chatId,
     messageId,
-    `<b>Поддержка</b>\n\n` +
+    `<b>💬 Поддержка</b>\n\n` +
       `Контакт: @${support}\n` +
       `По оплате, подключению и другим вопросам — напишите менеджеру.`,
     supportMenuKeyboard(env)
   );
 }
 
-function periodsKeyboard() {
-  return {
-    inline_keyboard: BILLING_OPTIONS.map((months) => [
-      {
-        text: periodLabel(months),
-        callback_data: `c:period:${months}`,
-      },
-    ]).concat([[{ text: "Назад", callback_data: "c:menu" }]]),
-  };
-}
-
-function paymentMethodsKeyboard(months: number, promo = 0) {
-  return {
-    inline_keyboard: [
-      [{ text: "СБП", callback_data: `c:pay:sbp:${months}:${promo}` }],
-      [{ text: "Карта", callback_data: `c:pay:card:${months}:${promo}` }],
-      [{ text: "USDT", callback_data: `c:pay:crypto_usdt:${months}:${promo}` }],
-      [{ text: "Ввести промокод", callback_data: `c:promo:${months}` }],
-      [{ text: "Назад", callback_data: "c:buy" }],
-    ],
-  };
-}
-
 function connectOsKeyboard() {
   return {
     inline_keyboard: [
-      [{ text: "Android", callback_data: "c:os:android" }],
-      [{ text: "iOS", callback_data: "c:os:ios" }],
-      [{ text: "Windows", callback_data: "c:os:windows" }],
-      [{ text: "macOS", callback_data: "c:os:macos" }],
-      [{ text: "Назад", callback_data: "c:menu" }],
+      [{ text: "🤖 Android", callback_data: "c:os:android" }],
+      [{ text: "🍎 iOS", callback_data: "c:os:ios" }],
+      [{ text: "🪟 Windows", callback_data: "c:os:windows" }],
+      [{ text: "💻 macOS", callback_data: "c:os:macos" }],
+      [{ text: "◀️ Назад", callback_data: "c:menu" }],
     ],
   };
 }
@@ -459,10 +461,7 @@ async function showMainMenu(
 ): Promise<void> {
   const token = clientBotToken(env)!;
   const user = await upsertTelegramUser(env, tg);
-  const text =
-    `FIX VPN\n\n` +
-    `Привет, <b>${user.display_name}</b>.\n` +
-    `Выберите действие:`;
+  const text = mainMenuText(env, user.display_name);
   const markup = mainMenuKeyboard(env, Boolean(user.has_used_trial));
   if (messageId) {
     await editMessage(token, chatId, messageId, text, markup);
@@ -771,40 +770,86 @@ export async function handleClientBotUpdate(
     }
     if (data === "c:buy") {
       await safeAnswerCallback(token, cq.id);
-      await editMessage(token, chatId, messageId, "Выберите период подписки:", periodsKeyboard());
+      await editMessage(
+        token,
+        chatId,
+        messageId,
+        "💳 <b>Оформление подписки</b>\n\nВыберите период:",
+        periodsKeyboard(env)
+      );
       return;
     }
     if (data.startsWith("c:period:")) {
       await safeAnswerCallback(token, cq.id);
       const months = Number(data.split(":")[2]) as BillingMonths;
-      const price = calcPrice(env, months);
+      const defaultDevices = defaultCheckoutDevices();
       await editMessage(
         token,
         chatId,
         messageId,
-        `Период: <b>${periodLabel(months)}</b>\nСумма: <b>${price} ₽</b>\n\nВыберите способ оплаты:`,
-        paymentMethodsKeyboard(months)
+        tariffConfigText(env, months, defaultDevices),
+        tariffConfigKeyboard(env, months, defaultDevices)
+      );
+      return;
+    }
+    if (data.startsWith("c:dev:")) {
+      await safeAnswerCallback(token, cq.id);
+      const [, , monthsRaw, devicesRaw, promoRaw] = data.split(":");
+      const months = Number(monthsRaw) as BillingMonths;
+      const totalDevices = Number(devicesRaw);
+      const promo = Number(promoRaw || "0");
+      await editMessage(
+        token,
+        chatId,
+        messageId,
+        tariffConfigText(env, months, totalDevices, promo),
+        tariffConfigKeyboard(env, months, totalDevices, promo)
+      );
+      return;
+    }
+    if (data.startsWith("c:checkout:")) {
+      await safeAnswerCallback(token, cq.id);
+      const [, , monthsRaw, devicesRaw, promoRaw] = data.split(":");
+      const months = Number(monthsRaw) as BillingMonths;
+      const totalDevices = Number(devicesRaw);
+      const promo = Number(promoRaw || "0");
+      const price = calcCheckoutPrice(env, months, totalDevices, promo);
+      await editMessage(
+        token,
+        chatId,
+        messageId,
+        `💳 <b>Оплата</b>\n\n` +
+          `Период: <b>${periodLabel(months)}</b>\n` +
+          `Устройств: <b>${totalDevices}</b>\n` +
+          `Сумма: <b>${price} ₽</b>\n\n` +
+          `Выберите способ оплаты:`,
+        paymentMethodsKeyboard(months, totalDevices, promo)
       );
       return;
     }
     if (data.startsWith("c:promo:")) {
       await safeAnswerCallback(token, cq.id);
-      const months = Number(data.split(":")[2]);
-      await setSession(env, tg.id, "client", "await_promo", { months });
-      await editMessage(token, chatId, messageId, "Введите промокод сообщением:");
+      const parts = data.split(":");
+      const months = Number(parts[2]);
+      const totalDevices = Number(parts[3] || includedDevices());
+      await setSession(env, tg.id, "client", "await_promo", { months, totalDevices });
+      await editMessage(token, chatId, messageId, "🎟 Введите промокод сообщением:");
       return;
     }
     if (data.startsWith("c:pay:")) {
       await safeAnswerCallback(token, cq.id);
-      const [, , method, monthsRaw, promoRaw] = data.split(":");
+      const [, , method, monthsRaw, promoRaw, devicesRaw] = data.split(":");
       const months = Number(monthsRaw) as BillingMonths;
       const promo = Number(promoRaw || "0");
-      const price = calcPrice(env, months, promo);
+      const totalDevices = Number(devicesRaw || includedDevices());
+      const extraDevices = extraDevicesForTotal(totalDevices);
+      const price = calcCheckoutPrice(env, months, totalDevices, promo);
       const user = await upsertTelegramUser(env, tg);
       const txn = await createTransaction(env, {
         user_id: user.id,
         amount: price,
         billing_months: months,
+        extra_devices: extraDevices,
         payment_method: method,
         status: "pending",
         is_first_payment: !Boolean(user.first_payment_done),
@@ -827,7 +872,7 @@ export async function handleClientBotUpdate(
             token,
             chatId,
             messageId,
-            `Оплата FIX VPN: <b>${price} ₽</b> · ${periodLabel(months)}\n\n` +
+            `Оплата FIX VPN: <b>${price} ₽</b> · ${periodLabel(months)} · ${totalDevices} устр.\n\n` +
               `Нажмите кнопку ниже — откроется безопасная форма Cardlink.\n` +
               `После оплаты подписка активируется автоматически.`,
             {
@@ -859,7 +904,7 @@ export async function handleClientBotUpdate(
         token,
         chatId,
         messageId,
-        `Заявка создана: <b>${price} ₽</b> · ${periodLabel(months)} · ${method.toUpperCase()}\n\n` +
+        `Заявка создана: <b>${price} ₽</b> · ${periodLabel(months)} · ${totalDevices} устр. · ${method.toUpperCase()}\n\n` +
           `Менеджер отправит реквизиты. После оплаты пришлите <b>скриншот</b> и укажите <b>имя отправителя</b> отдельным сообщением.`,
         { inline_keyboard: [[{ text: "Назад", callback_data: "c:menu" }]] }
       );
@@ -869,6 +914,7 @@ export async function handleClientBotUpdate(
           `Пользователь: @${tg.username || "—"} (${tg.id})\n` +
           `Сумма: ${price} ₽\n` +
           `Период: ${periodLabel(months)}\n` +
+          `Устройств: ${totalDevices}\n` +
           `Способ: ${method}\n` +
           `Первая оплата: ${!user.first_payment_done ? "да" : "нет"}`,
         managerTxnKeyboard(txn.id)
@@ -1049,17 +1095,18 @@ export async function handleClientBotUpdate(
   const session = await getSession(env, tg.id, "client");
   if (session?.state === "await_promo" && text) {
     const months = Number(session.payload.months || 1) as BillingMonths;
+    const totalDevices = Number(session.payload.totalDevices || includedDevices());
     const promo = await getPromoByCode(env, text.toUpperCase());
     await clearSession(env, tg.id, "client");
     const discount = promo?.discount_percent || 0;
-    const price = calcPrice(env, months, discount);
+    const price = calcCheckoutPrice(env, months, totalDevices, discount);
     await sendMessage(
       token,
       chatId,
       promo
-        ? `Промокод принят: -${discount}%. Итого <b>${price} ₽</b>.`
+        ? `🎟 Промокод принят: -${discount}%. Итого <b>${price} ₽</b>.`
         : "Промокод не найден. Выберите способ оплаты без скидки:",
-      paymentMethodsKeyboard(months, discount)
+      paymentMethodsKeyboard(months, totalDevices, discount)
     );
     return;
   }

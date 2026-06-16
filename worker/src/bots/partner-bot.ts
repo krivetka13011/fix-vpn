@@ -5,6 +5,7 @@ import {
   clearSession,
   createPartner,
   createPromoRequest,
+  countPartnerPaidReferrals,
   getDefaultRequisite,
   getPartner,
   getSession,
@@ -17,6 +18,7 @@ import {
   rejectWithdrawal,
   submitPartnerWithdrawal,
 } from "../partner-withdrawal";
+import { referralBonusText, referralShareUrl } from "../referral-bonus";
 import type { TelegramUser } from "../telegram";
 import { answerCallback, editMessage, sendMessage } from "./telegram-api";
 import { notifyManager } from "./manager";
@@ -41,17 +43,6 @@ function backRow(callback = "p:menu"): Array<Record<string, string>> {
   return [{ text: "← Назад", callback_data: callback }];
 }
 
-function partnerMenuKeyboard() {
-  return {
-    inline_keyboard: [
-      [{ text: "💰 Баланс и статистика", callback_data: "p:stats" }],
-      [{ text: "💳 Мои реквизиты", callback_data: "p:reqs" }],
-      [{ text: "🎟 Запросить промокод", callback_data: "p:promo" }],
-      [{ text: "🏧 Вывести бабки", callback_data: "p:withdraw" }],
-    ],
-  };
-}
-
 function cancelKeyboard(backCallback = "p:menu") {
   return {
     inline_keyboard: [backRow(backCallback)],
@@ -63,34 +54,63 @@ function referralLink(env: BotEnv, partnerId: number): string {
   return `https://t.me/${clientBot}?start=ref_${partnerId}`;
 }
 
-function partnerWelcomeText(env: BotEnv, partner: { id: number; balance: number | string }): string {
-  return (
-    `🚀 <b>FIX Partner</b>\n\n` +
-    `Привет! Ты в партнёрке — кидай ссылку друзьям, получай процент с оплат.\n\n` +
-    `🔗 Твоя ссылка:\n<code>${referralLink(env, partner.id)}</code>\n\n` +
-    `💵 На балансе: <b>${partner.balance} ₽</b>`
-  );
-}
-
 function guestWelcomeText(): string {
   return (
     `🚀 <b>FIX Partner</b>\n\n` +
     `Хочешь зарабатывать с VPN без напряга?\n` +
-    `Регистрируйся — дам личную ссылку и будем делить профит 🤝`
+    `Регистрируйся — получишь личную ссылку, бонусы за друзей и 30% с каждой оплаты 🤝`
   );
 }
 
-function statsText(partner: {
-  total_referrals: number;
-  commission_percent: number;
-  balance: number | string;
-}): string {
+async function partnerReferralText(
+  env: BotEnv,
+  partner: { id: number; balance: number | string; total_referrals: number }
+): Promise<string> {
+  const paid = await countPartnerPaidReferrals(env, partner.id);
+  const link = referralLink(env, partner.id);
+  const earned = Number(partner.balance).toFixed(2);
+  return (
+    `🎁 <b>Реферальная программа</b>\n\n` +
+    `📊 <b>Твоя статистика:</b>\n` +
+    `👥 Приглашено друзей: <b>${partner.total_referrals}</b>\n` +
+    `💳 Купили подписку: <b>${paid}</b>\n` +
+    `💰 Заработано: <b>${earned} RUB</b>\n\n` +
+    `🔗 <b>Твоя ссылка:</b>\n<code>${link}</code>\n\n` +
+    referralBonusText()
+  );
+}
+
+function partnerMenuKeyboard(env: BotEnv, partnerId: number) {
+  const link = referralLink(env, partnerId);
+  return {
+    inline_keyboard: [
+      [{ text: "📨 Сообщение другу", url: referralShareUrl(env, link) }],
+      [{ text: "💰 Баланс и статистика", callback_data: "p:stats" }],
+      [{ text: "💳 Мои реквизиты", callback_data: "p:reqs" }],
+      [{ text: "🎟 Запросить промокод", callback_data: "p:promo" }],
+      [{ text: "🏧 Вывести бабки", callback_data: "p:withdraw" }],
+    ],
+  };
+}
+
+async function statsText(
+  env: BotEnv,
+  partner: {
+    id: number;
+    total_referrals: number;
+    commission_percent: number;
+    balance: number | string;
+  }
+): Promise<string> {
+  const paid = await countPartnerPaidReferrals(env, partner.id);
+  const earned = Number(partner.balance).toFixed(2);
   return (
     `📊 <b>Баланс и статистика</b>\n\n` +
-    `👥 Рефералов: <b>${partner.total_referrals}</b>\n` +
-    `📈 Твоя ставка: <b>${partner.commission_percent}%</b>\n` +
-    `💰 Баланс: <b>${partner.balance} ₽</b>\n\n` +
-    `Чем больше народу по твоей ссылке — тем веселее цифры 🎯`
+    `👥 Приглашено друзей: <b>${partner.total_referrals}</b>\n` +
+    `💳 Купили подписку: <b>${paid}</b>\n` +
+    `💰 Заработано: <b>${earned} RUB</b>\n` +
+    `📈 Твоя ставка: <b>${partner.commission_percent}%</b>\n\n` +
+    `Чем больше друзей по ссылке — тем выше доход 🎯`
   );
 }
 
@@ -154,11 +174,12 @@ async function showPartnerMenu(
     }
     return;
   }
-  const text = partnerWelcomeText(env, partner);
+  const text = await partnerReferralText(env, partner);
+  const markup = partnerMenuKeyboard(env, partner.id);
   if (messageId) {
-    await editMessage(token, chatId, messageId, text, partnerMenuKeyboard());
+    await editMessage(token, chatId, messageId, text, markup);
   } else {
-    await sendMessage(token, chatId, text, partnerMenuKeyboard());
+    await sendMessage(token, chatId, text, markup);
   }
 }
 
@@ -264,7 +285,7 @@ export async function handlePartnerBotUpdate(
           `${env.MSG_PARTNER_REGISTERED || "Вот твоя реферальная ссылка:"}\n` +
           `<code>${referralLink(env, partner.id)}</code>\n\n` +
           `Кидай её куда хочешь — мы посчитаем профит 💸`,
-        partnerMenuKeyboard()
+        partnerMenuKeyboard(env, partner.id)
       );
       await answerCallback(token, cq.id);
       return;
@@ -273,7 +294,7 @@ export async function handlePartnerBotUpdate(
     if (data === "p:stats") {
       const partner = await getPartner(env, tg.id);
       if (!partner) return;
-      await editMessage(token, chatId, messageId, statsText(partner), {
+      await editMessage(token, chatId, messageId, await statsText(env, partner), {
         inline_keyboard: [
           [{ text: "🏧 Вывести бабки", callback_data: "p:withdraw" }],
           backRow(),
@@ -441,7 +462,7 @@ export async function handlePartnerBotUpdate(
         `✅ <b>Заявка принята!</b>\n\n` +
           `Сумма: <b>${partner.balance} ₽</b>\n` +
           `${note}`,
-        partnerMenuKeyboard()
+        partnerMenuKeyboard(env, partner.id)
       );
       await answerCallback(token, cq.id);
       return;
@@ -503,7 +524,7 @@ export async function handlePartnerBotUpdate(
         token,
         chatId,
         `😎 Ты уже в партнёрке — добро пожаловать обратно!`,
-        partnerMenuKeyboard()
+        partnerMenuKeyboard(env, existing.id)
       );
       return;
     }
@@ -517,7 +538,7 @@ export async function handlePartnerBotUpdate(
         `${env.MSG_PARTNER_REGISTERED || "Вот твоя реферальная ссылка:"}\n` +
         `<code>${referralLink(env, partner.id)}</code>\n\n` +
         `Делись ссылкой — кайфуй от цифр на балансе 🚀`,
-      partnerMenuKeyboard()
+      partnerMenuKeyboard(env, partner.id)
     );
     return;
   }
@@ -577,7 +598,7 @@ export async function handlePartnerBotUpdate(
       `📨 <b>Запрос отправлен!</b>\n\n` +
         `Промокод <code>${text.toUpperCase()}</code> на рассмотрении.\n` +
         `Менеджер ответит, как только глянет 👀`,
-      partnerMenuKeyboard()
+      partnerMenuKeyboard(env, tg.id)
     );
     return;
   }
@@ -623,7 +644,7 @@ export async function handlePartnerBotUpdate(
       `✅ <b>Заявка принята!</b>\n\n` +
         `Сумма: <b>${amount} ₽</b>\n` +
         `${note}`,
-      partnerMenuKeyboard()
+      partnerMenuKeyboard(env, tg.id)
     );
   }
 }

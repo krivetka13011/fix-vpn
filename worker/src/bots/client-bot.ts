@@ -99,7 +99,14 @@ function mainMenuKeyboard(env: BotEnv, hasUsedTrial: boolean) {
   rows.push(
     [{ text: "Оформить подписку", callback_data: "c:buy" }],
     [{ text: "Мой профиль", callback_data: "c:profile" }],
-    [{ text: "Подключить VPN", callback_data: "c:connect" }]
+    [{ text: "Подключить VPN", callback_data: "c:connect" }],
+    [{ text: "Поддержка", callback_data: "c:support" }],
+    [
+      {
+        text: "Партнерство",
+        url: `https://t.me/${env.PARTNER_BOT_USERNAME || "FIX_Partner_bot"}`,
+      },
+    ]
   );
   return { inline_keyboard: rows };
 }
@@ -115,22 +122,22 @@ function supportMenuKeyboard(env: BotEnv): Record<string, unknown> {
       [{ text: "Написать менеджеру", url: `https://t.me/${support}` }],
       [{ text: "Политика конфиденциальности", url: PRIVACY_POLICY_URL }],
       [{ text: "Пользовательское соглашение", url: TERMS_OF_SERVICE_URL }],
-      [
-        {
-          text: "Партнерство",
-          url: `https://t.me/${env.PARTNER_BOT_USERNAME || "FIX_Partner_bot"}`,
-        },
-      ],
+      [{ text: "Назад", callback_data: "c:menu" }],
     ],
   };
 }
 
-async function showSupportMenu(env: BotEnv, chatId: number): Promise<void> {
+async function showSupportMenu(
+  env: BotEnv,
+  chatId: number,
+  messageId: number
+): Promise<void> {
   const token = clientBotToken(env)!;
   const support = supportUsername(env);
-  await sendMessage(
+  await editMessage(
     token,
     chatId,
+    messageId,
     `<b>Поддержка</b>\n\n` +
       `Контакт: @${support}\n` +
       `По оплате, подключению и другим вопросам — напишите менеджеру.`,
@@ -735,6 +742,11 @@ export async function handleClientBotUpdate(
       return;
     }
 
+    if (data === "c:support") {
+      await safeAnswerCallback(token, cq.id);
+      await showSupportMenu(env, chatId, messageId);
+      return;
+    }
     if (data === "c:menu") {
       await safeAnswerCallback(token, cq.id);
       await showMainMenu(env, chatId, tg, messageId);
@@ -999,7 +1011,6 @@ export async function handleClientBotUpdate(
       user = await upsertTelegramUser(env, tg);
     }
     await showMainMenu(env, chatId, tg);
-    await showSupportMenu(env, chatId);
     try {
       await ensureVpnClientOnStart(env, user, tg);
       const sub = await getSubscription(env, user.id);

@@ -65,6 +65,7 @@ export async function approvePaidTransaction(
   const provision = await xui.provisionUser(env, {
     userId: user.id,
     username: user.username,
+    displayName: user.display_name,
     telegramId: user.telegram_id,
     expiryMs,
     limitIp: panelLimitIpForSubscription(sub),

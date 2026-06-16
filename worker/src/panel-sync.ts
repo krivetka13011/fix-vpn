@@ -34,19 +34,21 @@ export async function syncPanelSubIdForUser(
   userId: string,
   telegramId: number,
   username: string | null,
+  displayName: string | null,
   sub: DbSubscription | null
 ): Promise<string | null> {
   let panel: { email: string; subId: string; primaryUuid: string } | null = null;
 
   try {
     const xui = new XuiApi(env);
-    await xui.ensureClientEnabled(String(telegramId), telegramId);
+    await xui.ensureClientEnabledByTelegramId(telegramId);
     panel = await xui.resolvePanelClientForTelegram(telegramId, sub, username);
 
     if (!panel) {
       const provision = await xui.ensureClientPrepared(env, {
         userId,
         username,
+        displayName,
         telegramId,
         limitIp: panelLimitIpForSubscription(sub),
         dbSubscription: sub,

@@ -78,12 +78,14 @@ export async function resetPanelClient(
     if (remaining > 0) throw new DeviceResetCooldownError(remaining);
   }
 
-  const panelEmail =
-    sub.client_email?.trim() || (options?.telegramId ? String(options.telegramId) : "");
+  const telegramId =
+    options?.telegramId ?? Number(sub.client_email?.trim()) ?? 0;
   const now = new Date().toISOString();
 
-  if (panelEmail) {
+  if (Number.isFinite(telegramId) && telegramId > 0) {
     const xui = new XuiApi(env);
+    const panelEmail =
+      (await xui.resolvePanelEmail(telegramId)) || String(telegramId);
     const deleted = await xui.tryDeletePanelClient(
       panelEmail,
       PANEL_DELETE_TRY_TIMEOUT_MS

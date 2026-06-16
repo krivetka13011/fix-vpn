@@ -59,6 +59,7 @@ import {
   panelLimitIpForSubscription,
   subscriptionDeviceLimit,
   syncPanelDeviceLimit,
+  telegramIdFromClientEmail,
 } from "../device-limit";
 
 type TgUpdate = {
@@ -367,7 +368,7 @@ async function syncSubscriptionFromPanel(
     const subId = lockedSubId || panelClient.subId;
     const subscriptionUrl = buildSubscriptionUrl(env, subId);
     const patch: Record<string, string> = {
-      client_email: panelClient.email,
+      client_email: String(tg.id),
       xray_sub_id: subId,
       xray_uuid: panelClient.primaryUuid,
       subscription_url: subscriptionUrl,
@@ -393,7 +394,14 @@ async function resolvePanelSubId(
   tg: TelegramUser
 ): Promise<string | null> {
   const sub = await getSubscription(env, user.id);
-  return syncPanelSubIdForUser(env, user.id, tg.id, user.username, sub);
+  return syncPanelSubIdForUser(
+    env,
+    user.id,
+    tg.id,
+    user.username,
+    user.display_name,
+    sub
+  );
 }
 
 async function ensureVpnClientOnStart(
@@ -410,6 +418,7 @@ async function ensureVpnClientOnStart(
     const provision = await xui.ensureClientPrepared(env, {
       userId: user.id,
       username: user.username,
+      displayName: user.display_name,
       telegramId: tg.id,
       limitIp: panelLimitIpForSubscription(sub),
       dbSubscription: sub,
@@ -494,6 +503,7 @@ async function activateTrial(env: BotEnv, tg: TelegramUser, chatId: number): Pro
     await xui.provisionUser(env, {
       userId: claimed.id,
       username: claimed.username ?? tg.username ?? null,
+      displayName: claimed.display_name,
       telegramId: tg.id,
       expiryMs,
       limitIp: 1,
@@ -526,7 +536,7 @@ async function activateTrial(env: BotEnv, tg: TelegramUser, chatId: number): Pro
       starts_at: formatDateFromMs(Date.now()),
       ends_at: formatDateFromMs(expiryMs),
       is_trial: true,
-      client_email: sub.client_email || String(tg.id),
+      client_email: String(tg.id),
       xray_sub_id: sub.xray_sub_id,
       xray_uuid: sub.xray_uuid,
       subscription_url: subscriptionUrl,
@@ -619,7 +629,8 @@ async function showProfile(
   if (sub?.panel_sub_rotate_requested_at || sub?.pending_xray_sub_id) {
     await clearStuckRotationFlags(env, user.id);
   }
-  const panelIps = await fetchPanelDeviceIps(env, sub?.client_email);
+  const telegramId = telegramIdFromClientEmail(sub?.client_email) ?? tg.id;
+  const panelIps = await fetchPanelDeviceIps(env, telegramId);
 
   const limit = subscriptionDeviceLimit(sub);
   const used = panelIps.length;
@@ -1014,7 +1025,14 @@ export async function handleClientBotUpdate(
     try {
       await ensureVpnClientOnStart(env, user, tg);
       const sub = await getSubscription(env, user.id);
-      await syncPanelSubIdForUser(env, user.id, tg.id, user.username, sub);
+      await syncPanelSubIdForUser(
+        env,
+        user.id,
+        tg.id,
+        user.username,
+        user.display_name,
+        sub
+      );
       const xui = new XuiApi(env);
       await xui.forceEnableClient(tg.id, String(tg.id));
     } catch (error) {

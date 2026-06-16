@@ -23,6 +23,7 @@ import {
   fetchPanelDeviceIps,
   subscriptionDeviceLimit,
   syncPanelDeviceLimit,
+  telegramIdFromClientEmail,
 } from "./device-limit";
 import { DeviceResetCooldownError, deviceResetNotice, resetPanelClient } from "./device-reset";
 
@@ -96,7 +97,14 @@ export async function resolvePanelSubIdForUser(
   const user = await upsertTelegramUser(env, tg);
   await ensureSubscriptionPeriod(env, user.id);
   const sub = await getSubscription(env, user.id);
-  return syncPanelSubIdForUser(env, user.id, tg.id, user.username, sub);
+  return syncPanelSubIdForUser(
+    env,
+    user.id,
+    tg.id,
+    user.username,
+    user.display_name,
+    sub
+  );
 }
 
 export interface MiniappDeviceRow {
@@ -119,14 +127,20 @@ export async function fetchMiniappDevices(
 }> {
   const sub = await getSubscription(env, userId);
   const limit = subscriptionDeviceLimit(sub);
-  const panelIps = await fetchPanelDeviceIps(env, sub?.client_email);
+  const telegramId = telegramIdFromClientEmail(sub?.client_email);
+  const panelIps = telegramId
+    ? await fetchPanelDeviceIps(env, telegramId)
+    : [];
   let panelOnline = false;
 
-  if (sub?.client_email) {
+  if (telegramId) {
     try {
       const xui = new XuiApi(env);
-      const onlineEmails = await xui.getOnlineClientEmails();
-      panelOnline = onlineEmails.includes(sub.client_email);
+      const panelEmail = await xui.resolvePanelEmail(telegramId);
+      if (panelEmail) {
+        const onlineEmails = await xui.getOnlineClientEmails();
+        panelOnline = onlineEmails.includes(panelEmail);
+      }
     } catch {
       // panel unreachable from worker
     }

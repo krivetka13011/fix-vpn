@@ -24,11 +24,15 @@ export async function syncPanelDeviceLimit(
   userId: string
 ): Promise<void> {
   const sub = await getSubscription(env, userId);
-  if (!sub?.client_email?.trim()) return;
+  const telegramId = Number(sub?.client_email);
+  if (!Number.isFinite(telegramId) || telegramId <= 0) return;
+
   const limitIp = panelLimitIpForSubscription(sub);
   try {
     const xui = new XuiApi(env);
-    await xui.setClientLimitIp(sub.client_email, limitIp);
+    const panelEmail = await xui.resolvePanelEmail(telegramId);
+    if (!panelEmail) return;
+    await xui.setClientLimitIp(panelEmail, limitIp);
   } catch (error) {
     console.error("syncPanelDeviceLimit:", error);
   }
@@ -36,12 +40,24 @@ export async function syncPanelDeviceLimit(
 
 export async function fetchPanelDeviceIps(
   env: BotEnv,
-  clientEmail: string | null | undefined
+  telegramId: number
 ): Promise<PanelDeviceIp[]> {
-  if (!clientEmail?.trim()) return [];
+  if (!Number.isFinite(telegramId) || telegramId <= 0) return [];
   try {
-    return await new XuiApi(env).getClientIps(clientEmail);
+    const xui = new XuiApi(env);
+    const panelEmail = await xui.resolvePanelEmail(telegramId);
+    if (!panelEmail) return [];
+    return await xui.getClientIps(panelEmail);
   } catch {
     return [];
   }
+}
+
+export function telegramIdFromClientEmail(
+  clientEmail: string | null | undefined
+): number | null {
+  const raw = clientEmail?.trim();
+  if (!raw) return null;
+  const id = Number(raw);
+  return Number.isFinite(id) && id > 0 ? id : null;
 }

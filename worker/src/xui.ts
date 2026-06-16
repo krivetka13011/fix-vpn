@@ -1,6 +1,7 @@
 import type { BotEnv } from "./env";
 import { parseIdList, subscriptionBaseUrl, xuiBaseUrlCandidates, xuiWorkerBaseUrl } from "./env";
 import { isPanelErrorBody, panelFetch } from "./panel-fetch";
+import { canonicalClientKey, panelDisplayLabel } from "./panel-client-label";
 import type { SupabaseEnv } from "./supabase";
 
 export interface XuiClientRecord {
@@ -203,7 +204,20 @@ export class XuiApi {
   }
 
   buildClientEmail(_username: string | null, telegramId: number): string {
-    return String(telegramId);
+    return canonicalClientKey(telegramId);
+  }
+
+  /** Email/label клиента в панели (может быть @username или «Имя · id»). */
+  async resolvePanelEmail(telegramId: number): Promise<string | null> {
+    const byTg = await this.findClientByTelegramId(telegramId);
+    if (byTg?.email) return byTg.email;
+    const legacy = await this.findClientByEmail(canonicalClientKey(telegramId));
+    return legacy?.email ?? null;
+  }
+
+  async ensureClientEnabledByTelegramId(telegramId: number): Promise<void> {
+    const email = await this.resolvePanelEmail(telegramId);
+    if (email) await this.forceEnableClient(telegramId, email);
   }
 
   async findClientByTelegramId(telegramId: number): Promise<{
@@ -447,37 +461,49 @@ export class XuiApi {
     }
   }
 
-  private async rebindPanelClientEmail(
+  private async syncPanelClientDisplayName(
     panel: { email: string; subId: string; primaryUuid: string },
-    telegramId: number
-  ): Promise<void> {
-    const canonicalEmail = this.buildClientEmail(null, telegramId);
-    if (panel.email === canonicalEmail) return;
+    telegramId: number,
+    username: string | null | undefined,
+    displayName: string | null | undefined,
+    limitIp?: number
+  ): Promise<string> {
+    const desired = panelDisplayLabel(username, displayName, telegramId);
+    if (panel.email === desired) return desired;
 
-    const response = await this.request(
-      `/panel/api/clients/update/${encodeURIComponent(panel.email)}`,
-      {
-        method: "POST",
-        body: JSON.stringify({
-          email: panel.email,
-          inboundIds: this.inboundIds,
-          client: this.buildClient(
-            canonicalEmail,
-            panel.subId,
-            telegramId,
-            0,
-            0,
-            true,
-            panel.primaryUuid
-          ),
-        }),
-      }
+    const record = await this.fetchClientRecord(panel.email);
+    if (!record) return panel.email;
+
+    const client = this.buildClient(
+      desired,
+      panel.subId,
+      telegramId,
+      record.expiryTime,
+      record.totalGB,
+      true,
+      panel.primaryUuid,
+      limitIp ?? record.limitIp
     );
+
     try {
-      await this.parseResponse(response, "rebindPanelClientEmail");
+      const response = await this.request(
+        `/panel/api/clients/update/${encodeURIComponent(panel.email)}`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            email: panel.email,
+            inboundIds: this.inboundIds,
+            client,
+          }),
+        }
+      );
+      await this.parseResponse(response, "syncPanelClientDisplayName");
       this.invalidateScan();
+      await this.syncInboundEnableFlags(telegramId, desired);
+      return desired;
     } catch (error) {
-      console.error("rebindPanelClientEmail:", error);
+      console.error("syncPanelClientDisplayName:", error);
+      return panel.email;
     }
   }
 
@@ -1155,6 +1181,7 @@ export class XuiApi {
     params: {
       userId: string;
       username: string | null;
+      displayName?: string | null;
       telegramId: number;
       limitIp?: number;
       dbSubscription?: {
@@ -1165,6 +1192,13 @@ export class XuiApi {
     }
   ): Promise<ProvisionResult> {
     const limitIp = params.limitIp ?? 1;
+    const dbKey = canonicalClientKey(params.telegramId);
+    const panelLabel = panelDisplayLabel(
+      params.username,
+      params.displayName,
+      params.telegramId
+    );
+
     await this.syncPanelWithDb(
       env,
       params.userId,
@@ -1183,8 +1217,6 @@ export class XuiApi {
         params.dbSubscription
       );
     }
-    const email =
-      String(params.telegramId);
 
     if (!existing) {
       const recheck = await this.findClientByTelegramId(params.telegramId);
@@ -1198,7 +1230,7 @@ export class XuiApi {
         params.dbSubscription?.xray_sub_id?.trim() || randomSubId();
       const seedUuid = params.dbSubscription?.xray_uuid?.trim();
       await this.addClientIfMissing(
-        email,
+        panelLabel,
         seedSubId,
         params.telegramId,
         0,
@@ -1218,7 +1250,7 @@ export class XuiApi {
           params.telegramId,
           params.dbSubscription
         )) ||
-        (await this.findClientByEmail(email)) ||
+        (await this.findClientByEmail(panelLabel)) ||
         undefined;
     }
 
@@ -1226,15 +1258,19 @@ export class XuiApi {
       throw new Error("клиент в панели не найден");
     }
 
-    await this.rebindPanelClientEmail(existing, params.telegramId);
-    await this.touchPanelClient(params.telegramId, String(params.telegramId), {
-      limitIp,
-    });
-    await this.forceEnableClient(params.telegramId, String(params.telegramId));
+    const panelEmail = await this.syncPanelClientDisplayName(
+      existing,
+      params.telegramId,
+      params.username,
+      params.displayName,
+      limitIp
+    );
+    await this.touchPanelClient(params.telegramId, panelEmail, { limitIp });
+    await this.forceEnableClient(params.telegramId, panelEmail);
 
     return this.toProvisionResult(
       env,
-      String(params.telegramId),
+      dbKey,
       existing.subId,
       existing.primaryUuid
     );
@@ -1245,6 +1281,7 @@ export class XuiApi {
     params: {
       userId: string;
       username: string | null;
+      displayName?: string | null;
       telegramId: number;
       expiryMs: number;
       totalGb?: number;
@@ -1259,13 +1296,17 @@ export class XuiApi {
     const prepared = await this.ensureClientPrepared(env, {
       userId: params.userId,
       username: params.username,
+      displayName: params.displayName,
       telegramId: params.telegramId,
       limitIp: params.limitIp ?? 1,
       dbSubscription: params.dbSubscription,
     });
 
+    const panelEmail =
+      (await this.resolvePanelEmail(params.telegramId)) || prepared.email;
+
     const client = this.buildClient(
-      prepared.email,
+      panelEmail,
       prepared.subId,
       params.telegramId,
       params.expiryMs,
@@ -1279,12 +1320,12 @@ export class XuiApi {
     } catch (error) {
       console.error("provisionUser update:", error);
     } finally {
-      await this.forceEnableClient(params.telegramId, prepared.email);
+      await this.forceEnableClient(params.telegramId, panelEmail);
     }
 
     return this.toProvisionResult(
       env,
-      prepared.email,
+      canonicalClientKey(params.telegramId),
       prepared.subId,
       prepared.primaryUuid
     );

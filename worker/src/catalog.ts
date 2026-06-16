@@ -5,6 +5,11 @@ export const EXTRA_DEVICE_PRICE_PER_MONTH = 75;
 export const SUPPORT_TELEGRAM_USERNAME = "Fixvpnmng";
 export const TELEGRAM_CHANNEL_URL = "https://t.me/FIXVPNfast";
 
+export const PRIVACY_POLICY_URL =
+  "https://telegra.ph/Politika-konfidencialnosti-04-01-26";
+export const TERMS_OF_SERVICE_URL =
+  "https://telegra.ph/Polzovatelskoe-soglashenie-04-01-19";
+
 export const TARIFFS: Record<
   PlanType,
   {

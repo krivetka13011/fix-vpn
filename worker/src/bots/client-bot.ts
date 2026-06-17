@@ -121,9 +121,6 @@ function mainMenuText(displayName: string): string {
   );
 }
 
-/** Временно скрыта кнопка «Партнерство» в главном меню клиентского бота */
-const SHOW_PARTNERSHIP_BUTTON = false;
-
 function mainMenuKeyboard(env: BotEnv, hasUsedTrial: boolean) {
   const rows: Array<Array<Record<string, string>>> = [];
   if (!hasUsedTrial) {
@@ -133,16 +130,14 @@ function mainMenuKeyboard(env: BotEnv, hasUsedTrial: boolean) {
     [{ text: "💳 Оформить подписку", callback_data: "c:buy" }],
     [{ text: "👤 Мой профиль", callback_data: "c:profile" }],
     [{ text: "🔌 Подключить VPN", callback_data: "c:connect" }],
-    [{ text: "💬 Поддержка", callback_data: "c:support" }]
-  );
-  if (SHOW_PARTNERSHIP_BUTTON) {
-    rows.push([
+    [{ text: "💬 Поддержка", callback_data: "c:support" }],
+    [
       {
         text: "🤝 Партнерство",
         url: `https://t.me/${env.PARTNER_BOT_USERNAME || "FIX_Partner_bot"}`,
       },
-    ]);
-  }
+    ]
+  );
   return { inline_keyboard: rows };
 }
 

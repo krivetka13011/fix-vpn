@@ -1,24 +1,18 @@
-import type { BotEnv } from "../env";
 import {
-  EXTRA_DEVICE_PRICE_PER_MONTH,
-  TARIFFS,
+  calcCheckoutPrice,
+  periodLabel,
   type BillingMonths,
   type PlanType,
 } from "../catalog";
-import { calcCheckoutPrice, periodButtonLabel, periodLabel } from "./pricing";
 
 export const DEVICE_OPTIONS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] as const;
 
 export function includedDevices(): number {
-  return TARIFFS.basic.includedDevices ?? 1;
+  return 1;
 }
 
 export function extraDevicesForTotal(totalDevices: number): number {
   return Math.max(0, totalDevices - includedDevices());
-}
-
-export function deviceLabel(count: number): string {
-  return String(count);
 }
 
 export function tariffsText(): string {
@@ -55,9 +49,10 @@ export function periodsKeyboard(plan: PlanType) {
     inline_keyboard: monthsList
       .map((months) => {
         const price = calcCheckoutPrice(plan, months);
+        const star = months === 12 ? "⭐️ " : "";
         return [
           {
-            text: `${periodButtonLabel(months)} - ${price} рублей`,
+            text: `${star}${periodLabel(months)} - ${price} рублей`,
             callback_data: `c:period:${plan}:${months}`,
           },
         ];
@@ -76,8 +71,7 @@ export function devicesText(
   return (
     `Выберите количество устройств\n\n` +
     `Выбрано устройств: <b>${totalDevices}</b>\n` +
-    `Сумма: <b>${price} ₽</b>\n\n` +
-    `Доп. устройство: +${EXTRA_DEVICE_PRICE_PER_MONTH} ₽ / мес`
+    `Сумма: <b>${price} ₽</b>`
   );
 }
 
@@ -90,9 +84,9 @@ export function devicesKeyboard(
   const price = calcCheckoutPrice(plan, months, extraDevicesForTotal(selected), promo);
   const rows: Array<Array<{ text: string; callback_data: string }>> = [];
 
-  for (let i = 0; i < DEVICE_OPTIONS.length; i += 2) {
+  for (let i = 0; i < DEVICE_OPTIONS.length; i += 5) {
     const row: Array<{ text: string; callback_data: string }> = [];
-    for (let j = 0; j < 2 && i + j < DEVICE_OPTIONS.length; j += 1) {
+    for (let j = 0; j < 5 && i + j < DEVICE_OPTIONS.length; j += 1) {
       const count = DEVICE_OPTIONS[i + j];
       const mark = count === selected ? " ✅" : "";
       row.push({
@@ -121,8 +115,7 @@ export function paymentSummaryText(
   promo = 0
 ): string {
   const price = calcCheckoutPrice(plan, months, extraDevicesForTotal(totalDevices), promo);
-  const devicesLine =
-    plan === "personal" ? "Безлимит" : String(totalDevices);
+  const devicesLine = plan === "personal" ? "Безлимит" : String(totalDevices);
   return (
     `Период: <b>${periodLabel(months)}</b>\n` +
     `Устройств: <b>${devicesLine}</b>\n` +
@@ -139,8 +132,8 @@ export function paymentMethodsKeyboard(
 ) {
   const back =
     plan === "basic"
-      ? `c:period:${plan}:${months}`
-      : `c:period:${plan}:${months}`;
+      ? `c:dev:${plan}:${months}:${totalDevices}:${promo}`
+      : `c:plan:${plan}`;
   return {
     inline_keyboard: [
       [{ text: "📱 СБП", callback_data: `c:pay:sbp:${plan}:${months}:${promo}:${totalDevices}` }],
@@ -161,11 +154,15 @@ export function parseCheckoutPayData(data: string): {
 } | null {
   const parts = data.split(":");
   if (parts[0] !== "c" || parts[1] !== "pay" || parts.length < 7) return null;
+  const totalRaw = parts[6];
   return {
     method: parts[2],
     plan: parts[3] as PlanType,
     months: Number(parts[4]) as BillingMonths,
     promo: Number(parts[5] || "0"),
-    totalDevices: Number(parts[6] || includedDevices()),
+    totalDevices:
+      totalRaw !== undefined && totalRaw !== ""
+        ? Number(totalRaw)
+        : includedDevices(),
   };
 }

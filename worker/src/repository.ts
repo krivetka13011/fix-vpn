@@ -216,6 +216,12 @@ export async function resetTesterSubscriptionState(
     starts_at: null,
     ends_at: null,
     is_trial: false,
+    xray_uuid: null,
+    xray_sub_id: null,
+    subscription_url: null,
+    client_email: null,
+    expires_at: null,
+    expiry_warned_at: null,
   });
 }
 

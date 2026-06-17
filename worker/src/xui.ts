@@ -186,7 +186,7 @@ export class XuiApi {
       if (!response.ok || payload.success === false || !obj) continue;
       for (const client of this.parseInboundClients(obj)) {
         const email = String(client.email || "");
-        const primaryUuid = String(client.id || "");
+        const primaryUuid = String(client.uuid ?? client.id ?? "").trim();
         if (!email || !primaryUuid) continue;
         scanned.push({
           inboundId,
@@ -500,7 +500,7 @@ export class XuiApi {
           body: JSON.stringify({
             email: panel.email,
             inboundIds: this.inboundIds,
-            client,
+            client: this.toPanelClientPayload(client),
           }),
         }
       );
@@ -552,8 +552,9 @@ export class XuiApi {
     existingUuid?: string,
     limitIp?: number
   ): XuiClientRecord {
+    const clientId = existingUuid?.trim() || crypto.randomUUID();
     return {
-      id: existingUuid || crypto.randomUUID(),
+      id: clientId,
       email,
       subId,
       limitIp: limitIp ?? this.limitIp,
@@ -562,6 +563,22 @@ export class XuiApi {
       tgId: telegramId,
       totalGB: totalGb,
       flow: "",
+    };
+  }
+
+  private toPanelClientPayload(client: XuiClientRecord): Record<string, unknown> {
+    const id = client.id?.trim() || crypto.randomUUID();
+    return {
+      id,
+      uuid: id,
+      email: client.email,
+      subId: client.subId,
+      limitIp: client.limitIp,
+      expiryTime: client.expiryTime,
+      enable: client.enable,
+      tgId: client.tgId,
+      totalGB: client.totalGB,
+      flow: client.flow ?? "",
     };
   }
 
@@ -588,7 +605,7 @@ export class XuiApi {
       method: "POST",
       body: JSON.stringify({
         inboundIds: this.inboundIds,
-        client,
+        client: this.toPanelClientPayload(client),
       }),
     });
     await this.parseResponse(response, "addClient");
@@ -743,7 +760,7 @@ export class XuiApi {
           body: JSON.stringify({
             email: record.email,
             inboundIds: this.inboundIds,
-            client: { ...record, enable: true },
+            client: { ...this.toPanelClientPayload(record), enable: true },
           }),
         }
       );
@@ -879,14 +896,18 @@ export class XuiApi {
     patch: Partial<XuiClientRecord> = {}
   ): Promise<void> {
     const record = await this.fetchClientRecord(email);
-    if (!record) return;
-    await this.updateClient({
-      ...record,
-      ...patch,
-      enable: true,
-      tgId: telegramId || record.tgId,
-      limitIp: patch.limitIp ?? (record.limitIp > 0 ? record.limitIp : 1),
-    });
+    if (!record?.id?.trim()) return;
+    try {
+      await this.updateClient({
+        ...record,
+        ...patch,
+        enable: true,
+        tgId: telegramId || record.tgId,
+        limitIp: patch.limitIp ?? (record.limitIp > 0 ? record.limitIp : 1),
+      });
+    } catch (error) {
+      console.error("touchPanelClient:", email, error);
+    }
   }
 
   async ensureClientEnabled(email: string, telegramId: number): Promise<void> {
@@ -910,8 +931,19 @@ export class XuiApi {
     if (!response.ok || payload.success === false) return null;
     const row = (payload.obj as { client?: Record<string, unknown> } | undefined)?.client;
     if (!row) return null;
+    let clientId = String(row.uuid ?? row.id ?? "").trim();
+    if (!clientId) {
+      const clients = await this.scanAllClients();
+      for (const client of clients) {
+        if (client.email === email) {
+          clientId = client.primaryUuid;
+          break;
+        }
+      }
+    }
+    if (!clientId) return null;
     return {
-      id: String(row.uuid ?? row.id ?? ""),
+      id: clientId,
       email: String(row.email ?? email),
       subId: String(row.subId ?? ""),
       limitIp: Number(row.limitIp ?? this.limitIp),
@@ -931,7 +963,7 @@ export class XuiApi {
         body: JSON.stringify({
           email: client.email,
           inboundIds: this.inboundIds,
-          client: { ...client, enable: true },
+          client: { ...this.toPanelClientPayload(client), enable: true },
         }),
       }
     );

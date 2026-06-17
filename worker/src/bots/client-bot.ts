@@ -11,6 +11,7 @@ import {
   getTransaction,
   claimTrialByTelegramId,
   clearVpnDeviceBindings,
+  clearXuiInboundClients,
   patchSubscription,
   patchTransaction,
   releaseTrialClaim,
@@ -505,6 +506,8 @@ async function activateTrial(
   let claimed = user;
   if (tester) {
     claimed = (await resetTesterTrial(env, tg.id)) ?? user;
+    await resetTesterSubscriptionState(env, claimed.id);
+    await clearXuiInboundClients(env, claimed.id);
   } else {
     const trialClaim = await claimTrialByTelegramId(env, tg.id);
     if (!trialClaim) {
@@ -523,7 +526,6 @@ async function activateTrial(
   const expiryMs = Date.now() + TRIAL_MS;
 
   try {
-    await ensureVpnClientOnStart(env, claimed, tg);
     let sub = await getSubscription(env, claimed.id);
 
     const xui = new XuiApi(env);

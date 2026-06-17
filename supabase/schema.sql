@@ -36,6 +36,8 @@ create table if not exists subscriptions (
   pending_xray_sub_id text,
   panel_sub_rotate_requested_at timestamptz,
   purchased_at timestamptz,
+  expires_at timestamptz,
+  expiry_warned_at timestamptz,
   updated_at timestamptz not null default now()
 );
 

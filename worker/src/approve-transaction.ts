@@ -2,6 +2,11 @@ import { periodLabel, type BillingMonths } from "./bots/pricing";
 import { TARIFFS } from "./catalog";
 import type { PlanType } from "./catalog";
 import { clientBotToken, type BotEnv } from "./env";
+import {
+  formatExpiresAtIso,
+  isTestMode,
+  paidSubscriptionDurationMs,
+} from "./test-mode";
 import { panelLimitIpForSubscription, syncPanelDeviceLimit } from "./device-limit";
 import { sendMessage } from "./bots/telegram-api";
 import { XuiApi } from "./xui";
@@ -67,12 +72,14 @@ export async function approvePaidTransaction(
     extra_devices: extraDevices,
     plan_type: planType,
   };
-  const extendDays = months * 30;
+  const extendMs = paidSubscriptionDurationMs(env, months);
   const baseMs =
-    sub?.status === "active" && sub.ends_at
-      ? new Date(`${sub.ends_at}T23:59:59`).getTime()
-      : Date.now();
-  const expiryMs = Math.max(Date.now(), baseMs) + extendDays * 24 * 60 * 60 * 1000;
+    sub?.status === "active" && sub.expires_at
+      ? new Date(sub.expires_at).getTime()
+      : sub?.status === "active" && sub.ends_at
+        ? new Date(`${sub.ends_at}T23:59:59`).getTime()
+        : Date.now();
+  const expiryMs = Math.max(Date.now(), baseMs) + extendMs;
   const provision = await xui.provisionUser(env, {
     userId: user.id,
     username: user.username,
@@ -103,11 +110,15 @@ export async function approvePaidTransaction(
   await patchSubscription(env, user.id, {
     status: "active",
     plan_type: planType,
-    plan_label: `${TARIFFS[planType].name} · ${periodLabel(months)}`,
+    plan_label: isTestMode(env)
+      ? `${TARIFFS[planType].name} · тест ${Math.round(extendMs / 60000)} мин`
+      : `${TARIFFS[planType].name} · ${periodLabel(months)}`,
     billing_months: months,
     extra_devices: extraDevices,
     starts_at: sub?.starts_at || formatDateFromMs(Date.now()),
     ends_at: formatDateFromMs(expiryMs),
+    expires_at: formatExpiresAtIso(expiryMs),
+    expiry_warned_at: null,
     is_trial: false,
     client_email: provision.email,
     xray_sub_id: subId,
@@ -156,7 +167,11 @@ export async function approvePaidTransaction(
     await sendMessage(
       clientToken,
       user.telegram_id,
-      `✅ Оплата подтверждена. Подписка продлена на ${periodLabel(months)}.`
+      `✅ Оплата подтверждена. ${
+        isTestMode(env)
+          ? `Тестовая подписка активна ${Math.round(extendMs / 60000)} мин.`
+          : `Подписка продлена на ${periodLabel(months)}.`
+      }`
     );
   }
 

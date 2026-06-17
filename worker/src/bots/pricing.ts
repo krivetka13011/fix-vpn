@@ -5,6 +5,7 @@ import {
   type BillingMonths,
   type PlanType,
 } from "../catalog";
+import { testCheckoutPriceRub } from "../test-mode";
 
 export type { BillingMonths, PlanType };
 
@@ -23,8 +24,12 @@ export function calcCheckoutPrice(
   plan: PlanType,
   months: BillingMonths,
   extraDevices = 0,
-  promoDiscount = 0
+  promoDiscount = 0,
+  env?: BotEnv
 ): number {
+  const testPrice = env ? testCheckoutPriceRub(env) : null;
+  if (testPrice !== null) return testPrice;
+
   let total = calcTotalRub(plan, months, extraDevices);
   if (promoDiscount > 0) {
     total = Math.round((total * (100 - promoDiscount)) / 100);
@@ -32,14 +37,13 @@ export function calcCheckoutPrice(
   return Math.max(0, total);
 }
 
-/** @deprecated use calcCheckoutPrice(plan, months, extra, promo) */
+/** @deprecated use calcCheckoutPrice(plan, months, extra, promo, env) */
 export function calcPrice(
   env: BotEnv,
   months: BillingMonths,
   promoDiscount = 0
 ): number {
-  void env;
-  return calcCheckoutPrice("basic", months, 0, promoDiscount);
+  return calcCheckoutPrice("basic", months, 0, promoDiscount, env);
 }
 
 export function baseMonthly(env: BotEnv): number {

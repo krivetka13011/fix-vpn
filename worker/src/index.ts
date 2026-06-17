@@ -4,6 +4,7 @@ import {
   shortSubscriptionPathToSub,
 } from "./connect-links";
 import { subscriptionPublicHost } from "./env";
+import { runSubscriptionExpiryJobs } from "./subscription-expiry";
 
 export interface Env extends ApiEnv {
   ASSETS: Fetcher;
@@ -46,5 +47,17 @@ export default {
     }
 
     return withAssetCors(request, await env.ASSETS.fetch(request));
+  },
+
+  async scheduled(
+    _event: ScheduledEvent,
+    env: Env,
+    ctx: ExecutionContext
+  ): Promise<void> {
+    ctx.waitUntil(
+      runSubscriptionExpiryJobs(env).catch((error) => {
+        console.error("scheduled expiry:", error);
+      })
+    );
   },
 };

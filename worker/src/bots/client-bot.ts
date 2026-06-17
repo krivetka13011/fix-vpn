@@ -68,6 +68,11 @@ import {
 } from "../connect-links";
 import { syncPanelSubIdForUser } from "../panel-sync";
 import {
+  formatExpiresAtIso,
+  isTestMode,
+  trialDurationMs,
+} from "../test-mode";
+import {
   canConnectNewDevice,
   fetchPanelDeviceIps,
   formatDeviceLimitLine,
@@ -514,7 +519,7 @@ async function activateTrial(
     claimed = trialClaim;
   }
 
-  const TRIAL_MS = 24 * 60 * 60 * 1000;
+  const TRIAL_MS = trialDurationMs(env);
   const expiryMs = Date.now() + TRIAL_MS;
 
   try {
@@ -553,10 +558,14 @@ async function activateTrial(
     await patchSubscription(env, claimed.id, {
       status: "active",
       plan_type: "basic",
-      plan_label: "Пробный · 24 ч",
+      plan_label: isTestMode(env)
+        ? `Пробный · ${Math.round(TRIAL_MS / 60000)} мин`
+        : "Пробный · 24 ч",
       billing_months: 0,
       starts_at: formatDateFromMs(Date.now()),
       ends_at: formatDateFromMs(expiryMs),
+      expires_at: formatExpiresAtIso(expiryMs),
+      expiry_warned_at: null,
       is_trial: true,
       extra_devices: 0,
       client_email: String(tg.id),
@@ -627,16 +636,34 @@ async function handleTesterReset(
 function formatSubscriptionPeriod(
   startsAt: string | null | undefined,
   endsAt: string | null | undefined,
-  planLabel: string | null | undefined
+  planLabel: string | null | undefined,
+  expiresAt?: string | null
 ): string {
-  const fmt = (iso: string) =>
+  const fmtDate = (iso: string) =>
     new Date(`${iso}T12:00:00`).toLocaleDateString("ru-RU", {
       day: "numeric",
       month: "long",
       year: "numeric",
     });
-  if (startsAt && endsAt) return `${fmt(startsAt)} — ${fmt(endsAt)}`;
-  if (endsAt) return `до ${fmt(endsAt)}`;
+  const fmtDateTime = (iso: string) =>
+    new Date(iso).toLocaleString("ru-RU", {
+      day: "numeric",
+      month: "long",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  if (expiresAt) {
+    const end = new Date(expiresAt);
+    if (!Number.isNaN(end.getTime())) {
+      const start = startsAt
+        ? new Date(`${startsAt}T12:00:00`)
+        : new Date(end.getTime() - 5 * 60 * 1000);
+      return `${fmtDateTime(start.toISOString())} — ${fmtDateTime(expiresAt)}`;
+    }
+  }
+  if (startsAt && endsAt) return `${fmtDate(startsAt)} — ${fmtDate(endsAt)}`;
+  if (endsAt) return `до ${fmtDate(endsAt)}`;
   if (planLabel) return planLabel;
   return "—";
 }
@@ -661,7 +688,12 @@ async function showProfile(
   const used = panelIps.length;
   const hasClient = Boolean(sub?.client_email?.trim());
   const status = sub?.status || "none";
-  const period = formatSubscriptionPeriod(sub?.starts_at, sub?.ends_at, sub?.plan_label);
+  const period = formatSubscriptionPeriod(
+    sub?.starts_at,
+    sub?.ends_at,
+    sub?.plan_label,
+    sub?.expires_at
+  );
   const statusLabel =
     status === "active"
       ? sub?.is_trial
@@ -797,7 +829,7 @@ export async function handleClientBotUpdate(
         chatId,
         messageId,
         "Выберите период:",
-        periodsKeyboard(plan)
+        periodsKeyboard(env, plan)
       );
       return;
     }
@@ -811,7 +843,7 @@ export async function handleClientBotUpdate(
           token,
           chatId,
           messageId,
-          paymentSummaryText(plan, months, 0),
+          paymentSummaryText(env, plan, months, 0),
           paymentMethodsKeyboard(plan, months, 0)
         );
         return;
@@ -821,8 +853,8 @@ export async function handleClientBotUpdate(
         token,
         chatId,
         messageId,
-        devicesText(plan, months, defaultDevices),
-        devicesKeyboard(plan, months, defaultDevices)
+        devicesText(env, plan, months, defaultDevices),
+        devicesKeyboard(env, plan, months, defaultDevices)
       );
       return;
     }
@@ -837,8 +869,8 @@ export async function handleClientBotUpdate(
         token,
         chatId,
         messageId,
-        devicesText(plan, months, totalDevices, promo),
-        devicesKeyboard(plan, months, totalDevices, promo)
+        devicesText(env, plan, months, totalDevices, promo),
+        devicesKeyboard(env, plan, months, totalDevices, promo)
       );
       return;
     }
@@ -853,7 +885,7 @@ export async function handleClientBotUpdate(
         token,
         chatId,
         messageId,
-        paymentSummaryText(plan, months, totalDevices, promo),
+        paymentSummaryText(env, plan, months, totalDevices, promo),
         paymentMethodsKeyboard(plan, months, totalDevices, promo)
       );
       return;
@@ -878,7 +910,7 @@ export async function handleClientBotUpdate(
       if (!parsed) return;
       const { method, plan, months, promo, totalDevices } = parsed;
       const extraDevices = plan === "personal" ? 0 : extraDevicesForTotal(totalDevices);
-      const price = calcCheckoutPrice(plan, months, extraDevices, promo);
+      const price = calcCheckoutPrice(plan, months, extraDevices, promo, env);
       const user = await upsertTelegramUser(env, tg);
       const txn = await createTransaction(env, {
         user_id: user.id,
@@ -1183,7 +1215,8 @@ export async function handleClientBotUpdate(
       plan,
       months,
       extraDevicesForTotal(totalDevices),
-      discount
+      discount,
+      env
     );
     await sendMessage(
       token,

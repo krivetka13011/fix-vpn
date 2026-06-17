@@ -1,4 +1,5 @@
 import type { BillingMonths, PlanType } from "../catalog";
+import type { BotEnv } from "../env";
 import { calcCheckoutPrice, periodLabel } from "./pricing";
 
 export { calcCheckoutPrice };
@@ -41,12 +42,12 @@ export function tariffsKeyboard() {
   };
 }
 
-export function periodsKeyboard(plan: PlanType) {
+export function periodsKeyboard(env: BotEnv, plan: PlanType) {
   const monthsList: BillingMonths[] = [1, 2, 3, 6, 12];
   return {
     inline_keyboard: monthsList
       .map((months) => {
-        const price = calcCheckoutPrice(plan, months);
+        const price = calcCheckoutPrice(plan, months, 0, 0, env);
         const star = months === 12 ? "⭐️ " : "";
         return [
           {
@@ -60,12 +61,19 @@ export function periodsKeyboard(plan: PlanType) {
 }
 
 export function devicesText(
+  env: BotEnv,
   plan: PlanType,
   months: BillingMonths,
   totalDevices: number,
   promo = 0
 ): string {
-  const price = calcCheckoutPrice(plan, months, extraDevicesForTotal(totalDevices), promo);
+  const price = calcCheckoutPrice(
+    plan,
+    months,
+    extraDevicesForTotal(totalDevices),
+    promo,
+    env
+  );
   return (
     `Выберите количество устройств\n` +
     `Выбрано устройств: ${totalDevices}\n` +
@@ -74,12 +82,19 @@ export function devicesText(
 }
 
 export function devicesKeyboard(
+  env: BotEnv,
   plan: PlanType,
   months: BillingMonths,
   selected: number,
   promo = 0
 ) {
-  const price = calcCheckoutPrice(plan, months, extraDevicesForTotal(selected), promo);
+  const price = calcCheckoutPrice(
+    plan,
+    months,
+    extraDevicesForTotal(selected),
+    promo,
+    env
+  );
   const rows: Array<Array<{ text: string; callback_data: string }>> = [];
 
   for (let i = 0; i < DEVICE_OPTIONS.length; i += 5) {
@@ -103,12 +118,19 @@ export function devicesKeyboard(
 }
 
 export function paymentSummaryText(
+  env: BotEnv,
   plan: PlanType,
   months: BillingMonths,
   totalDevices: number,
   promo = 0
 ): string {
-  const price = calcCheckoutPrice(plan, months, extraDevicesForTotal(totalDevices), promo);
+  const price = calcCheckoutPrice(
+    plan,
+    months,
+    extraDevicesForTotal(totalDevices),
+    promo,
+    env
+  );
   const devicesLine = plan === "personal" ? "Безлимит" : String(totalDevices);
   return (
     `Период: ${periodLabel(months)}\n` +

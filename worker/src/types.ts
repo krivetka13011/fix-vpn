@@ -38,6 +38,8 @@ export interface DbSubscription {
   last_device_reset?: string | null;
   pending_xray_sub_id?: string | null;
   panel_sub_rotate_requested_at?: string | null;
+  expires_at?: string | null;
+  expiry_warned_at?: string | null;
   updated_at: string;
 }
 

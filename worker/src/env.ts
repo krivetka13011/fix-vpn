@@ -55,6 +55,11 @@ export interface BotEnv extends SupabaseEnv {
   /** Platega.io — оплата СБП/карта/USDT */
   PLATEGA_MERCHANT_ID?: string;
   PLATEGA_API_SECRET?: string;
+  /** "1" = короткие пробный/оплата для QA (5 мин, 1 ₽) */
+  TEST_MODE?: string;
+  TRIAL_DURATION_MINUTES?: string;
+  TEST_CHECKOUT_PRICE_RUB?: string;
+  TEST_SUBSCRIPTION_MINUTES?: string;
 }
 
 export const XUI_INBOUND_IDS_DEFAULT = [19, 20, 21, 24];

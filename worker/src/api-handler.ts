@@ -25,6 +25,7 @@ import { handlePartnerBotUpdate } from "./bots/partner-bot";
 import { beginE2eTrace, endE2eTrace } from "./e2e-trace";
 import { DeviceResetCooldownError, DeviceResetPanelError } from "./device-reset";
 import { approvePaidTransaction } from "./approve-transaction";
+import { isTestMode } from "./test-mode";
 import {
   cardlinkResultHtml,
   isCardlinkConfigured,
@@ -503,6 +504,11 @@ export async function handleApiRequest(
       plategaConfigured,
       plategaBalance,
       plategaWebhookUrl: base ? `${base}/api/webhook/platega` : null,
+      testMode: isTestMode(env),
+      trialDurationMinutes: env.TRIAL_DURATION_MINUTES || (isTestMode(env) ? "5" : null),
+      testCheckoutPriceRub: env.TEST_CHECKOUT_PRICE_RUB || (isTestMode(env) ? "1" : null),
+      testSubscriptionMinutes:
+        env.TEST_SUBSCRIPTION_MINUTES || (isTestMode(env) ? "5" : null),
     });
   }
 

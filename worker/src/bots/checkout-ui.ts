@@ -14,6 +14,13 @@ export function extraDevicesForTotal(totalDevices: number): number {
   return Math.max(0, totalDevices - includedDevices());
 }
 
+/** Подпись кнопки выбора устройств (как у конкурентов: «2 устройств ✅»). */
+export function deviceOptionLabel(count: number, selected: boolean): string {
+  const noun = count === 1 ? "устройство" : "устройств";
+  const mark = selected ? " ✅" : "";
+  return `${count} ${noun}${mark}`;
+}
+
 export function tariffsText(): string {
   return (
     `💳 Тарифы\n` +
@@ -67,18 +74,12 @@ export function devicesText(
   totalDevices: number,
   promo = 0
 ): string {
-  const price = calcCheckoutPrice(
-    plan,
-    months,
-    extraDevicesForTotal(totalDevices),
-    promo,
-    env
-  );
-  return (
-    `Выберите количество устройств\n` +
-    `Выбрано устройств: ${totalDevices}\n` +
-    `Сумма: ${price} ₽`
-  );
+  void env;
+  void plan;
+  void months;
+  void totalDevices;
+  void promo;
+  return "Выберите количество устройств";
 }
 
 export function devicesKeyboard(
@@ -97,10 +98,10 @@ export function devicesKeyboard(
   );
   const rows: Array<Array<{ text: string; callback_data: string }>> = [];
 
-  for (let i = 0; i < DEVICE_OPTIONS.length; i += 5) {
+  for (let i = 0; i < DEVICE_OPTIONS.length; i += 2) {
     rows.push(
-      DEVICE_OPTIONS.slice(i, i + 5).map((count) => ({
-        text: String(count),
+      DEVICE_OPTIONS.slice(i, i + 2).map((count) => ({
+        text: deviceOptionLabel(count, count === selected),
         callback_data: `c:dev:${plan}:${months}:${count}:${promo}`,
       }))
     );
@@ -108,7 +109,7 @@ export function devicesKeyboard(
 
   rows.push([
     {
-      text: `💳 Оплатить ${price} ₽`,
+      text: `Оплатить ${price} ₽`,
       callback_data: `c:checkout:${plan}:${months}:${selected}:${promo}`,
     },
   ]);

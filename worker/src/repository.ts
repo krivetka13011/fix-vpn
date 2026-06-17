@@ -19,6 +19,8 @@ export interface TransactionRow {
   amount: number;
   billing_months: number;
   extra_devices?: number;
+  plan_type?: string;
+  platega_transaction_id?: string | null;
   promo_code_id: string | null;
   payment_method: string;
   status: string;
@@ -347,6 +349,29 @@ export async function getTransaction(
 ): Promise<TransactionRow | null> {
   const rows = await sbJson<TransactionRow[]>(
     await sbRequest(env, `transactions?id=eq.${id}&select=*&limit=1`)
+  );
+  return rows[0] ?? null;
+}
+
+export async function getTransactionByPlategaId(
+  env: SupabaseEnv,
+  plategaId: string
+): Promise<TransactionRow | null> {
+  const rows = await sbJson<TransactionRow[]>(
+    await sbRequest(
+      env,
+      `transactions?platega_transaction_id=eq.${encodeURIComponent(plategaId)}&select=*&limit=1`
+    )
+  );
+  return rows[0] ?? null;
+}
+
+export async function getTransactionByPayloadId(
+  env: SupabaseEnv,
+  payloadId: string
+): Promise<TransactionRow | null> {
+  const rows = await sbJson<TransactionRow[]>(
+    await sbRequest(env, `transactions?id=eq.${payloadId}&select=*&limit=1`)
   );
   return rows[0] ?? null;
 }

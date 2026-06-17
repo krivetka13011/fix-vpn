@@ -466,9 +466,12 @@ export class XuiApi {
     telegramId: number,
     username: string | null | undefined,
     displayName: string | null | undefined,
-    limitIp?: number
+    limitIp?: number,
+    expiryMs?: number
   ): Promise<string> {
-    const desired = panelDisplayLabel(username, displayName, telegramId);
+    const desired = panelDisplayLabel(username, displayName, telegramId, {
+      expiryMs: expiryMs && expiryMs > Date.now() ? expiryMs : undefined,
+    });
     if (panel.email === desired) return desired;
 
     const record = await this.fetchClientRecord(panel.email);
@@ -1428,6 +1431,15 @@ export class XuiApi {
     } finally {
       await this.forceEnableClient(params.telegramId, panelEmail);
     }
+
+    await this.syncPanelClientDisplayName(
+      { email: panelEmail, subId: prepared.subId, primaryUuid: prepared.primaryUuid },
+      params.telegramId,
+      params.username,
+      params.displayName,
+      params.limitIp,
+      params.expiryMs
+    );
 
     return this.toProvisionResult(
       env,

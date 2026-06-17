@@ -32,8 +32,19 @@ import {
   verifyCardlinkPostbackSignature,
 } from "./cardlink";
 import { getCardlinkBalance, isCardlinkPayoutConfigured } from "./cardlink-payout";
+import {
+  getPlategaBalance,
+  isPlategaConfigured,
+  parsePlategaCallback,
+  plategaResultHtml,
+  verifyPlategaCallback,
+} from "./platega";
+import {
+  getSubscriptionBySubId,
+  getTransactionByPayloadId,
+  getTransactionByPlategaId,
+} from "./repository";
 import { XuiApi } from "./xui";
-import { getSubscriptionBySubId } from "./repository";
 import {
   buildMiniappConnectUrl,
   buildMiniappUserProfile,
@@ -453,12 +464,17 @@ export async function handleApiRequest(
     const expectedClientWebhook = base ? `${base}/api/webhook/client` : null;
     const cardlinkConfigured = isCardlinkConfigured(env);
     const cardlinkPayoutEnabled = isCardlinkPayoutConfigured(env);
+    const plategaConfigured = isPlategaConfigured(env);
     let cardlinkBalance: { available: number; hold: number } | null = null;
+    let plategaBalance: Array<{ amount: number; currency: string }> | null = null;
     if (cardlinkConfigured) {
       const balance = await getCardlinkBalance(env);
       if (balance) {
         cardlinkBalance = { available: balance.available, hold: balance.hold };
       }
+    }
+    if (plategaConfigured) {
+      plategaBalance = await getPlategaBalance(env);
     }
     return json({
       ok: true,
@@ -484,6 +500,9 @@ export async function handleApiRequest(
       cardlinkConfigured,
       cardlinkPayoutEnabled,
       cardlinkBalance,
+      plategaConfigured,
+      plategaBalance,
+      plategaWebhookUrl: base ? `${base}/api/webhook/platega` : null,
     });
   }
 
@@ -499,6 +518,52 @@ export async function handleApiRequest(
       "Оплата не прошла",
       "Платёж отменён или отклонён. Вернитесь в бот и попробуйте снова."
     );
+  }
+
+  if (path === "/api/payment/platega/success" && (request.method === "GET" || request.method === "POST")) {
+    return plategaResultHtml(
+      "Оплата принята",
+      "Спасибо! Вернитесь в Telegram — бот пришлёт подтверждение в течение минуты."
+    );
+  }
+
+  if (path === "/api/payment/platega/fail" && (request.method === "GET" || request.method === "POST")) {
+    return plategaResultHtml(
+      "Оплата не прошла",
+      "Платёж отменён или отклонён. Вернитесь в бот и попробуйте снова."
+    );
+  }
+
+  if (path === "/api/webhook/platega" && request.method === "POST") {
+    if (!isPlategaConfigured(env)) {
+      return new Response("platega disabled", { status: 503 });
+    }
+    try {
+      if (!verifyPlategaCallback(env, request)) {
+        console.error("platega callback: bad auth");
+        return new Response("unauthorized", { status: 401 });
+      }
+      const callback = await parsePlategaCallback(request);
+      if (!callback.id) return new Response("bad payload", { status: 400 });
+
+      let txn = await getTransactionByPlategaId(env, callback.id);
+      if (!txn) txn = await getTransactionByPayloadId(env, callback.id);
+
+      if (callback.status === "CONFIRMED" && txn) {
+        const result = await approvePaidTransaction(env, txn.id);
+        if (!result.ok) {
+          console.error("platega approve:", result.message, callback.id);
+        }
+      } else if (callback.status === "CANCELED" && txn) {
+        const { patchTransaction } = await import("./repository");
+        await patchTransaction(env, txn.id, { status: "rejected" });
+      }
+
+      return new Response("ok", { status: 200 });
+    } catch (error) {
+      console.error("platega webhook:", error);
+      return new Response("error", { status: 500 });
+    }
   }
 
   if (path === "/api/webhook/cardlink" && request.method === "POST") {

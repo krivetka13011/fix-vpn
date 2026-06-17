@@ -52,6 +52,9 @@ export interface BotEnv extends SupabaseEnv {
   CARDLINK_PAYOUT_ENABLED?: string;
   /** ID банка СБП для payout API (см. /api/v1/payout/dictionaries/sbp_banks) */
   CARDLINK_DEFAULT_SBP_BANK_ID?: string;
+  /** Platega.io — оплата СБП/карта/USDT */
+  PLATEGA_MERCHANT_ID?: string;
+  PLATEGA_API_SECRET?: string;
 }
 
 export const XUI_INBOUND_IDS_DEFAULT = [19, 20, 21, 24];

@@ -1,4 +1,6 @@
 import { periodLabel, type BillingMonths } from "./bots/pricing";
+import { TARIFFS } from "./catalog";
+import type { PlanType } from "./catalog";
 import { clientBotToken, type BotEnv } from "./env";
 import { panelLimitIpForSubscription, syncPanelDeviceLimit } from "./device-limit";
 import { sendMessage } from "./bots/telegram-api";
@@ -56,13 +58,14 @@ export async function approvePaidTransaction(
   if (!user) return { ok: false, message: "Пользователь не найден" };
 
   const months = txn.billing_months as BillingMonths;
-  const extraDevices = Number(txn.extra_devices ?? 0);
+  const planType = (txn.plan_type === "personal" ? "personal" : "basic") as PlanType;
+  const extraDevices = planType === "personal" ? 0 : Number(txn.extra_devices ?? 0);
   const xui = new XuiApi(env);
   const sub = await getSubscription(env, user.id);
   const subWithDevices = {
-    ...(sub ?? { plan_type: "basic" as const, extra_devices: 0 }),
+    ...(sub ?? { plan_type: planType, extra_devices: 0 }),
     extra_devices: extraDevices,
-    plan_type: "basic" as const,
+    plan_type: planType,
   };
   const extendDays = months * 30;
   const baseMs =
@@ -99,8 +102,8 @@ export async function approvePaidTransaction(
 
   await patchSubscription(env, user.id, {
     status: "active",
-    plan_type: "basic",
-    plan_label: `Базовый · ${periodLabel(months)}`,
+    plan_type: planType,
+    plan_label: `${TARIFFS[planType].name} · ${periodLabel(months)}`,
     billing_months: months,
     extra_devices: extraDevices,
     starts_at: sub?.starts_at || formatDateFromMs(Date.now()),

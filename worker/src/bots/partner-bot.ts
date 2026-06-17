@@ -85,10 +85,16 @@ function partnerMenuKeyboard(env: BotEnv, partnerId: number) {
   return {
     inline_keyboard: [
       [{ text: "📨 Сообщение другу", url: referralShareUrl(env, link) }],
-      [{ text: "💰 Баланс и статистика", callback_data: "p:stats" }],
+      [{ text: "📊 Статистика и баланс", callback_data: "p:stats" }],
       [{ text: "💳 Мои реквизиты", callback_data: "p:reqs" }],
       [{ text: "🎟 Запросить промокод", callback_data: "p:promo" }],
-      [{ text: "🏧 Вывести бабки", callback_data: "p:withdraw" }],
+      [{ text: "🏧 Вывести средства", callback_data: "p:withdraw" }],
+      [
+        {
+          text: "📚 База знаний",
+          url: "https://docs.google.com/document/d/1zME5hfnSUlIpzpcyqOroX1HrwCfOceDMbP6NZFW9koI/edit",
+        },
+      ],
     ],
   };
 }

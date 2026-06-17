@@ -3,21 +3,11 @@ import {
   EXTRA_DEVICE_PRICE_PER_MONTH,
   TARIFFS,
   type BillingMonths,
+  type PlanType,
 } from "../catalog";
-import { BILLING_OPTIONS, calcPrice, periodLabel, type BillingMonths as PricingMonths } from "./pricing";
+import { calcCheckoutPrice, periodButtonLabel, periodLabel } from "./pricing";
 
-const PERIOD_EMOJI: Record<PricingMonths, string> = {
-  1: "📅",
-  3: "📆",
-  6: "🗓",
-  12: "⭐",
-};
-
-export const DEVICE_OPTIONS = [2, 3, 4, 5, 6, 7, 8, 9, 10] as const;
-
-export function defaultCheckoutDevices(): number {
-  return Math.max(2, includedDevices());
-}
+export const DEVICE_OPTIONS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] as const;
 
 export function includedDevices(): number {
   return TARIFFS.basic.includedDevices ?? 1;
@@ -27,82 +17,87 @@ export function extraDevicesForTotal(totalDevices: number): number {
   return Math.max(0, totalDevices - includedDevices());
 }
 
-export function calcCheckoutPrice(
-  env: BotEnv,
-  months: BillingMonths,
-  totalDevices: number,
-  promoDiscount = 0
-): number {
-  const extra = extraDevicesForTotal(totalDevices);
-  const base = calcPrice(env, months);
-  const addon = extra * EXTRA_DEVICE_PRICE_PER_MONTH * months;
-  let total = base + addon;
-  if (promoDiscount > 0) {
-    total = Math.round((total * (100 - promoDiscount)) / 100);
-  }
-  return Math.max(0, total);
-}
-
 export function deviceLabel(count: number): string {
-  const mod10 = count % 10;
-  const mod100 = count % 100;
-  if (mod10 === 1 && mod100 !== 11) return `${count} устройство`;
-  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) {
-    return `${count} устройства`;
-  }
-  return `${count} устройств`;
+  return String(count);
 }
 
-export function periodsKeyboard(env: BotEnv) {
-  const baseDevices = defaultCheckoutDevices();
+export function tariffsText(): string {
+  return (
+    `💳 <b>Тарифы</b>\n\n` +
+    `✅ <b>Базовый:</b>\n` +
+    `● Безлимитный трафик\n` +
+    `● 1 устройство в тарифе\n` +
+    `● Быстрое подключение\n` +
+    `● Стабильность\n` +
+    `Подойдёт для одного человека\n\n` +
+    `⭐️ <b>Про:</b>\n` +
+    `● Личный сервер\n` +
+    `● Безлимитные количество устройств\n` +
+    `● Безлимитный трафик\n` +
+    `● Скорость до 1000 Мб/с\n` +
+    `Подойдёт для семьи/компании/активных пользователей`
+  );
+}
+
+export function tariffsKeyboard() {
   return {
-    inline_keyboard: BILLING_OPTIONS.map((months) => {
-      const price = calcCheckoutPrice(env, months, baseDevices);
-      return [
-        {
-          text: `${PERIOD_EMOJI[months]} ${periodLabel(months)} · ${price} ₽`,
-          callback_data: `c:period:${months}`,
-        },
-      ];
-    }).concat([[{ text: "◀️ Назад", callback_data: "c:menu" }]]),
+    inline_keyboard: [
+      [{ text: "✅ Базовый от 199/мес", callback_data: "c:plan:basic" }],
+      [{ text: "⭐️ Про от 999/мес", callback_data: "c:plan:personal" }],
+      [{ text: "◀️ Назад", callback_data: "c:menu" }],
+    ],
   };
 }
 
-export function tariffConfigText(
-  env: BotEnv,
+export function periodsKeyboard(plan: PlanType) {
+  const monthsList: BillingMonths[] = [1, 2, 3, 6, 12];
+  return {
+    inline_keyboard: monthsList
+      .map((months) => {
+        const price = calcCheckoutPrice(plan, months);
+        return [
+          {
+            text: `${periodButtonLabel(months)} - ${price} рублей`,
+            callback_data: `c:period:${plan}:${months}`,
+          },
+        ];
+      })
+      .concat([[{ text: "◀️ Назад", callback_data: "c:buy" }]]),
+  };
+}
+
+export function devicesText(
+  plan: PlanType,
   months: BillingMonths,
   totalDevices: number,
   promo = 0
 ): string {
-  const price = calcCheckoutPrice(env, months, totalDevices, promo);
+  const price = calcCheckoutPrice(plan, months, extraDevicesForTotal(totalDevices), promo);
   return (
-    `📌 <b>Настройка тарифа</b>\n\n` +
-    `Базово:\n` +
-    `• ${deviceLabel(defaultCheckoutDevices())}\n\n` +
-    `Сейчас:\n` +
-    `• ${deviceLabel(totalDevices)}\n` +
-    `💰 К оплате: <b>${price} ₽</b>\n\n` +
-    `При необходимости измените параметры ниже и подтвердите оплату.`
+    `Выберите количество устройств\n\n` +
+    `Выбрано устройств: <b>${totalDevices}</b>\n` +
+    `Сумма: <b>${price} ₽</b>\n\n` +
+    `Доп. устройство: +${EXTRA_DEVICE_PRICE_PER_MONTH} ₽ / мес`
   );
 }
 
-export function tariffConfigKeyboard(
-  env: BotEnv,
+export function devicesKeyboard(
+  plan: PlanType,
   months: BillingMonths,
-  selectedDevices: number,
+  selected: number,
   promo = 0
 ) {
-  const price = calcCheckoutPrice(env, months, selectedDevices, promo);
+  const price = calcCheckoutPrice(plan, months, extraDevicesForTotal(selected), promo);
   const rows: Array<Array<{ text: string; callback_data: string }>> = [];
 
   for (let i = 0; i < DEVICE_OPTIONS.length; i += 2) {
     const row: Array<{ text: string; callback_data: string }> = [];
     for (let j = 0; j < 2 && i + j < DEVICE_OPTIONS.length; j += 1) {
       const count = DEVICE_OPTIONS[i + j];
-      const mark = count === selectedDevices ? " ✅" : "";
+      const mark = count === selected ? " ✅" : "";
       row.push({
-        text: `📱 ${deviceLabel(count)}${mark}`,
-        callback_data: `c:dev:${months}:${count}:${promo}`,
+        text: `${count}${mark}`,
+        callback_data: `c:dev:${plan}:${months}:${count}:${promo}`,
       });
     }
     rows.push(row);
@@ -111,26 +106,66 @@ export function tariffConfigKeyboard(
   rows.push([
     {
       text: `💳 Оплатить ${price} ₽`,
-      callback_data: `c:checkout:${months}:${selectedDevices}:${promo}`,
+      callback_data: `c:checkout:${plan}:${months}:${selected}:${promo}`,
     },
   ]);
-  rows.push([{ text: "❌ Отмена", callback_data: "c:buy" }]);
+  rows.push([{ text: "◀️ Назад", callback_data: `c:plan:${plan}` }]);
 
   return { inline_keyboard: rows };
 }
 
+export function paymentSummaryText(
+  plan: PlanType,
+  months: BillingMonths,
+  totalDevices: number,
+  promo = 0
+): string {
+  const price = calcCheckoutPrice(plan, months, extraDevicesForTotal(totalDevices), promo);
+  const devicesLine =
+    plan === "personal" ? "Безлимит" : String(totalDevices);
+  return (
+    `Период: <b>${periodLabel(months)}</b>\n` +
+    `Устройств: <b>${devicesLine}</b>\n` +
+    `Сумма: <b>${price} ₽</b>\n\n` +
+    `Выберите способ оплаты:`
+  );
+}
+
 export function paymentMethodsKeyboard(
-  months: number,
+  plan: PlanType,
+  months: BillingMonths,
   totalDevices: number,
   promo = 0
 ) {
+  const back =
+    plan === "basic"
+      ? `c:period:${plan}:${months}`
+      : `c:period:${plan}:${months}`;
   return {
     inline_keyboard: [
-      [{ text: "📱 СБП", callback_data: `c:pay:sbp:${months}:${promo}:${totalDevices}` }],
-      [{ text: "💳 Карта", callback_data: `c:pay:card:${months}:${promo}:${totalDevices}` }],
-      [{ text: "💎 USDT", callback_data: `c:pay:crypto_usdt:${months}:${promo}:${totalDevices}` }],
-      [{ text: "🎟 Ввести промокод", callback_data: `c:promo:${months}:${totalDevices}` }],
-      [{ text: "◀️ Назад", callback_data: `c:period:${months}` }],
+      [{ text: "📱 СБП", callback_data: `c:pay:sbp:${plan}:${months}:${promo}:${totalDevices}` }],
+      [{ text: "💳 Карта", callback_data: `c:pay:card:${plan}:${months}:${promo}:${totalDevices}` }],
+      [{ text: "💎 USDT", callback_data: `c:pay:crypto_usdt:${plan}:${months}:${promo}:${totalDevices}` }],
+      [{ text: "🎟 Ввести промокод", callback_data: `c:promo:${plan}:${months}:${totalDevices}` }],
+      [{ text: "◀️ Назад", callback_data: back }],
     ],
+  };
+}
+
+export function parseCheckoutPayData(data: string): {
+  method: string;
+  plan: PlanType;
+  months: BillingMonths;
+  promo: number;
+  totalDevices: number;
+} | null {
+  const parts = data.split(":");
+  if (parts[0] !== "c" || parts[1] !== "pay" || parts.length < 7) return null;
+  return {
+    method: parts[2],
+    plan: parts[3] as PlanType,
+    months: Number(parts[4]) as BillingMonths,
+    promo: Number(parts[5] || "0"),
+    totalDevices: Number(parts[6] || includedDevices()),
   };
 }

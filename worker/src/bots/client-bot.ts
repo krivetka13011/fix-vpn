@@ -29,15 +29,19 @@ import {
   sendMessage,
 } from "./telegram-api";
 import { periodLabel, type BillingMonths } from "./pricing";
+import type { PlanType } from "../catalog";
 import {
   calcCheckoutPrice,
-  defaultCheckoutDevices,
+  devicesKeyboard,
+  devicesText,
   extraDevicesForTotal,
   includedDevices,
+  parseCheckoutPayData,
   paymentMethodsKeyboard,
+  paymentSummaryText,
   periodsKeyboard,
-  tariffConfigKeyboard,
-  tariffConfigText,
+  tariffsKeyboard,
+  tariffsText,
 } from "./checkout-ui";
 import { PRIVACY_POLICY_URL, SUPPORT_TELEGRAM_USERNAME, TERMS_OF_SERVICE_URL } from "../catalog";
 import { managerTxnKeyboard, notifyManager } from "./manager";
@@ -54,11 +58,10 @@ import {
   createCardlinkBill,
   shouldUseCardlink,
 } from "../cardlink";
+import { createPlategaPayment, shouldUsePlatega } from "../platega";
 import {
   buildClientButtonUrl,
-  buildHappDeepLink,
   buildPanelSubscriptionUrlForUser,
-  buildPublicSubscriptionUrl,
   clientLabel,
   clientsForOs,
   defaultClientForOs,
@@ -66,7 +69,10 @@ import {
 } from "../connect-links";
 import { syncPanelSubIdForUser } from "../panel-sync";
 import {
+  canConnectNewDevice,
   fetchPanelDeviceIps,
+  formatConnectedDevices,
+  formatDeviceLimitLine,
   panelLimitIpForSubscription,
   subscriptionDeviceLimit,
   syncPanelDeviceLimit,
@@ -103,16 +109,13 @@ async function safeAnswerCallback(
   }
 }
 
-function mainMenuText(env: BotEnv, displayName: string): string {
-  const trialDays = Number(env.TRIAL_DAYS || env.XUI_TRIAL_DAYS || "1");
-  const dayLabel =
-    trialDays === 1 ? "день" : trialDays >= 2 && trialDays <= 4 ? "дня" : "дней";
+function mainMenuText(displayName: string): string {
   return (
     `Привет, <b>${displayName}</b>! 👋\n` +
     `⚡️ VPN нового уровня\n\n` +
     `🌍 Свободный доступ к сайтам и сервисам\n` +
     `📞 Звонки и видео без ограничений\n` +
-    `🧪 Пробный период — ${trialDays} ${dayLabel}\n` +
+    `⚙️ Пробный период — 1 день\n` +
     `🔐 Полная защита и конфиденциальность\n` +
     `📶 Работает стабильно даже в мобильных сетях`
   );
@@ -151,7 +154,7 @@ function supportMenuKeyboard(env: BotEnv): Record<string, unknown> {
   const support = supportUsername(env);
   return {
     inline_keyboard: [
-      [{ text: "✉️ Написать менеджеру", url: `https://t.me/${support}` }],
+      [{ text: "👨‍💻 Написать менеджеру", url: `https://t.me/${support}` }],
       [{ text: "📄 Политика конфиденциальности", url: PRIVACY_POLICY_URL }],
       [{ text: "📋 Пользовательское соглашение", url: TERMS_OF_SERVICE_URL }],
       [{ text: "◀️ Назад", callback_data: "c:menu" }],
@@ -171,8 +174,8 @@ async function showSupportMenu(
     chatId,
     messageId,
     `<b>💬 Поддержка</b>\n\n` +
-      `Контакт: @${support}\n` +
-      `По оплате, подключению и другим вопросам — напишите менеджеру.`,
+      `Контакты: @${support}\n` +
+      `По вопросам оплаты, подключения и другим вопросам — напишите менеджеру.`,
     supportMenuKeyboard(env)
   );
 }
@@ -189,6 +192,16 @@ function connectOsKeyboard() {
   };
 }
 
+function clientButtonEmoji(client: VpnClientId): string {
+  const map: Record<VpnClientId, string> = {
+    happ: "🚀",
+    v2rayng: "⚡️",
+    hiddify: "🛡",
+    shadowrocket: "🛡",
+  };
+  return map[client] || "📲";
+}
+
 function connectClientKeyboard(
   env: BotEnv,
   os: string,
@@ -197,24 +210,25 @@ function connectClientKeyboard(
   redirectByClient: Partial<Record<VpnClientId, string>>
 ) {
   const options = clientsForOs(os);
-  const rows: Array<Array<{ text: string; url?: string; callback_data?: string }>> = [
-    [
-      {
-        text: `Открыть ${clientLabel(defaultClient)}`,
-        url: redirectByClient[defaultClient] || buildClientButtonUrl(env, defaultClient, subId),
-      },
-    ],
-  ];
+  const rows: Array<Array<{ text: string; url?: string; callback_data?: string }>> = [];
   for (const client of options) {
-    if (client === defaultClient) continue;
+    const emoji = clientButtonEmoji(client);
+    const label =
+      client === "happ"
+        ? `${emoji} Открыть Happ`
+        : client === "v2rayng"
+          ? `${emoji} V2rayNG`
+          : client === "hiddify"
+            ? `${emoji} Hiddify`
+            : `${emoji} ${clientLabel(client)}`;
     rows.push([
       {
-        text: clientLabel(client),
+        text: label,
         url: redirectByClient[client] || buildClientButtonUrl(env, client, subId),
       },
     ]);
   }
-  rows.push([{ text: "Назад", callback_data: "c:connect" }]);
+  rows.push([{ text: "◀️ Назад", callback_data: "c:connect" }]);
   return { inline_keyboard: rows };
 }
 
@@ -272,14 +286,19 @@ async function recordDeviceConnect(
   await syncPanelDeviceLimit(env, userId);
 }
 
-function buildProfileKeyboard(hasClient: boolean): Record<string, unknown> {
+function buildProfileKeyboard(
+  hasClient: boolean,
+  planType?: string | null
+): Record<string, unknown> {
   const rows: Array<Array<{ text: string; callback_data: string }>> = [];
 
   if (hasClient) {
-    rows.push([{ text: "Сбросить подключение", callback_data: "c:resetip" }]);
+    rows.push([{ text: "🔄 Сбросить подключение", callback_data: "c:resetip" }]);
   }
-
-  rows.push([{ text: "Назад", callback_data: "c:menu" }]);
+  if (planType === "basic" || !planType) {
+    rows.push([{ text: "➕ Докупить устройства", callback_data: "c:buy" }]);
+  }
+  rows.push([{ text: "◀️ Назад", callback_data: "c:menu" }]);
   return { inline_keyboard: rows };
 }
 
@@ -324,21 +343,12 @@ function buildSubscriptionUrl(env: BotEnv, subId: string): string {
   return buildPanelSubscriptionUrlForUser(env, subId);
 }
 
-function connectOsMessage(
-  env: BotEnv,
-  os: string,
-  defaultClient: VpnClientId,
-  subId: string
-): string {
-  const happNote =
-    defaultClient === "happ"
-      ? `\n\nПодписка:\n<code>${buildPublicSubscriptionUrl(env, subId)}</code>\n\nИмпорт в Happ:\n<code>${buildHappDeepLink(env, subId)}</code>\n\n⚠️ Удалите <b>все</b> старые подписки в Happ перед импортом.`
-      : "";
-  const osHint =
-    defaultClient === "happ"
-      ? `ОС: <b>${osLabel(os)}</b>\nНажмите <b>Открыть Happ</b> или скопируйте ссылку импорта выше.`
-      : `Нажмите <b>Открыть ${clientLabel(defaultClient)}</b> ниже.`;
-  return `<b>Подключение VPN</b>\n\n${osHint}${happNote}`;
+function connectOsMessage(os: string): string {
+  return (
+    `ОС: <b>${osLabel(os)}</b>\n` +
+    `Нажмите кнопку нужного приложения ниже для автоматического импорта подписки.\n\n` +
+    `⚠️ Удалите все старые подписки перед импортом.`
+  );
 }
 
 function buildConnectRedirects(
@@ -466,7 +476,7 @@ async function showMainMenu(
 ): Promise<void> {
   const token = clientBotToken(env)!;
   const user = await upsertTelegramUser(env, tg);
-  const text = mainMenuText(env, user.display_name);
+  const text = mainMenuText(user.display_name);
   const markup = mainMenuKeyboard(env, Boolean(user.has_used_trial));
   if (messageId) {
     await editMessage(token, chatId, messageId, text, markup);
@@ -475,7 +485,12 @@ async function showMainMenu(
   }
 }
 
-async function activateTrial(env: BotEnv, tg: TelegramUser, chatId: number): Promise<void> {
+async function activateTrial(
+  env: BotEnv,
+  tg: TelegramUser,
+  chatId: number,
+  messageId?: number
+): Promise<void> {
   const token = clientBotToken(env)!;
   const user = await upsertTelegramUser(env, tg);
   const tester = isTesterAccount(env, tg.id, user.is_tester);
@@ -497,8 +512,8 @@ async function activateTrial(env: BotEnv, tg: TelegramUser, chatId: number): Pro
     claimed = trialClaim;
   }
 
-  const trialDays = Number(env.TRIAL_DAYS || env.XUI_TRIAL_DAYS || "3");
-  const expiryMs = expiryMsFromDays(trialDays);
+  const TRIAL_MS = 24 * 60 * 60 * 1000;
+  const expiryMs = Date.now() + TRIAL_MS;
 
   try {
     await ensureVpnClientOnStart(env, claimed, tg);
@@ -536,25 +551,27 @@ async function activateTrial(env: BotEnv, tg: TelegramUser, chatId: number): Pro
     await patchSubscription(env, claimed.id, {
       status: "active",
       plan_type: "basic",
-      plan_label: `Пробный · ${trialDays} дн.`,
+      plan_label: "Пробный · 24 ч",
       billing_months: 0,
       starts_at: formatDateFromMs(Date.now()),
       ends_at: formatDateFromMs(expiryMs),
       is_trial: true,
+      extra_devices: 0,
       client_email: String(tg.id),
       xray_sub_id: sub.xray_sub_id,
       xray_uuid: sub.xray_uuid,
       subscription_url: subscriptionUrl,
     });
-    await sendMessage(
-      token,
-      chatId,
-      env.MSG_TRIAL_SUCCESS ||
-        "Пробный период активирован.\n\n" +
-          "На пробном тарифе одновременно работает <b>1 устройство</b>. " +
-          "Сменить — «Мой профиль» → нажмите устройство или «Сбросить все».\n\n" +
-          "Откройте «Подключить VPN» в меню."
-    );
+
+    const text =
+      `Пробный период на 24 часа успешно активирован! 🎉\n\n` +
+      `Выберите операционную систему вашего устройства для настройки подключения:`;
+    const markup = connectOsKeyboard();
+    if (messageId) {
+      await editMessage(token, chatId, messageId, text, markup);
+    } else {
+      await sendMessage(token, chatId, text, markup);
+    }
   } catch (error) {
     if (!tester) await releaseTrialClaim(env, tg.id);
     const detail = error instanceof Error ? error.message : "unknown";
@@ -645,43 +662,39 @@ async function showProfile(
   const statusLabel =
     status === "active"
       ? sub?.is_trial
-        ? "пробный период"
-        : "активна"
+        ? "Пробный период"
+        : sub?.plan_type === "personal"
+          ? "Активен (Про)"
+          : "Активен (Базовый)"
       : status === "expired"
-        ? "истекла"
+        ? "Истёк"
         : "нет подписки";
 
-  const deviceLine =
-    limit === 0
-      ? `Устройства: <b>${used}</b> · без лимита`
-      : `Устройства: <b>${Math.min(used, limit)} / ${limit}</b> слотов`;
-
-  const ipLines =
-    panelIps.length > 0
-      ? `\n\nПодключения:\n${panelIps
-          .slice(0, 3)
-          .map((row) => `• ${row.ip}${row.seenAt ? ` (${row.seenAt})` : ""}`)
-          .join("\n")}`
-      : "";
+  const deviceLine = formatDeviceLimitLine(used, limit, sub?.plan_type);
+  const ipLines = formatConnectedDevices(
+    panelIps,
+    user.username ?? tg.username ?? null,
+    telegramId
+  );
 
   const hint =
-    limit === 1
-      ? "Смена телефона: «Сбросить подключение» (раз в 24 ч) или докупите слоты в Mini App."
-      : used >= limit && limit > 0
-        ? "Все слоты заняты. Докупите слоты в Mini App или сбросьте подключение (раз в 24 ч)."
-        : hasClient
-          ? "Лимит IP задаётся в панели. Сброс удаляет клиента — при повторном подключении создаётся новый."
-          : "Подключите VPN в главном меню.";
+    "Смена устройства: Нажмите «Сбросить подключение» (доступно 1 раз в 24 часа), если вы купили новый телефон или переустановили приложение.";
 
   const text =
     (notice ? `${notice}\n\n` : "") +
-    `<b>Мой профиль</b>\n\n` +
+    `👤 <b>Мой профиль</b>\n\n` +
     `Статус: ${statusLabel}\n` +
     `Период: ${period}\n` +
     `${deviceLine}${ipLines}\n\n` +
     hint;
 
-  await editMessage(token, chatId, messageId, text, buildProfileKeyboard(hasClient));
+  await editMessage(
+    token,
+    chatId,
+    messageId,
+    text,
+    buildProfileKeyboard(hasClient, sub?.plan_type)
+  );
 }
 
 async function resetDeviceBinding(
@@ -770,36 +783,55 @@ export async function handleClientBotUpdate(
     }
     if (data === "c:trial") {
       await safeAnswerCallback(token, cq.id, "Активируем пробный период…");
-      await activateTrial(env, tg, chatId);
+      await activateTrial(env, tg, chatId, messageId);
       return;
     }
     if (data === "c:buy") {
       await safeAnswerCallback(token, cq.id);
+      await editMessage(token, chatId, messageId, tariffsText(), tariffsKeyboard());
+      return;
+    }
+    if (data.startsWith("c:plan:")) {
+      await safeAnswerCallback(token, cq.id);
+      const plan = data.split(":")[2] as PlanType;
       await editMessage(
         token,
         chatId,
         messageId,
-        "💳 <b>Оформление подписки</b>\n\nВыберите период:",
-        periodsKeyboard(env)
+        "Выберите период:",
+        periodsKeyboard(plan)
       );
       return;
     }
     if (data.startsWith("c:period:")) {
       await safeAnswerCallback(token, cq.id);
-      const months = Number(data.split(":")[2]) as BillingMonths;
-      const defaultDevices = defaultCheckoutDevices();
+      const parts = data.split(":");
+      const plan = parts[2] as PlanType;
+      const months = Number(parts[3]) as BillingMonths;
+      if (plan === "personal") {
+        await editMessage(
+          token,
+          chatId,
+          messageId,
+          paymentSummaryText(plan, months, 0),
+          paymentMethodsKeyboard(plan, months, 0)
+        );
+        return;
+      }
+      const defaultDevices = includedDevices();
       await editMessage(
         token,
         chatId,
         messageId,
-        tariffConfigText(env, months, defaultDevices),
-        tariffConfigKeyboard(env, months, defaultDevices)
+        devicesText(plan, months, defaultDevices),
+        devicesKeyboard(plan, months, defaultDevices)
       );
       return;
     }
     if (data.startsWith("c:dev:")) {
       await safeAnswerCallback(token, cq.id);
-      const [, , monthsRaw, devicesRaw, promoRaw] = data.split(":");
+      const [, , planRaw, monthsRaw, devicesRaw, promoRaw] = data.split(":");
+      const plan = planRaw as PlanType;
       const months = Number(monthsRaw) as BillingMonths;
       const totalDevices = Number(devicesRaw);
       const promo = Number(promoRaw || "0");
@@ -807,58 +839,102 @@ export async function handleClientBotUpdate(
         token,
         chatId,
         messageId,
-        tariffConfigText(env, months, totalDevices, promo),
-        tariffConfigKeyboard(env, months, totalDevices, promo)
+        devicesText(plan, months, totalDevices, promo),
+        devicesKeyboard(plan, months, totalDevices, promo)
       );
       return;
     }
     if (data.startsWith("c:checkout:")) {
       await safeAnswerCallback(token, cq.id);
-      const [, , monthsRaw, devicesRaw, promoRaw] = data.split(":");
+      const [, , planRaw, monthsRaw, devicesRaw, promoRaw] = data.split(":");
+      const plan = planRaw as PlanType;
       const months = Number(monthsRaw) as BillingMonths;
       const totalDevices = Number(devicesRaw);
       const promo = Number(promoRaw || "0");
-      const price = calcCheckoutPrice(env, months, totalDevices, promo);
       await editMessage(
         token,
         chatId,
         messageId,
-        `💳 <b>Оплата</b>\n\n` +
-          `Период: <b>${periodLabel(months)}</b>\n` +
-          `Устройств: <b>${totalDevices}</b>\n` +
-          `Сумма: <b>${price} ₽</b>\n\n` +
-          `Выберите способ оплаты:`,
-        paymentMethodsKeyboard(months, totalDevices, promo)
+        paymentSummaryText(plan, months, totalDevices, promo),
+        paymentMethodsKeyboard(plan, months, totalDevices, promo)
       );
       return;
     }
     if (data.startsWith("c:promo:")) {
       await safeAnswerCallback(token, cq.id);
       const parts = data.split(":");
-      const months = Number(parts[2]);
-      const totalDevices = Number(parts[3] || includedDevices());
-      await setSession(env, tg.id, "client", "await_promo", { months, totalDevices });
+      const plan = parts[2] as PlanType;
+      const months = Number(parts[3]) as BillingMonths;
+      const totalDevices = Number(parts[4] || includedDevices());
+      await setSession(env, tg.id, "client", "await_promo", {
+        plan,
+        months,
+        totalDevices,
+      });
       await editMessage(token, chatId, messageId, "🎟 Введите промокод сообщением:");
       return;
     }
     if (data.startsWith("c:pay:")) {
       await safeAnswerCallback(token, cq.id);
-      const [, , method, monthsRaw, promoRaw, devicesRaw] = data.split(":");
-      const months = Number(monthsRaw) as BillingMonths;
-      const promo = Number(promoRaw || "0");
-      const totalDevices = Number(devicesRaw || includedDevices());
-      const extraDevices = extraDevicesForTotal(totalDevices);
-      const price = calcCheckoutPrice(env, months, totalDevices, promo);
+      const parsed = parseCheckoutPayData(data);
+      if (!parsed) return;
+      const { method, plan, months, promo, totalDevices } = parsed;
+      const extraDevices = plan === "personal" ? 0 : extraDevicesForTotal(totalDevices);
+      const price = calcCheckoutPrice(plan, months, extraDevices, promo);
       const user = await upsertTelegramUser(env, tg);
       const txn = await createTransaction(env, {
         user_id: user.id,
         amount: price,
         billing_months: months,
+        plan_type: plan,
         extra_devices: extraDevices,
         payment_method: method,
         status: "pending",
         is_first_payment: !Boolean(user.first_payment_done),
       });
+
+      if (shouldUsePlatega(env, method)) {
+        try {
+          const payment = await createPlategaPayment(env, {
+            amount: price,
+            orderId: txn.id,
+            description: `FIX VPN · ${plan} · ${periodLabel(months)}`,
+            method,
+            telegramId: tg.id,
+            username: tg.username,
+          });
+          await patchTransaction(env, txn.id, {
+            platega_transaction_id: payment.transactionId,
+            payment_url: payment.redirect,
+          });
+          await editMessage(
+            token,
+            chatId,
+            messageId,
+            `Оплата FIX VPN: <b>${price} ₽</b>\n\n` +
+              `Нажмите кнопку ниже — откроется безопасная форма оплаты.\n` +
+              `После оплаты подписка активируется автоматически.`,
+            {
+              inline_keyboard: [
+                [{ text: "💳 Оплатить", url: payment.redirect }],
+                [{ text: "◀️ Назад", callback_data: "c:menu" }],
+              ],
+            }
+          );
+        } catch (error) {
+          console.error("platega payment:", error);
+          await editMessage(
+            token,
+            chatId,
+            messageId,
+            `Не удалось создать ссылку на оплату.\n` +
+              `${error instanceof Error ? error.message : "ошибка Platega"}\n\n` +
+              `Попробуйте позже или выберите другой способ.`,
+            { inline_keyboard: [[{ text: "◀️ Назад", callback_data: "c:buy" }]] }
+          );
+        }
+        return;
+      }
 
       if (shouldUseCardlink(env, method)) {
         try {
@@ -957,35 +1033,26 @@ export async function handleClientBotUpdate(
     }
     if (data === "c:connect") {
       await safeAnswerCallback(token, cq.id);
+      const user = await upsertTelegramUser(env, tg);
+      const gate = await canConnectNewDevice(env, user.id, tg.id);
+      if (!gate.ok) {
+        await editMessage(
+          token,
+          chatId,
+          messageId,
+          gate.message,
+          { inline_keyboard: [[{ text: "◀️ Назад", callback_data: "c:menu" }]] }
+        );
+        return;
+      }
+      await resolvePanelSubId(env, user, tg);
       await editMessage(
         token,
         chatId,
         messageId,
-        "Подготовка подключения…",
-        { inline_keyboard: [[{ text: "Назад", callback_data: "c:menu" }]] }
+        "Выберите ОС:",
+        connectOsKeyboard()
       );
-      const user = await upsertTelegramUser(env, tg);
-      await resolvePanelSubId(env, user, tg);
-      const sub = await getSubscription(env, user.id);
-      if (!sub?.subscription_url || sub.status !== "active") {
-        await editMessage(
-          token,
-          chatId,
-          messageId,
-          "Сначала активируйте пробный период или оформите подписку.",
-          { inline_keyboard: [[{ text: "Назад", callback_data: "c:menu" }]] }
-        );
-      } else {
-        const warning = "";
-        const osRows = connectOsKeyboard().inline_keyboard.slice(0, -1);
-        await editMessage(
-          token,
-          chatId,
-          messageId,
-          `${warning}Выберите ОС:`,
-          connectOsKeyboard()
-        );
-      }
       return;
     }
     if (data.startsWith("c:os:")) {
@@ -994,6 +1061,14 @@ export async function handleClientBotUpdate(
       const sub = await getSubscription(env, user.id);
       if (sub?.status !== "active") {
         await safeAnswerCallback(token, cq.id, "Сначала активируйте подписку", { showAlert: true });
+        return;
+      }
+
+      const gate = await canConnectNewDevice(env, user.id, tg.id);
+      if (!gate.ok) {
+        await safeAnswerCallback(token, cq.id, gate.message.replace(/<[^>]+>/g, ""), {
+          showAlert: true,
+        });
         return;
       }
 
@@ -1006,7 +1081,7 @@ export async function handleClientBotUpdate(
           chatId,
           messageId,
           "Ссылка подписки временно недоступна. Подождите минуту и попробуйте снова.",
-          { inline_keyboard: [[{ text: "Назад", callback_data: "c:menu" }]] }
+          { inline_keyboard: [[{ text: "◀️ Назад", callback_data: "c:connect" }]] }
         );
         return;
       }
@@ -1024,7 +1099,7 @@ export async function handleClientBotUpdate(
           chatId,
           messageId,
           "Не удалось подготовить импорт. Повторите позже.",
-          { inline_keyboard: [[{ text: "Назад", callback_data: "c:connect" }]] }
+          { inline_keyboard: [[{ text: "◀️ Назад", callback_data: "c:connect" }]] }
         );
         return;
       }
@@ -1034,12 +1109,12 @@ export async function handleClientBotUpdate(
           chatId,
           messageId,
           "Импорт недоступен. Повторите позже.",
-          { inline_keyboard: [[{ text: "Назад", callback_data: "c:connect" }]] }
+          { inline_keyboard: [[{ text: "◀️ Назад", callback_data: "c:connect" }]] }
         );
         return;
       }
 
-      const text = connectOsMessage(env, os, defaultClient, subId);
+      const text = connectOsMessage(os);
       const markup = connectClientKeyboard(env, os, subId, defaultClient, redirects);
 
       try {
@@ -1099,19 +1174,25 @@ export async function handleClientBotUpdate(
 
   const session = await getSession(env, tg.id, "client");
   if (session?.state === "await_promo" && text) {
+    const plan = (session.payload.plan || "basic") as PlanType;
     const months = Number(session.payload.months || 1) as BillingMonths;
     const totalDevices = Number(session.payload.totalDevices || includedDevices());
     const promo = await getPromoByCode(env, text.toUpperCase());
     await clearSession(env, tg.id, "client");
     const discount = promo?.discount_percent || 0;
-    const price = calcCheckoutPrice(env, months, totalDevices, discount);
+    const price = calcCheckoutPrice(
+      plan,
+      months,
+      extraDevicesForTotal(totalDevices),
+      discount
+    );
     await sendMessage(
       token,
       chatId,
       promo
         ? `🎟 Промокод принят: -${discount}%. Итого <b>${price} ₽</b>.`
         : "Промокод не найден. Выберите способ оплаты без скидки:",
-      paymentMethodsKeyboard(months, totalDevices, discount)
+      paymentMethodsKeyboard(plan, months, totalDevices, discount)
     );
     return;
   }

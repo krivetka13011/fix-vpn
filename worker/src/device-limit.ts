@@ -27,9 +27,9 @@ export function formatDeviceLimitLine(
   planType?: string | null
 ): string {
   if (planType === "personal" || limit === 0) {
-    return `Устройства: <b>${used}</b> / <b>∞</b>`;
+    return `Устройства: ${used} / ∞`;
   }
-  return `Устройства: <b>${Math.min(used, limit)}</b> / <b>${limit}</b>`;
+  return `Устройства: ${Math.min(used, limit)} / ${limit}`;
 }
 
 export function formatConnectedDevices(

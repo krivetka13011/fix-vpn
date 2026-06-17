@@ -15,13 +15,13 @@ export function extraDevicesForTotal(totalDevices: number): number {
 
 export function tariffsText(): string {
   return (
-    `💳 Тарифы\n\n` +
+    `💳 Тарифы\n` +
     `✅ Базовый:\n` +
     `● Безлимитный трафик\n` +
     `● 1 устройство в тарифе\n` +
     `● Быстрое подключение\n` +
     `● Стабильность\n` +
-    `Подойдёт для одного человека\n\n` +
+    `Подойдёт для одного человека\n` +
     `⭐️ Про:\n` +
     `● Личный сервер\n` +
     `● Безлимитные количество устройств\n` +
@@ -68,8 +68,8 @@ export function devicesText(
   const price = calcCheckoutPrice(plan, months, extraDevicesForTotal(totalDevices), promo);
   return (
     `Выберите количество устройств\n` +
-    `Выбрано устройств: <b>${totalDevices}</b>\n` +
-    `Сумма: <b>${price} ₽</b>`
+    `Выбрано устройств: ${totalDevices}\n` +
+    `Сумма: ${price} ₽`
   );
 }
 
@@ -111,9 +111,9 @@ export function paymentSummaryText(
   const price = calcCheckoutPrice(plan, months, extraDevicesForTotal(totalDevices), promo);
   const devicesLine = plan === "personal" ? "Безлимит" : String(totalDevices);
   return (
-    `Период: <b>${periodLabel(months)}</b>\n` +
-    `Устройств: <b>${devicesLine}</b>\n` +
-    `Сумма: <b>${price} ₽</b>\n\n` +
+    `Период: ${periodLabel(months)}\n` +
+    `Устройств: ${devicesLine}\n` +
+    `Сумма: ${price} ₽\n` +
     `Выберите способ оплаты:`
   );
 }

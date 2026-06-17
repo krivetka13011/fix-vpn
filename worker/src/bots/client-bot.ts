@@ -283,14 +283,20 @@ async function recordDeviceConnect(
 
 function buildProfileKeyboard(
   hasClient: boolean,
-  planType?: string | null
+  sub?: {
+    status?: string | null;
+    plan_type?: string | null;
+    is_trial?: boolean | null;
+  } | null
 ): Record<string, unknown> {
   const rows: Array<Array<{ text: string; callback_data: string }>> = [];
 
   if (hasClient) {
     rows.push([{ text: "🔄 Сбросить подключение", callback_data: "c:resetip" }]);
   }
-  if (planType !== "personal") {
+  const showAddDevices =
+    sub?.status === "active" && sub?.plan_type === "basic" && !sub?.is_trial;
+  if (showAddDevices) {
     rows.push([{ text: "➕ Докупить устройства", callback_data: "c:adddevices" }]);
   }
   rows.push([{ text: "◀️ Назад", callback_data: "c:menu" }]);
@@ -672,10 +678,10 @@ async function showProfile(
 
   const text =
     (notice ? `${notice}\n\n` : "") +
-    `👤 Мой профиль\n\n` +
+    `👤 Мой профиль\n` +
     `Статус: ${statusLabel}\n` +
     `Период: ${period}\n` +
-    `${deviceLine}\n\n` +
+    `${deviceLine}\n` +
     hint;
 
   await editMessage(
@@ -683,7 +689,7 @@ async function showProfile(
     chatId,
     messageId,
     text,
-    buildProfileKeyboard(hasClient, sub?.plan_type)
+    buildProfileKeyboard(hasClient, sub)
   );
 }
 

@@ -110,11 +110,16 @@ async function safeAnswerCallback(
 function mainMenuText(displayName: string): string {
   return (
     `Привет, <b>${displayName}</b>! 👋\n` +
-    `⚡️ VPN нового уровня 🌍 Свободный доступ к сайтам и сервисам 📞 Звонки и видео без ограничений ⚙️ Пробный период — 1 день 🔐 Полная защита и конфиденциальность 📶 Работает стабильно даже в мобильных сетях`
+    `⚡️ VPN нового уровня\n` +
+    `🌍 Свободный доступ к сайтам и сервисам\n` +
+    `📞 Звонки и видео без ограничений\n` +
+    `⚙️ Пробный период — 1 день\n` +
+    `🔐 Полная защита и конфиденциальность\n` +
+    `📶 Работает стабильно даже в мобильных сетях`
   );
 }
 
-function mainMenuKeyboard(hasUsedTrial: boolean) {
+function mainMenuKeyboard(env: BotEnv, hasUsedTrial: boolean) {
   const rows: Array<Array<Record<string, string>>> = [];
   if (!hasUsedTrial) {
     rows.push([{ text: "🧪 Пробный период", callback_data: "c:trial" }]);
@@ -123,7 +128,13 @@ function mainMenuKeyboard(hasUsedTrial: boolean) {
     [{ text: "💳 Оформить подписку", callback_data: "c:buy" }],
     [{ text: "👤 Мой профиль", callback_data: "c:profile" }],
     [{ text: "🔌 Подключить VPN", callback_data: "c:connect" }],
-    [{ text: "💬 Поддержка", callback_data: "c:support" }]
+    [{ text: "💬 Поддержка", callback_data: "c:support" }],
+    [
+      {
+        text: "🤝 Партнёрство",
+        url: `https://t.me/${env.PARTNER_BOT_USERNAME || "FIX_Partner_bot"}`,
+      },
+    ]
   );
   return { inline_keyboard: rows };
 }
@@ -462,7 +473,7 @@ async function showMainMenu(
   const token = clientBotToken(env)!;
   const user = await upsertTelegramUser(env, tg);
   const text = mainMenuText(user.display_name);
-  const markup = mainMenuKeyboard(Boolean(user.has_used_trial));
+  const markup = mainMenuKeyboard(env, Boolean(user.has_used_trial));
   if (messageId) {
     await editMessage(token, chatId, messageId, text, markup);
   } else {
@@ -550,8 +561,8 @@ async function activateTrial(
     await syncPanelDeviceLimit(env, claimed.id);
 
     const text =
-      `Пробный период на 24 часа успешно активирован! 🎉\n\n` +
-      `Выберите операционную систему вашего устройства для настройки подключения:`;
+      `Пробный период на 24 часа успешно активирован!\n` +
+      `🎉 Выберите операционную систему вашего устройства для настройки подключения:`;
     const markup = connectOsKeyboard();
     if (messageId) {
       await editMessage(token, chatId, messageId, text, markup);

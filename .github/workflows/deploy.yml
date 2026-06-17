@@ -157,10 +157,10 @@ jobs:
           put_secret PARTNER_BOT_USERNAME "FIX_Partner_bot"
           put_secret PARTNER_DEFAULT_COMMISSION_PERCENT "${{ secrets.PARTNER_DEFAULT_COMMISSION_PERCENT || '30' }}"
           put_secret HAPP_PROVIDER_ID "${{ secrets.HAPP_PROVIDER_ID }}"
-          put_secret TEST_MODE "${{ secrets.TEST_MODE || '1' }}"
-          put_secret TRIAL_DURATION_MINUTES "${{ secrets.TRIAL_DURATION_MINUTES || '5' }}"
-          put_secret TEST_CHECKOUT_PRICE_RUB "${{ secrets.TEST_CHECKOUT_PRICE_RUB || '1' }}"
-          put_secret TEST_SUBSCRIPTION_MINUTES "${{ secrets.TEST_SUBSCRIPTION_MINUTES || '5' }}"
+          put_secret TEST_MODE "1"
+          put_secret TRIAL_DURATION_MINUTES "5"
+          put_secret TEST_CHECKOUT_PRICE_RUB "1"
+          put_secret TEST_SUBSCRIPTION_MINUTES "5"
 
       - name: Verify deployment
         run: |

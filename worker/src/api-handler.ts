@@ -34,6 +34,7 @@ import {
 } from "./cardlink";
 import { getCardlinkBalance, isCardlinkPayoutConfigured } from "./cardlink-payout";
 import {
+  checkPlategaHealth,
   getPlategaBalance,
   isPlategaConfigured,
   parsePlategaCallback,
@@ -468,6 +469,8 @@ export async function handleApiRequest(
     const plategaConfigured = isPlategaConfigured(env);
     let cardlinkBalance: { available: number; hold: number } | null = null;
     let plategaBalance: Array<{ amount: number; currency: string }> | null = null;
+    let plategaOk = false;
+    let plategaError: string | null = null;
     if (cardlinkConfigured) {
       const balance = await getCardlinkBalance(env);
       if (balance) {
@@ -475,7 +478,12 @@ export async function handleApiRequest(
       }
     }
     if (plategaConfigured) {
-      plategaBalance = await getPlategaBalance(env);
+      const health = await checkPlategaHealth(env);
+      plategaOk = health.ok;
+      plategaError = health.error ?? null;
+      if (health.ok) {
+        plategaBalance = await getPlategaBalance(env);
+      }
     }
     return json({
       ok: true,
@@ -502,6 +510,8 @@ export async function handleApiRequest(
       cardlinkPayoutEnabled,
       cardlinkBalance,
       plategaConfigured,
+      plategaOk,
+      plategaError,
       plategaBalance,
       plategaWebhookUrl: base ? `${base}/api/webhook/platega` : null,
       testMode: isTestMode(env),
@@ -553,6 +563,9 @@ export async function handleApiRequest(
       if (!callback.id) return new Response("bad payload", { status: 400 });
 
       let txn = await getTransactionByPlategaId(env, callback.id);
+      if (!txn && callback.payload) {
+        txn = await getTransactionByPayloadId(env, callback.payload);
+      }
       if (!txn) txn = await getTransactionByPayloadId(env, callback.id);
 
       if (callback.status === "CONFIRMED" && txn) {

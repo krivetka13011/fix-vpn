@@ -59,10 +59,9 @@ import {
 } from "../device-reset";
 import { approvePaidTransaction } from "../approve-transaction";
 import {
-  createCardlinkBill,
-  shouldUseCardlink,
-} from "../cardlink";
-import { createPlategaPayment } from "../platega";
+  createPlategaPayment,
+  isPlategaConfigured,
+} from "../platega";
 import {
   buildClientButtonUrl,
   buildPanelSubscriptionUrlForUser,
@@ -966,38 +965,18 @@ export async function handleClientBotUpdate(
       };
 
       const showPaymentError = async (detail: string) => {
+        const hint = isPlategaConfigured(env)
+          ? detail
+          : `${detail}\n\nОплата не настроена: задайте PLATEGA_MERCHANT_ID и PLATEGA_API_SECRET.`;
         await editMessage(
           token,
           chatId,
           messageId,
-          `Не удалось создать ссылку на оплату.\n${detail}\n\n` +
-            `Попробуйте другой способ (СБП или карта) или напишите в поддержку.`,
+          `Не удалось создать ссылку на оплату.\n${hint}\n\n` +
+            `Попробуйте другой способ или напишите в поддержку.`,
           { inline_keyboard: [[{ text: "◀️ Назад", callback_data: "c:buy" }]] }
         );
       };
-
-      if (backend === "cardlink") {
-        try {
-          const bill = await createCardlinkBill(env, {
-            amount: price,
-            orderId: txn.id,
-            description: `FIX VPN · ${periodLabel(months)}`,
-            method,
-            custom: String(tg.id),
-          });
-          await patchTransaction(env, txn.id, {
-            cardlink_bill_id: bill.billId,
-            payment_url: bill.linkPageUrl,
-          });
-          await showPaymentMessage(bill.linkPageUrl, "Cardlink");
-        } catch (error) {
-          console.error("cardlink bill:", error);
-          await showPaymentError(
-            error instanceof Error ? error.message : "ошибка Cardlink"
-          );
-        }
-        return;
-      }
 
       if (backend === "platega") {
         try {
@@ -1016,32 +995,9 @@ export async function handleClientBotUpdate(
           await showPaymentMessage(payment.redirect, "Platega");
         } catch (error) {
           console.error("platega payment:", error);
-          if (shouldUseCardlink(env, method)) {
-            try {
-              const bill = await createCardlinkBill(env, {
-                amount: price,
-                orderId: txn.id,
-                description: `FIX VPN · ${periodLabel(months)}`,
-                method,
-                custom: String(tg.id),
-              });
-              await patchTransaction(env, txn.id, {
-                cardlink_bill_id: bill.billId,
-                payment_url: bill.linkPageUrl,
-              });
-              await showPaymentMessage(bill.linkPageUrl, "Cardlink");
-              return;
-            } catch (fallbackError) {
-              console.error("cardlink fallback:", fallbackError);
-            }
-          }
-          const detail =
-            error instanceof Error ? error.message : "ошибка Platega";
-          const hint =
-            method === "crypto_usdt"
-              ? `${detail}\n\nДля USDT проверьте PLATEGA_MERCHANT_ID в настройках.`
-              : detail;
-          await showPaymentError(hint);
+          await showPaymentError(
+            error instanceof Error ? error.message : "ошибка Platega"
+          );
         }
         return;
       }

@@ -61,6 +61,9 @@ export async function canConnectNewDevice(
   if (!sub || sub.status !== "active") {
     return { ok: false, message: "Сначала активируйте пробный период или оформите подписку." };
   }
+  if (sub.is_trial) {
+    return { ok: true };
+  }
   const limit = subscriptionDeviceLimit(sub);
   if (limit === 0) return { ok: true };
   const used = await countUsedDeviceSlots(env, telegramId);

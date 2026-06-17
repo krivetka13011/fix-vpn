@@ -225,6 +225,24 @@ export async function resetTesterSubscriptionState(
   });
 }
 
+/** Сброс только срока/статуса для повторного теста пробного — ключ панели не трогаем. */
+export async function resetTesterTrialPlan(
+  env: SupabaseEnv,
+  userId: string
+): Promise<void> {
+  await patchSubscription(env, userId, {
+    status: "none",
+    plan_label: null,
+    billing_months: null,
+    starts_at: null,
+    ends_at: null,
+    is_trial: false,
+    expires_at: null,
+    expiry_warned_at: null,
+    extra_devices: 0,
+  });
+}
+
 export async function clearXuiInboundClients(
   env: SupabaseEnv,
   userId: string

@@ -1422,6 +1422,71 @@ export class XuiApi {
     );
   }
 
+  async provisionTrial(
+    env: BotEnv,
+    params: {
+      userId: string;
+      username: string | null;
+      displayName?: string | null;
+      telegramId: number;
+      expiryMs: number;
+      limitIp?: number;
+      dbSubscription?: {
+        client_email?: string | null;
+        xray_sub_id?: string | null;
+        xray_uuid?: string | null;
+      } | null;
+    }
+  ): Promise<ProvisionResult> {
+    const limitIp = params.limitIp ?? 1;
+    const dbKey = canonicalClientKey(params.telegramId);
+    const lockedSubId = params.dbSubscription?.xray_sub_id?.trim() || "";
+    const lockedUuid = params.dbSubscription?.xray_uuid?.trim() || "";
+
+    let panelEmail = params.dbSubscription?.client_email?.trim() || dbKey;
+    let subId = lockedSubId;
+    let primaryUuid = lockedUuid;
+
+    const fromApi = await this.getClientByEmailApi(panelEmail);
+    if (fromApi) {
+      panelEmail = fromApi.email;
+      subId = subId || fromApi.subId;
+      primaryUuid = primaryUuid || fromApi.primaryUuid;
+    }
+
+    if (!subId || !primaryUuid) {
+      const byTg = await this.getClientByEmailApi(dbKey);
+      if (byTg) {
+        panelEmail = byTg.email;
+        subId = subId || byTg.subId;
+        primaryUuid = primaryUuid || byTg.primaryUuid;
+      }
+    }
+
+    if (subId && primaryUuid) {
+      const record = await this.fetchClientRecord(panelEmail);
+      if (record) {
+        const client = this.buildClient(
+          panelEmail,
+          subId,
+          params.telegramId,
+          params.expiryMs,
+          0,
+          true,
+          primaryUuid,
+          limitIp
+        );
+        await this.updateClient(client);
+        return this.toProvisionResult(env, dbKey, subId, primaryUuid);
+      }
+    }
+
+    return this.provisionUser(env, {
+      ...params,
+      totalGb: 0,
+    });
+  }
+
   async provisionUser(
     env: BotEnv,
     params: {

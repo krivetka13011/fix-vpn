@@ -17,6 +17,7 @@ import {
   releaseTrialClaim,
   resetTesterSubscriptionState,
   resetTesterTrial,
+  resetTesterTrialPlan,
   saveXuiInboundClients,
   setSession,
   upsertTelegramUser,
@@ -210,15 +211,15 @@ async function showConnectOsMenu(
   }
 }
 
-async function waitForActiveSubscription(
+async function waitForSubscriptionReady(
   env: BotEnv,
   userId: string,
-  attempts = 5,
-  delayMs = 800
+  attempts = 12,
+  delayMs = 500
 ) {
   for (let i = 0; i < attempts; i += 1) {
     const sub = await getSubscription(env, userId);
-    if (sub?.status === "active") return sub;
+    if (sub?.status === "active" && sub.xray_sub_id?.trim()) return sub;
     if (i < attempts - 1) {
       await new Promise((resolve) => setTimeout(resolve, delayMs));
     }
@@ -541,8 +542,7 @@ async function activateTrial(
   let claimed = user;
   if (tester) {
     claimed = (await resetTesterTrial(env, tg.id)) ?? user;
-    await resetTesterSubscriptionState(env, claimed.id);
-    await clearXuiInboundClients(env, claimed.id);
+    await resetTesterTrialPlan(env, claimed.id);
   } else {
     const trialClaim = await claimTrialByTelegramId(env, tg.id);
     if (!trialClaim) {
@@ -559,13 +559,30 @@ async function activateTrial(
 
   const TRIAL_MS = trialDurationMs(env);
   const expiryMs = Date.now() + TRIAL_MS;
+  const trialPlanLabel = isTestMode(env)
+    ? `Пробный · ${Math.round(TRIAL_MS / 60000)} мин`
+    : "Пробный · 24 ч";
+
+  let sub = await getSubscription(env, claimed.id);
+  await patchSubscription(env, claimed.id, {
+    status: "active",
+    plan_type: "basic",
+    plan_label: trialPlanLabel,
+    billing_months: 0,
+    starts_at: formatDateFromMs(Date.now()),
+    ends_at: formatDateFromMs(expiryMs),
+    expires_at: formatExpiresAtIso(expiryMs),
+    expiry_warned_at: null,
+    is_trial: true,
+    extra_devices: 0,
+  });
 
   await showConnectOsMenu(token, chatId, messageId);
 
   try {
-    const sub = await getSubscription(env, claimed.id);
+    sub = await getSubscription(env, claimed.id);
     const xui = new XuiApi(env);
-    const provision = await xui.provisionUser(env, {
+    const provision = await xui.provisionTrial(env, {
       userId: claimed.id,
       username: claimed.username ?? tg.username ?? null,
       displayName: claimed.display_name,
@@ -578,9 +595,7 @@ async function activateTrial(
     await persistProvision(env, claimed.id, provision, {
       status: "active",
       plan_type: "basic",
-      plan_label: isTestMode(env)
-        ? `Пробный · ${Math.round(TRIAL_MS / 60000)} мин`
-        : "Пробный · 24 ч",
+      plan_label: trialPlanLabel,
       billing_months: 0,
       starts_at: formatDateFromMs(Date.now()),
       ends_at: formatDateFromMs(expiryMs),
@@ -589,9 +604,9 @@ async function activateTrial(
       is_trial: true,
       extra_devices: 0,
     });
-    await syncPanelDeviceLimit(env, claimed.id);
   } catch (error) {
     if (!tester) await releaseTrialClaim(env, tg.id);
+    await resetTesterTrialPlan(env, claimed.id);
     const detail = error instanceof Error ? error.message : "unknown";
     console.error("activateTrial:", detail);
     await sendMessage(
@@ -1087,7 +1102,7 @@ export async function handleClientBotUpdate(
     if (data.startsWith("c:os:")) {
       const os = data.split(":")[2];
       const user = await upsertTelegramUser(env, tg);
-      let sub = await waitForActiveSubscription(env, user.id);
+      let sub = await waitForSubscriptionReady(env, user.id);
       if (sub?.status !== "active") {
         await safeAnswerCallback(token, cq.id, "Сначала активируйте подписку", { showAlert: true });
         return;
@@ -1103,8 +1118,10 @@ export async function handleClientBotUpdate(
 
       await safeAnswerCallback(token, cq.id);
 
-      await syncPanelDeviceLimit(env, user.id);
-      const subId = await resolvePanelSubId(env, user, tg);
+      let subId = sub.xray_sub_id?.trim() || null;
+      if (!subId) {
+        subId = await resolvePanelSubId(env, user, tg);
+      }
       if (!subId) {
         await editMessage(
           token,

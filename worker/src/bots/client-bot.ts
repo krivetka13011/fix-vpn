@@ -1,5 +1,5 @@
 import type { BotEnv } from "../env";
-import { clientBotToken, isTesterAccount } from "../env";
+import { clientBotToken } from "../env";
 import {
   clearSession,
   createTransaction,
@@ -10,13 +10,9 @@ import {
   getUserByTelegramId,
   getTransaction,
   claimTrialByTelegramId,
-  clearVpnDeviceBindings,
-  clearXuiInboundClients,
   patchSubscription,
   patchTransaction,
   releaseTrialClaim,
-  resetTesterSubscriptionState,
-  resetTesterTrial,
   resetTesterTrialPlan,
   saveXuiInboundClients,
   setSession,
@@ -543,7 +539,6 @@ async function activateTrial(
 ): Promise<void> {
   const token = clientBotToken(env)!;
   const user = await upsertTelegramUser(env, tg);
-  const tester = isTesterAccount(env, tg.id, user.is_tester);
 
   if (user.has_used_trial) {
     await sendMessage(
@@ -622,41 +617,9 @@ async function activateTrial(
     await sendMessage(
       token,
       chatId,
-      tester
-        ? `Тест: ошибка активации — ${detail}`
-        : "Не удалось активировать пробный период в панели. Подождите минуту и нажмите «Пробный период» снова."
+      "Не удалось активировать пробный период в панели. Подождите минуту и нажмите «Пробный период» снова."
     );
   }
-}
-
-async function handleTesterReset(
-  env: BotEnv,
-  tg: TelegramUser,
-  chatId: number
-): Promise<void> {
-  const token = clientBotToken(env)!;
-  const user = await getUserByTelegramId(env, tg.id);
-  if (!user || !isTesterAccount(env, tg.id, user.is_tester)) {
-    await sendMessage(token, chatId, "Команда доступна только тестовым аккаунтам.");
-    return;
-  }
-  await resetTesterTrial(env, tg.id);
-  await resetTesterSubscriptionState(env, user.id);
-  await clearVpnDeviceBindings(env, user.id);
-  await ensureVpnClientOnStart(env, user, tg);
-  await syncSubscriptionFromPanel(env, user.id, tg);
-  const sub = await getSubscription(env, user.id);
-  const subHint = sub?.xray_sub_id
-    ? "\nПодписка привязана к вашему клиенту в панели."
-    : "";
-  await sendMessage(
-    token,
-    chatId,
-    "Тестовый сброс выполнен.\n" +
-      "Ключ подписки сохранён из панели — новый случайный ID не создаётся." +
-      subHint +
-      "\n\nЕсли в Happ ошибка 404 — удалите старую подписку FIX VPN и подключитесь заново через «Подключить VPN»."
-  );
 }
 
 function formatSubscriptionPeriod(
@@ -760,7 +723,6 @@ async function resetDeviceBinding(
 
   await resetPanelClient(env, user.id, {
     telegramId: tg.id,
-    isTester: user.is_tester,
   });
 
   await showProfile(
@@ -1162,11 +1124,6 @@ export async function handleClientBotUpdate(
   const tg = message.from;
   const chatId = message.chat.id;
   const text = message.text?.trim() || "";
-
-  if (text === "/test_reset" || text.startsWith("/test_reset@")) {
-    await handleTesterReset(env, tg, chatId);
-    return;
-  }
 
   if (text.startsWith("/start")) {
     const ref = parseStartRef(text);

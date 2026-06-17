@@ -1,5 +1,4 @@
 import type { BotEnv } from "./env";
-import { isTesterAccount } from "./env";
 import {
   clearVpnDeviceBindings,
   clearXuiInboundClients,
@@ -86,10 +85,7 @@ export async function resetPanelClient(
     throw new Error("Не удалось определить Telegram ID");
   }
 
-  const bypass =
-    options?.bypassCooldown ||
-    (options?.telegramId != null &&
-      isTesterAccount(env, options.telegramId, options.isTester));
+  const bypass = options?.bypassCooldown === true;
 
   if (!bypass) {
     const remaining = deviceResetCooldownRemaining(sub.last_device_reset);

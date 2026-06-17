@@ -705,12 +705,13 @@ export class XuiApi {
     };
   }
 
-  private async patchInboundClientEnabled(
+  private async patchInboundClientFields(
     inboundId: number,
     obj: Record<string, unknown>,
     settings: { clients?: Array<Record<string, unknown>> },
     telegramId: number,
-    email: string
+    email: string,
+    apply: (row: Record<string, unknown>) => void
   ): Promise<boolean> {
     const clients = [...(settings.clients ?? [])];
     let touched = false;
@@ -724,7 +725,7 @@ export class XuiApi {
       ) {
         continue;
       }
-      row.enable = true;
+      apply(row);
       if (!row.tgId) row.tgId = telegramId;
       touched = true;
     }
@@ -743,10 +744,67 @@ export class XuiApi {
         method: "POST",
         body: JSON.stringify(updateBody),
       });
-      return await this.panelActionSucceeded(response);
+      const ok = await this.panelActionSucceeded(response);
+      if (ok) this.invalidateScan();
+      return ok;
     } catch (error) {
-      console.error(`patchInboundClientEnabled ${inboundId}:`, error);
+      console.error(`patchInboundClientFields ${inboundId}:`, error);
       return false;
+    }
+  }
+
+  private async patchInboundClientEnabled(
+    inboundId: number,
+    obj: Record<string, unknown>,
+    settings: { clients?: Array<Record<string, unknown>> },
+    telegramId: number,
+    email: string
+  ): Promise<boolean> {
+    return this.patchInboundClientFields(
+      inboundId,
+      obj,
+      settings,
+      telegramId,
+      email,
+      (row) => {
+        row.enable = true;
+      }
+    );
+  }
+
+  private async syncInboundClientFields(
+    telegramId: number,
+    emailHint: string,
+    apply: (row: Record<string, unknown>) => void
+  ): Promise<void> {
+    const hint = emailHint.trim() || String(telegramId);
+    for (const inboundId of this.inboundIds) {
+      try {
+        const response = await this.request(`/panel/api/inbounds/get/${inboundId}`);
+        const payload = await this.readJsonBody(response);
+        if (!response.ok || payload.success === false) continue;
+        const obj = payload.obj as Record<string, unknown> | undefined;
+        if (!obj) continue;
+
+        const settingsRaw = obj.settings;
+        const settings =
+          typeof settingsRaw === "string"
+            ? (JSON.parse(settingsRaw) as {
+                clients?: Array<Record<string, unknown>>;
+              })
+            : ((settingsRaw as { clients?: Array<Record<string, unknown>> }) ?? {});
+
+        await this.patchInboundClientFields(
+          inboundId,
+          obj,
+          settings,
+          telegramId,
+          hint,
+          apply
+        );
+      } catch (error) {
+        console.error(`syncInboundClientFields ${inboundId}:`, error);
+      }
     }
   }
 
@@ -955,22 +1013,77 @@ export class XuiApi {
     };
   }
 
+  private panelClientBody(client: XuiClientRecord): Record<string, unknown> {
+    const id = client.id?.trim() || crypto.randomUUID();
+    return {
+      id,
+      email: client.email,
+      subId: client.subId,
+      limitIp: client.limitIp,
+      expiryTime: client.expiryTime,
+      enable: client.enable !== false,
+      tgId: client.tgId,
+      totalGB: client.totalGB ?? 0,
+      flow: client.flow ?? "",
+    };
+  }
+
   async updateClient(client: XuiClientRecord): Promise<void> {
+    const existing = await this.fetchClientRecord(client.email);
+    const merged: XuiClientRecord = existing
+      ? {
+          ...existing,
+          ...client,
+          id: client.id?.trim() || existing.id,
+          subId: client.subId?.trim() || existing.subId,
+          email: client.email?.trim() || existing.email,
+        }
+      : client;
+
     const response = await this.request(
-      `/panel/api/clients/update/${encodeURIComponent(client.email)}`,
+      `/panel/api/clients/update/${encodeURIComponent(merged.email)}`,
       {
         method: "POST",
         body: JSON.stringify({
-          email: client.email,
+          email: merged.email,
           inboundIds: this.inboundIds,
-          client: { ...this.toPanelClientPayload(client), enable: true },
+          client: this.panelClientBody(merged),
         }),
       }
     );
     await this.parseResponse(response, "updateClient");
     this.invalidateScan();
-    const tgId = client.tgId || Number(client.email) || 0;
-    if (tgId) await this.syncInboundEnableFlags(tgId, client.email);
+
+    const tgId = merged.tgId || Number(merged.email) || 0;
+    if (tgId) {
+      await this.syncInboundClientFields(tgId, merged.email, (row) => {
+        row.expiryTime = merged.expiryTime;
+        row.enable = merged.enable !== false;
+        row.limitIp = merged.limitIp;
+        if (merged.subId) row.subId = merged.subId;
+        if (!row.id && merged.id) row.id = merged.id;
+      });
+      if (merged.enable !== false) {
+        await this.syncInboundEnableFlags(tgId, merged.email);
+      }
+    }
+  }
+
+  /** Отключает доступ в панели после истечения подписки/пробного. */
+  async expireClientAccess(telegramId: number): Promise<void> {
+    if (!Number.isFinite(telegramId) || telegramId <= 0) return;
+    const email =
+      (await this.resolvePanelEmail(telegramId)) || String(telegramId);
+    const record = await this.fetchClientRecord(email);
+    if (!record) return;
+    const past = Date.now() - 60_000;
+    await this.updateClient({
+      ...record,
+      email,
+      expiryTime: past,
+      enable: false,
+      tgId: telegramId,
+    });
   }
 
   async clearClientIps(email: string, options?: { timeoutMs?: number }): Promise<void> {
@@ -1455,7 +1568,7 @@ export class XuiApi {
     }
 
     if (!subId || !primaryUuid) {
-      const byTg = await this.getClientByEmailApi(dbKey);
+      const byTg = await this.findClientByTelegramId(params.telegramId);
       if (byTg) {
         panelEmail = byTg.email;
         subId = subId || byTg.subId;
@@ -1477,6 +1590,14 @@ export class XuiApi {
           limitIp
         );
         await this.updateClient(client);
+        await this.syncPanelClientDisplayName(
+          { email: panelEmail, subId, primaryUuid },
+          params.telegramId,
+          params.username,
+          params.displayName,
+          limitIp,
+          params.expiryMs
+        );
         return this.toProvisionResult(env, dbKey, subId, primaryUuid);
       }
     }

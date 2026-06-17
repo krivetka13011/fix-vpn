@@ -1,7 +1,7 @@
 import type { BotEnv } from "./env";
 import type { DbSubscription } from "./types";
 import { deviceSlotDisplayName } from "./panel-client-label";
-import { getSubscription } from "./repository";
+import { getSubscription, listVpnDeviceBindings } from "./repository";
 import type { PanelDeviceIp } from "./xui";
 import { XuiApi } from "./xui";
 
@@ -46,10 +46,41 @@ export function formatConnectedDevices(
 
 export async function countUsedDeviceSlots(
   env: BotEnv,
-  telegramId: number
+  telegramId: number,
+  userId?: string
 ): Promise<number> {
-  const ips = await fetchPanelDeviceIps(env, telegramId);
-  return ips.length;
+  if (!Number.isFinite(telegramId) || telegramId <= 0) return 0;
+
+  let used = 0;
+  try {
+    const xui = new XuiApi(env);
+    const panelEmail = await xui.resolvePanelEmail(telegramId);
+    if (panelEmail) {
+      try {
+        const ips = await xui.getClientIps(panelEmail);
+        used = ips.length;
+      } catch {
+        used = 0;
+      }
+      if (used === 0) {
+        try {
+          const onlines = await xui.getOnlineClientEmails();
+          if (onlines.some((entry) => entry === panelEmail)) used = 1;
+        } catch {
+          // ignore
+        }
+      }
+    }
+  } catch {
+    used = 0;
+  }
+
+  if (used === 0 && userId) {
+    const bindings = await listVpnDeviceBindings(env, userId);
+    used = bindings.length;
+  }
+
+  return used;
 }
 
 export async function canConnectNewDevice(
@@ -61,12 +92,9 @@ export async function canConnectNewDevice(
   if (!sub || sub.status !== "active") {
     return { ok: false, message: "Сначала активируйте пробный период или оформите подписку." };
   }
-  if (sub.is_trial) {
-    return { ok: true };
-  }
   const limit = subscriptionDeviceLimit(sub);
   if (limit === 0) return { ok: true };
-  const used = await countUsedDeviceSlots(env, telegramId);
+  const used = await countUsedDeviceSlots(env, telegramId, userId);
   if (used >= limit) {
     return {
       ok: false,

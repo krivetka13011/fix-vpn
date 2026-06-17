@@ -21,6 +21,7 @@ import {
   saveXuiInboundClients,
   setSession,
   upsertTelegramUser,
+  upsertVpnDeviceBinding,
 } from "../repository";
 import { XuiApi } from "../xui";
 import type { TelegramUser } from "../telegram";
@@ -45,6 +46,7 @@ import {
   tariffsKeyboard,
   tariffsText,
 } from "./checkout-ui";
+import { resolvePaymentBackend } from "../payment-routing";
 import { PRIVACY_POLICY_URL, SUPPORT_TELEGRAM_USERNAME, TERMS_OF_SERVICE_URL } from "../catalog";
 import { managerTxnKeyboard, notifyManager } from "./manager";
 import { handleManagerPartnerCallback } from "./partner-bot";
@@ -60,7 +62,7 @@ import {
   createCardlinkBill,
   shouldUseCardlink,
 } from "../cardlink";
-import { createPlategaPayment, shouldUsePlatega } from "../platega";
+import { createPlategaPayment } from "../platega";
 import {
   buildClientButtonUrl,
   buildPanelSubscriptionUrlForUser,
@@ -76,7 +78,7 @@ import {
 } from "../test-mode";
 import {
   canConnectNewDevice,
-  fetchPanelDeviceIps,
+  countUsedDeviceSlots,
   formatDeviceLimitLine,
   panelLimitIpForSubscription,
   subscriptionDeviceLimit,
@@ -318,8 +320,13 @@ function deviceDisplayName(os: string, vpnClient: string): string {
 
 async function recordDeviceConnect(
   env: BotEnv,
-  userId: string
+  userId: string,
+  tg: TelegramUser,
+  os: string,
+  vpnClient: VpnClientId
 ): Promise<void> {
+  const label = deviceBindingLabel(os, vpnClient);
+  await upsertVpnDeviceBinding(env, userId, os, vpnClient, label);
   await syncPanelDeviceLimit(env, userId);
 }
 
@@ -539,23 +546,27 @@ async function activateTrial(
   const user = await upsertTelegramUser(env, tg);
   const tester = isTesterAccount(env, tg.id, user.is_tester);
 
-  let claimed = user;
-  if (tester) {
-    claimed = (await resetTesterTrial(env, tg.id)) ?? user;
-    await resetTesterTrialPlan(env, claimed.id);
-  } else {
-    const trialClaim = await claimTrialByTelegramId(env, tg.id);
-    if (!trialClaim) {
-      await sendMessage(
-        token,
-        chatId,
-        env.MSG_TRIAL_ALREADY_USED ||
-          "Пробный период уже использован на этом аккаунте Telegram."
-      );
-      return;
-    }
-    claimed = trialClaim;
+  if (user.has_used_trial) {
+    await sendMessage(
+      token,
+      chatId,
+      env.MSG_TRIAL_ALREADY_USED ||
+        "Пробный период уже использован на этом аккаунте Telegram."
+    );
+    return;
   }
+
+  const trialClaim = await claimTrialByTelegramId(env, tg.id);
+  if (!trialClaim) {
+    await sendMessage(
+      token,
+      chatId,
+      env.MSG_TRIAL_ALREADY_USED ||
+        "Пробный период уже использован на этом аккаунте Telegram."
+    );
+    return;
+  }
+  const claimed = trialClaim;
 
   const TRIAL_MS = trialDurationMs(env);
   const expiryMs = Date.now() + TRIAL_MS;
@@ -605,7 +616,7 @@ async function activateTrial(
       extra_devices: 0,
     });
   } catch (error) {
-    if (!tester) await releaseTrialClaim(env, tg.id);
+    await releaseTrialClaim(env, tg.id);
     await resetTesterTrialPlan(env, claimed.id);
     const detail = error instanceof Error ? error.message : "unknown";
     console.error("activateTrial:", detail);
@@ -698,10 +709,8 @@ async function showProfile(
     await clearStuckRotationFlags(env, user.id);
   }
   const telegramId = telegramIdFromClientEmail(sub?.client_email) ?? tg.id;
-  const panelIps = await fetchPanelDeviceIps(env, telegramId);
-
   const limit = subscriptionDeviceLimit(sub);
-  const used = panelIps.length;
+  const used = await countUsedDeviceSlots(env, telegramId, user.id);
   const hasClient = Boolean(sub?.client_email?.trim());
   const status = sub?.status || "none";
   const period = formatSubscriptionPeriod(
@@ -937,7 +946,60 @@ export async function handleClientBotUpdate(
         is_first_payment: !Boolean(user.first_payment_done),
       });
 
-      if (shouldUsePlatega(env, method)) {
+      const backend = resolvePaymentBackend(env, method);
+
+      const showPaymentMessage = async (url: string, provider: string) => {
+        await editMessage(
+          token,
+          chatId,
+          messageId,
+          `Оплата FIX VPN: <b>${price} ₽</b>${totalDevices > 1 ? ` · ${totalDevices} устр.` : ""}\n\n` +
+            `Нажмите кнопку ниже — откроется безопасная форма ${provider}.\n` +
+            `После оплаты подписка активируется автоматически.`,
+          {
+            inline_keyboard: [
+              [{ text: "💳 Оплатить", url }],
+              [{ text: "◀️ Назад", callback_data: "c:menu" }],
+            ],
+          }
+        );
+      };
+
+      const showPaymentError = async (detail: string) => {
+        await editMessage(
+          token,
+          chatId,
+          messageId,
+          `Не удалось создать ссылку на оплату.\n${detail}\n\n` +
+            `Попробуйте другой способ (СБП или карта) или напишите в поддержку.`,
+          { inline_keyboard: [[{ text: "◀️ Назад", callback_data: "c:buy" }]] }
+        );
+      };
+
+      if (backend === "cardlink") {
+        try {
+          const bill = await createCardlinkBill(env, {
+            amount: price,
+            orderId: txn.id,
+            description: `FIX VPN · ${periodLabel(months)}`,
+            method,
+            custom: String(tg.id),
+          });
+          await patchTransaction(env, txn.id, {
+            cardlink_bill_id: bill.billId,
+            payment_url: bill.linkPageUrl,
+          });
+          await showPaymentMessage(bill.linkPageUrl, "Cardlink");
+        } catch (error) {
+          console.error("cardlink bill:", error);
+          await showPaymentError(
+            error instanceof Error ? error.message : "ошибка Cardlink"
+          );
+        }
+        return;
+      }
+
+      if (backend === "platega") {
         try {
           const payment = await createPlategaPayment(env, {
             amount: price,
@@ -951,73 +1013,35 @@ export async function handleClientBotUpdate(
             platega_transaction_id: payment.transactionId,
             payment_url: payment.redirect,
           });
-          await editMessage(
-            token,
-            chatId,
-            messageId,
-            `Оплата FIX VPN: <b>${price} ₽</b>\n\n` +
-              `Нажмите кнопку ниже — откроется безопасная форма оплаты.\n` +
-              `После оплаты подписка активируется автоматически.`,
-            {
-              inline_keyboard: [
-                [{ text: "💳 Оплатить", url: payment.redirect }],
-                [{ text: "◀️ Назад", callback_data: "c:menu" }],
-              ],
-            }
-          );
+          await showPaymentMessage(payment.redirect, "Platega");
         } catch (error) {
           console.error("platega payment:", error);
-          await editMessage(
-            token,
-            chatId,
-            messageId,
-            `Не удалось создать ссылку на оплату.\n` +
-              `${error instanceof Error ? error.message : "ошибка Platega"}\n\n` +
-              `Попробуйте позже или выберите другой способ.`,
-            { inline_keyboard: [[{ text: "◀️ Назад", callback_data: "c:buy" }]] }
-          );
-        }
-        return;
-      }
-
-      if (shouldUseCardlink(env, method)) {
-        try {
-          const bill = await createCardlinkBill(env, {
-            amount: price,
-            orderId: txn.id,
-            description: `FIX VPN · ${periodLabel(months)}`,
-            method,
-            custom: String(tg.id),
-          });
-          await patchTransaction(env, txn.id, {
-            cardlink_bill_id: bill.billId,
-            payment_url: bill.linkPageUrl,
-          });
-          await editMessage(
-            token,
-            chatId,
-            messageId,
-            `Оплата FIX VPN: <b>${price} ₽</b> · ${periodLabel(months)} · ${totalDevices} устр.\n\n` +
-              `Нажмите кнопку ниже — откроется безопасная форма Cardlink.\n` +
-              `После оплаты подписка активируется автоматически.`,
-            {
-              inline_keyboard: [
-                [{ text: "Оплатить", url: bill.linkPageUrl }],
-                [{ text: "Назад", callback_data: "c:menu" }],
-              ],
+          if (shouldUseCardlink(env, method)) {
+            try {
+              const bill = await createCardlinkBill(env, {
+                amount: price,
+                orderId: txn.id,
+                description: `FIX VPN · ${periodLabel(months)}`,
+                method,
+                custom: String(tg.id),
+              });
+              await patchTransaction(env, txn.id, {
+                cardlink_bill_id: bill.billId,
+                payment_url: bill.linkPageUrl,
+              });
+              await showPaymentMessage(bill.linkPageUrl, "Cardlink");
+              return;
+            } catch (fallbackError) {
+              console.error("cardlink fallback:", fallbackError);
             }
-          );
-        } catch (error) {
-          console.error("cardlink bill:", error);
-          await editMessage(
-            token,
-            chatId,
-            messageId,
-            `Не удалось создать ссылку на оплату.\n` +
-              `${error instanceof Error ? error.message : "ошибка Cardlink"}\n\n` +
-              `Попробуйте позже или выберите другой способ.`,
-            { inline_keyboard: [[{ text: "Назад", callback_data: "c:buy" }]] }
-          );
+          }
+          const detail =
+            error instanceof Error ? error.message : "ошибка Platega";
+          const hint =
+            method === "crypto_usdt"
+              ? `${detail}\n\nДля USDT проверьте PLATEGA_MERCHANT_ID в настройках.`
+              : detail;
+          await showPaymentError(hint);
         }
         return;
       }
@@ -1171,7 +1195,7 @@ export async function handleClientBotUpdate(
         await sendMessage(token, chatId, text, markup);
       }
 
-      await recordDeviceConnect(env, user.id);
+      await recordDeviceConnect(env, user.id, tg, os, defaultClient);
       return;
     }
     return;

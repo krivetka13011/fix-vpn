@@ -2,6 +2,8 @@ import { clientBotToken, type BotEnv } from "./env";
 import { sendMessage } from "./bots/telegram-api";
 import { sbJson, sbRequest } from "./supabase";
 import { patchSubscription } from "./repository";
+import { XuiApi } from "./xui";
+import { telegramIdFromClientEmail } from "./device-limit";
 
 type ExpiringRow = {
   id: string;
@@ -87,6 +89,14 @@ export async function runSubscriptionExpiryJobs(env: BotEnv): Promise<void> {
         status: "expired",
       });
       const chatId = telegramIdFromRow(row);
+      if (chatId) {
+        try {
+          const xui = new XuiApi(env);
+          await xui.expireClientAccess(chatId);
+        } catch (panelError) {
+          console.error("expiry panel disable:", row.user_id, panelError);
+        }
+      }
       if (!chatId) continue;
       await sendMessage(
         token,

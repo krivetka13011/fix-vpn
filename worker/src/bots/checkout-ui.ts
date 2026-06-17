@@ -15,14 +15,14 @@ export function extraDevicesForTotal(totalDevices: number): number {
 
 export function tariffsText(): string {
   return (
-    `💳 <b>Тарифы</b>\n\n` +
-    `✅ <b>Базовый:</b>\n` +
+    `💳 Тарифы\n\n` +
+    `✅ Базовый:\n` +
     `● Безлимитный трафик\n` +
     `● 1 устройство в тарифе\n` +
     `● Быстрое подключение\n` +
     `● Стабильность\n` +
     `Подойдёт для одного человека\n\n` +
-    `⭐️ <b>Про:</b>\n` +
+    `⭐️ Про:\n` +
     `● Личный сервер\n` +
     `● Безлимитные количество устройств\n` +
     `● Безлимитный трафик\n` +
@@ -67,7 +67,7 @@ export function devicesText(
 ): string {
   const price = calcCheckoutPrice(plan, months, extraDevicesForTotal(totalDevices), promo);
   return (
-    `Выберите количество устройств\n\n` +
+    `Выберите количество устройств\n` +
     `Выбрано устройств: <b>${totalDevices}</b>\n` +
     `Сумма: <b>${price} ₽</b>`
   );
@@ -82,14 +82,13 @@ export function devicesKeyboard(
   const price = calcCheckoutPrice(plan, months, extraDevicesForTotal(selected), promo);
   const rows: Array<Array<{ text: string; callback_data: string }>> = [];
 
-  for (const count of DEVICE_OPTIONS) {
-    const mark = count === selected ? " ✅" : "";
-    rows.push([
-      {
-        text: `${count}${mark}`,
+  for (let i = 0; i < DEVICE_OPTIONS.length; i += 5) {
+    rows.push(
+      DEVICE_OPTIONS.slice(i, i + 5).map((count) => ({
+        text: String(count),
         callback_data: `c:dev:${plan}:${months}:${count}:${promo}`,
-      },
-    ]);
+      }))
+    );
   }
 
   rows.push([

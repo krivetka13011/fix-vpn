@@ -60,7 +60,7 @@ export function periodLabel(months: BillingMonths): string {
     2: "2 месяца",
     3: "3 месяца",
     6: "6 месяцев",
-    12: "1 год",
+    12: "12 месяцев",
   };
   return map[months];
 }

@@ -63,7 +63,6 @@ import {
   buildClientButtonUrl,
   buildPanelSubscriptionUrlForUser,
   clientLabel,
-  clientsForOs,
   defaultClientForOs,
   type VpnClientId,
 } from "../connect-links";
@@ -71,7 +70,6 @@ import { syncPanelSubIdForUser } from "../panel-sync";
 import {
   canConnectNewDevice,
   fetchPanelDeviceIps,
-  formatConnectedDevices,
   formatDeviceLimitLine,
   panelLimitIpForSubscription,
   subscriptionDeviceLimit,
@@ -112,16 +110,11 @@ async function safeAnswerCallback(
 function mainMenuText(displayName: string): string {
   return (
     `Привет, <b>${displayName}</b>! 👋\n` +
-    `⚡️ VPN нового уровня\n\n` +
-    `🌍 Свободный доступ к сайтам и сервисам\n` +
-    `📞 Звонки и видео без ограничений\n` +
-    `⚙️ Пробный период — 1 день\n` +
-    `🔐 Полная защита и конфиденциальность\n` +
-    `📶 Работает стабильно даже в мобильных сетях`
+    `⚡️ VPN нового уровня 🌍 Свободный доступ к сайтам и сервисам 📞 Звонки и видео без ограничений ⚙️ Пробный период — 1 день 🔐 Полная защита и конфиденциальность 📶 Работает стабильно даже в мобильных сетях`
   );
 }
 
-function mainMenuKeyboard(env: BotEnv, hasUsedTrial: boolean) {
+function mainMenuKeyboard(hasUsedTrial: boolean) {
   const rows: Array<Array<Record<string, string>>> = [];
   if (!hasUsedTrial) {
     rows.push([{ text: "🧪 Пробный период", callback_data: "c:trial" }]);
@@ -130,13 +123,7 @@ function mainMenuKeyboard(env: BotEnv, hasUsedTrial: boolean) {
     [{ text: "💳 Оформить подписку", callback_data: "c:buy" }],
     [{ text: "👤 Мой профиль", callback_data: "c:profile" }],
     [{ text: "🔌 Подключить VPN", callback_data: "c:connect" }],
-    [{ text: "💬 Поддержка", callback_data: "c:support" }],
-    [
-      {
-        text: "🤝 Партнерство",
-        url: `https://t.me/${env.PARTNER_BOT_USERNAME || "FIX_Partner_bot"}`,
-      },
-    ]
+    [{ text: "💬 Поддержка", callback_data: "c:support" }]
   );
   return { inline_keyboard: rows };
 }
@@ -168,7 +155,7 @@ async function showSupportMenu(
     token,
     chatId,
     messageId,
-    `<b>💬 Поддержка</b>\n\n` +
+    `💬 Поддержка\n\n` +
       `Контакты: @${support}\n` +
       `По вопросам оплаты, подключения и другим вопросам — напишите менеджеру.`,
     supportMenuKeyboard(env)
@@ -197,6 +184,8 @@ function clientButtonEmoji(client: VpnClientId): string {
   return map[client] || "📲";
 }
 
+const CONNECT_APP_CLIENTS: VpnClientId[] = ["happ", "v2rayng", "hiddify"];
+
 function connectClientKeyboard(
   env: BotEnv,
   os: string,
@@ -204,9 +193,9 @@ function connectClientKeyboard(
   defaultClient: VpnClientId,
   redirectByClient: Partial<Record<VpnClientId, string>>
 ) {
-  const options = clientsForOs(os);
+  void os;
   const rows: Array<Array<{ text: string; url?: string; callback_data?: string }>> = [];
-  for (const client of options) {
+  for (const client of CONNECT_APP_CLIENTS) {
     const emoji = clientButtonEmoji(client);
     const label =
       client === "happ"
@@ -351,8 +340,9 @@ function buildConnectRedirects(
   os: string,
   subId: string
 ): Partial<Record<VpnClientId, string>> {
+  void os;
   const redirects: Partial<Record<VpnClientId, string>> = {};
-  for (const client of clientsForOs(os)) {
+  for (const client of CONNECT_APP_CLIENTS) {
     redirects[client] = buildClientButtonUrl(env, client, subId);
   }
   return redirects;
@@ -472,7 +462,7 @@ async function showMainMenu(
   const token = clientBotToken(env)!;
   const user = await upsertTelegramUser(env, tg);
   const text = mainMenuText(user.display_name);
-  const markup = mainMenuKeyboard(env, Boolean(user.has_used_trial));
+  const markup = mainMenuKeyboard(Boolean(user.has_used_trial));
   if (messageId) {
     await editMessage(token, chatId, messageId, text, markup);
   } else {
@@ -662,26 +652,19 @@ async function showProfile(
         : sub?.plan_type === "personal"
           ? "Активен (Про)"
           : "Активен (Базовый)"
-      : status === "expired"
-        ? "Истёк"
-        : "нет подписки";
+      : "Истёк";
 
   const deviceLine = formatDeviceLimitLine(used, limit, sub?.plan_type);
-  const ipLines = formatConnectedDevices(
-    panelIps,
-    user.username ?? tg.username ?? null,
-    telegramId
-  );
 
   const hint =
     "Смена устройства: Нажмите «Сбросить подключение» (доступно 1 раз в 24 часа), если вы купили новый телефон или переустановили приложение.";
 
   const text =
     (notice ? `${notice}\n\n` : "") +
-    `👤 <b>Мой профиль</b>\n\n` +
+    `👤 Мой профиль\n\n` +
     `Статус: ${statusLabel}\n` +
     `Период: ${period}\n` +
-    `${deviceLine}${ipLines}\n\n` +
+    `${deviceLine}\n\n` +
     hint;
 
   await editMessage(
@@ -778,7 +761,9 @@ export async function handleClientBotUpdate(
       return;
     }
     if (data === "c:trial") {
-      await safeAnswerCallback(token, cq.id, "Активируем пробный период…");
+      await safeAnswerCallback(token, cq.id, "Активируем пробный период...", {
+        showAlert: true,
+      });
       await activateTrial(env, tg, chatId, messageId);
       return;
     }

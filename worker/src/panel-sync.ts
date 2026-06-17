@@ -5,7 +5,11 @@ import {
   subscriptionBodyForClients,
 } from "./connect-links";
 import { panelLimitIpForSubscription } from "./device-limit";
-import { patchSubscription } from "./repository";
+import {
+  kvClearSubscriptionPayloadCache,
+  kvSetSubscriptionPayloadCache,
+  patchSubscription,
+} from "./repository";
 import type { DbSubscription } from "./types";
 import { XuiApi } from "./xui";
 
@@ -77,15 +81,20 @@ export async function syncPanelSubIdForUser(
     xray_sub_id: subId,
     xray_uuid: panel.primaryUuid,
     subscription_url: panelUrl,
-    ...(lockedSubId && lockedSubId !== subId
-      ? { subscription_payload_cache: null }
-      : {}),
   };
+
+  if (lockedSubId && lockedSubId !== subId) {
+    await kvClearSubscriptionPayloadCache(env, userId);
+  }
 
   try {
     const live = await fetchPanelSubscriptionBody(env, subId);
     if (live?.body) {
-      patch.subscription_payload_cache = subscriptionBodyForClients(live.body);
+      await kvSetSubscriptionPayloadCache(
+        env,
+        userId,
+        subscriptionBodyForClients(live.body)
+      );
     }
   } catch (error) {
     console.error("syncPanelSubId cache refresh:", error);

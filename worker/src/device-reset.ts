@@ -3,6 +3,7 @@ import {
   clearVpnDeviceBindings,
   clearXuiInboundClients,
   getSubscription,
+  kvClearSubscriptionPayloadCache,
   patchSubscription,
 } from "./repository";
 import { clearStuckRotationFlags } from "./subscription-rotate";
@@ -62,11 +63,11 @@ async function clearPanelClientDbState(
 ): Promise<void> {
   await clearVpnDeviceBindings(env, userId);
   await clearXuiInboundClients(env, userId);
+  await kvClearSubscriptionPayloadCache(env, userId);
   await patchSubscription(env, userId, {
     client_email: String(telegramId),
     xray_uuid: null,
     panel_ip_clear_requested_at: null,
-    subscription_payload_cache: null,
   });
 }
 

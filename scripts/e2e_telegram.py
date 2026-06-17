@@ -17,29 +17,17 @@ import uuid
 
 import requests
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from d1_utils import fetch_subscription_by_user_id, fetch_user_by_telegram_id, load_env
+
 DEFAULT_WORKER = os.environ.get("WEBAPP_URL", "https://app.fixvp.xyz")
 DEFAULT_TESTER_TG = 1159166497
 
 
-def load_env(path: str = "project_config.env") -> None:
+def load_project_env(path: str = "project_config.env") -> None:
     if not os.path.isfile(path):
         raise RuntimeError(f"missing {path} — copy from project_config.env.example")
-    with open(path, encoding="utf-8") as handle:
-        for line in handle:
-            line = line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, value = line.split("=", 1)
-            os.environ.setdefault(key.strip(), value.strip())
-
-
-def sb_get(path: str) -> list:
-    key = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
-    base = os.environ["SUPABASE_URL"].rstrip("/") + "/rest/v1/"
-    headers = {"apikey": key, "Authorization": f"Bearer {key}"}
-    response = requests.get(base + path, headers=headers, timeout=30)
-    response.raise_for_status()
-    return response.json()
+    load_env(path)
 
 
 class BotSession:
@@ -179,24 +167,19 @@ def main() -> int:
     parser.add_argument("--tester-tg", type=int, default=DEFAULT_TESTER_TG)
     args = parser.parse_args()
 
-    load_env()
+    load_project_env()
     secret = os.environ.get("E2E_TRACE_SECRET", "").strip()
     if not secret:
         raise RuntimeError("E2E_TRACE_SECRET missing in project_config.env")
 
-    user_rows = sb_get(
-        f"users?telegram_id=eq.{args.tester_tg}&select=id,username&limit=1"
-    )
-    if not user_rows:
+    user_row = fetch_user_by_telegram_id(args.tester_tg)
+    if not user_row:
         print("FAIL: tester user not in DB — press /start in bot first")
         return 1
-    username = user_rows[0].get("username") or "tester"
+    username = user_row.get("username") or "tester"
 
-    sub_rows = sb_get(
-        f"subscriptions?user_id=eq.{user_rows[0]['id']}&select=status,xray_sub_id&limit=1"
-    )
-    sub = sub_rows[0] if sub_rows else {}
-    if sub.get("status") != "active":
+    sub = fetch_subscription_by_user_id(str(user_row["id"]))
+    if not sub or sub.get("status") != "active":
         print("FAIL: tester has no active subscription — activate trial first")
         return 1
 

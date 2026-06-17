@@ -1,7 +1,30 @@
-import { sbJson, sbRequest, type SupabaseEnv } from "./supabase";
+import {
+  d1All,
+  d1First,
+  d1Patch,
+  d1Run,
+  mapSubscriptionRow,
+  mapUserRow,
+  newId,
+  nowIso,
+  toBoolInt,
+} from "./d1-db";
+import {
+  kvCheckRateLimit,
+  kvClearSession,
+  kvClearSubscriptionPayloadCache,
+  kvClearSubscriptionStatusCache,
+  kvGetSession,
+  kvSetSession,
+  kvSetSubscriptionStatusCache,
+  type BotSessionRow,
+} from "./kv-store";
+import type { StorageEnv } from "./storage-env";
 import type { DbSubscription, DbUser } from "./types";
 import type { TelegramUser } from "./telegram";
 import { displayName } from "./telegram";
+
+export type { BotSessionRow };
 
 export interface PartnerRow {
   id: number;
@@ -31,181 +54,243 @@ export interface TransactionRow {
   payment_url?: string | null;
 }
 
-export interface BotSessionRow {
-  telegram_id: number;
-  bot_kind: string;
-  state: string;
-  payload: Record<string, unknown>;
+function mapPartnerRow(row: Record<string, unknown>): PartnerRow {
+  let social: unknown = row.social_links;
+  if (typeof social === "string") {
+    try {
+      social = JSON.parse(social);
+    } catch {
+      social = [];
+    }
+  }
+  return {
+    id: Number(row.id),
+    username: row.username != null ? String(row.username) : null,
+    display_name: String(row.display_name),
+    social_links: social,
+    balance: Number(row.balance ?? 0),
+    total_referrals: Number(row.total_referrals ?? 0),
+    commission_percent: Number(row.commission_percent ?? 50),
+  };
+}
+
+function mapTransactionRow(row: Record<string, unknown>): TransactionRow {
+  return {
+    id: String(row.id),
+    user_id: String(row.user_id),
+    amount: Number(row.amount),
+    billing_months: Number(row.billing_months),
+    extra_devices: row.extra_devices != null ? Number(row.extra_devices) : 0,
+    plan_type: row.plan_type != null ? String(row.plan_type) : undefined,
+    platega_transaction_id:
+      row.platega_transaction_id != null ? String(row.platega_transaction_id) : null,
+    promo_code_id: row.promo_code_id != null ? String(row.promo_code_id) : null,
+    payment_method: String(row.payment_method),
+    status: String(row.status),
+    screenshot_file_id:
+      row.screenshot_file_id != null ? String(row.screenshot_file_id) : null,
+    sender_name: row.sender_name != null ? String(row.sender_name) : null,
+    is_first_payment: row.is_first_payment === 1 || row.is_first_payment === true,
+    cardlink_bill_id: row.cardlink_bill_id != null ? String(row.cardlink_bill_id) : null,
+    payment_url: row.payment_url != null ? String(row.payment_url) : null,
+  };
+}
+
+async function invalidateSubCaches(env: StorageEnv, userId: string): Promise<void> {
+  await kvClearSubscriptionPayloadCache(env, userId);
+  await kvClearSubscriptionStatusCache(env, userId);
 }
 
 export async function getUserByTelegramId(
-  env: SupabaseEnv,
+  env: StorageEnv,
   telegramId: number
 ): Promise<DbUser | null> {
-  const rows = await sbJson<DbUser[]>(
-    await sbRequest(env, `users?telegram_id=eq.${telegramId}&select=*&limit=1`)
-  );
-  return rows[0] ?? null;
+  const row = await d1First(env.DB, "SELECT * FROM users WHERE telegram_id = ? LIMIT 1", telegramId);
+  return row ? mapUserRow(row) : null;
+}
+
+export async function getUserById(
+  env: StorageEnv,
+  userId: string
+): Promise<DbUser | null> {
+  const row = await d1First(env.DB, "SELECT * FROM users WHERE id = ? LIMIT 1", userId);
+  return row ? mapUserRow(row) : null;
 }
 
 export async function upsertTelegramUser(
-  env: SupabaseEnv,
+  env: StorageEnv,
   tg: TelegramUser,
   refPartnerId?: number | null
 ): Promise<DbUser> {
   const existing = await getUserByTelegramId(env, tg.id);
+  const ts = nowIso();
   if (existing) {
-    const patch = await sbJson<DbUser[]>(
-      await sbRequest(env, `users?id=eq.${existing.id}`, {
-        method: "PATCH",
-        headers: { Prefer: "return=representation" },
-        body: JSON.stringify({
-          username: tg.username ?? null,
-          display_name: displayName(tg),
-          photo_url: tg.photo_url ?? existing.photo_url,
-          updated_at: new Date().toISOString(),
-        }),
-      })
-    );
-    return patch[0] ?? existing;
-  }
-
-  const created = await sbJson<DbUser[]>(
-    await sbRequest(env, "users", {
-      method: "POST",
-      headers: { Prefer: "return=representation" },
-      body: JSON.stringify({
-        telegram_id: tg.id,
+    await d1Patch(
+      env.DB,
+      "users",
+      {
         username: tg.username ?? null,
         display_name: displayName(tg),
-        photo_url: tg.photo_url ?? null,
-        ref_by_partner_id: refPartnerId ?? null,
-      }),
-    })
+        photo_url: tg.photo_url ?? existing.photo_url,
+        updated_at: ts,
+      },
+      "id = ?",
+      existing.id
+    );
+    return (await getUserByTelegramId(env, tg.id)) ?? existing;
+  }
+
+  const userId = newId();
+  await d1Run(
+    env.DB,
+    `INSERT INTO users (id, telegram_id, username, display_name, photo_url, ref_by_partner_id, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    userId,
+    tg.id,
+    tg.username ?? null,
+    displayName(tg),
+    tg.photo_url ?? null,
+    refPartnerId ?? null,
+    ts,
+    ts
   );
-  const user = created[0];
-  await sbRequest(env, "subscriptions", {
-    method: "POST",
-    headers: { Prefer: "return=minimal" },
-    body: JSON.stringify({
-      user_id: user.id,
-      plan_type: "basic",
-      status: "none",
-      extra_devices: 0,
-    }),
-  });
+  const subId = newId();
+  await d1Run(
+    env.DB,
+    `INSERT INTO subscriptions (id, user_id, plan_type, status, extra_devices, updated_at)
+     VALUES (?, ?, 'basic', 'none', 0, ?)`,
+    subId,
+    userId,
+    ts
+  );
   if (refPartnerId) {
     await incrementPartnerReferrals(env, refPartnerId);
   }
+  const user = await getUserByTelegramId(env, tg.id);
+  if (!user) throw new Error("upsertTelegramUser failed");
   return user;
 }
 
 export async function getSubscription(
-  env: SupabaseEnv,
+  env: StorageEnv,
   userId: string
 ): Promise<DbSubscription | null> {
-  const rows = await sbJson<DbSubscription[]>(
-    await sbRequest(env, `subscriptions?user_id=eq.${userId}&select=*&limit=1`)
+  const row = await d1First(
+    env.DB,
+    "SELECT * FROM subscriptions WHERE user_id = ? LIMIT 1",
+    userId
   );
-  return rows[0] ?? null;
+  return row ? mapSubscriptionRow(row) : null;
 }
 
 export async function getSubscriptionBySubId(
-  env: SupabaseEnv,
+  env: StorageEnv,
   subId: string
 ): Promise<DbSubscription | null> {
-  const rows = await sbJson<DbSubscription[]>(
-    await sbRequest(
-      env,
-      `subscriptions?xray_sub_id=eq.${encodeURIComponent(subId)}&select=*&limit=1`
-    )
+  const row = await d1First(
+    env.DB,
+    "SELECT * FROM subscriptions WHERE xray_sub_id = ? LIMIT 1",
+    subId
   );
-  return rows[0] ?? null;
+  return row ? mapSubscriptionRow(row) : null;
 }
 
 export async function patchSubscription(
-  env: SupabaseEnv,
+  env: StorageEnv,
   userId: string,
   body: Record<string, unknown>
 ): Promise<void> {
-  const response = await sbRequest(env, `subscriptions?user_id=eq.${userId}`, {
-    method: "PATCH",
-    headers: { Prefer: "return=minimal" },
-    body: JSON.stringify({ ...body, updated_at: new Date().toISOString() }),
-  });
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(text || `Supabase patch subscription ${response.status}`);
+  const fields: Record<string, unknown> = { ...body, updated_at: nowIso() };
+  if ("is_trial" in fields) fields.is_trial = toBoolInt(Boolean(fields.is_trial));
+  await d1Patch(env.DB, "subscriptions", fields, "user_id = ?", userId);
+  await invalidateSubCaches(env, userId);
+  const sub = await getSubscription(env, userId);
+  if (sub) {
+    await kvSetSubscriptionStatusCache(env, userId, {
+      status: sub.status,
+      is_trial: Boolean(sub.is_trial),
+      expires_at: sub.expires_at ?? null,
+    });
   }
 }
 
 export async function patchUser(
-  env: SupabaseEnv,
+  env: StorageEnv,
   userId: string,
   body: Record<string, unknown>
 ): Promise<void> {
-  await sbRequest(env, `users?id=eq.${userId}`, {
-    method: "PATCH",
-    headers: { Prefer: "return=minimal" },
-    body: JSON.stringify({ ...body, updated_at: new Date().toISOString() }),
-  });
+  const fields: Record<string, unknown> = { ...body, updated_at: nowIso() };
+  if ("has_used_trial" in fields) fields.has_used_trial = toBoolInt(Boolean(fields.has_used_trial));
+  if ("first_payment_done" in fields) {
+    fields.first_payment_done = toBoolInt(Boolean(fields.first_payment_done));
+  }
+  if ("is_tester" in fields) fields.is_tester = toBoolInt(Boolean(fields.is_tester));
+  await d1Patch(env.DB, "users", fields, "id = ?", userId);
 }
 
-export async function claimTrialByTelegramId(
-  env: SupabaseEnv,
+export async function markTrialFirstConnectAt(
+  env: StorageEnv,
+  telegramId: number
+): Promise<void> {
+  await d1Run(
+    env.DB,
+    `UPDATE users SET trial_first_connect_at = ?, updated_at = ?
+     WHERE telegram_id = ? AND trial_first_connect_at IS NULL`,
+    nowIso(),
+    nowIso(),
+    telegramId
+  );
+}
+
+export async function finalizeTrialButtonGrace(
+  env: StorageEnv,
   telegramId: number
 ): Promise<DbUser | null> {
-  const rows = await sbJson<DbUser[]>(
-    await sbRequest(
-      env,
-      `users?telegram_id=eq.${telegramId}&has_used_trial=eq.false`,
-      {
-        method: "PATCH",
-        headers: { Prefer: "return=representation" },
-        body: JSON.stringify({
-          has_used_trial: true,
-          updated_at: new Date().toISOString(),
-        }),
-      }
-    )
+  const user = await getUserByTelegramId(env, telegramId);
+  if (!user || user.has_used_trial || !user.trial_first_connect_at) {
+    return user;
+  }
+  const elapsed = Date.now() - new Date(user.trial_first_connect_at).getTime();
+  if (!Number.isFinite(elapsed) || elapsed < 24 * 60 * 60 * 1000) {
+    return user;
+  }
+  await d1Run(
+    env.DB,
+    `UPDATE users SET has_used_trial = 1, updated_at = ? WHERE telegram_id = ?`,
+    nowIso(),
+    telegramId
   );
-  return rows[0] ?? null;
+  return getUserByTelegramId(env, telegramId);
 }
 
 export async function releaseTrialClaim(
-  env: SupabaseEnv,
+  env: StorageEnv,
   telegramId: number
 ): Promise<void> {
-  await sbRequest(env, `users?telegram_id=eq.${telegramId}`, {
-    method: "PATCH",
-    headers: { Prefer: "return=minimal" },
-    body: JSON.stringify({
-      has_used_trial: false,
-      updated_at: new Date().toISOString(),
-    }),
-  });
+  await d1Run(
+    env.DB,
+    `UPDATE users SET has_used_trial = 0, trial_first_connect_at = NULL, updated_at = ? WHERE telegram_id = ?`,
+    nowIso(),
+    telegramId
+  );
 }
 
 export async function resetTesterTrial(
-  env: SupabaseEnv,
+  env: StorageEnv,
   telegramId: number
 ): Promise<DbUser | null> {
-  const rows = await sbJson<DbUser[]>(
-    await sbRequest(env, `users?telegram_id=eq.${telegramId}`, {
-      method: "PATCH",
-      headers: { Prefer: "return=representation" },
-      body: JSON.stringify({
-        has_used_trial: false,
-        first_payment_done: false,
-        updated_at: new Date().toISOString(),
-      }),
-    })
+  await d1Run(
+    env.DB,
+    `UPDATE users SET has_used_trial = 0, trial_first_connect_at = NULL, first_payment_done = 0, updated_at = ?
+     WHERE telegram_id = ?`,
+    nowIso(),
+    telegramId
   );
-  return rows[0] ?? null;
+  return getUserByTelegramId(env, telegramId);
 }
 
 export async function resetTesterSubscriptionState(
-  env: SupabaseEnv,
+  env: StorageEnv,
   userId: string
 ): Promise<void> {
   await patchSubscription(env, userId, {
@@ -225,9 +310,8 @@ export async function resetTesterSubscriptionState(
   });
 }
 
-/** Сброс только срока/статуса для повторного теста пробного — ключ панели не трогаем. */
 export async function resetTesterTrialPlan(
-  env: SupabaseEnv,
+  env: StorageEnv,
   userId: string
 ): Promise<void> {
   await patchSubscription(env, userId, {
@@ -244,388 +328,385 @@ export async function resetTesterTrialPlan(
 }
 
 export async function clearXuiInboundClients(
-  env: SupabaseEnv,
+  env: StorageEnv,
   userId: string
 ): Promise<void> {
-  await sbRequest(env, `xui_client_inbounds?user_id=eq.${userId}`, {
-    method: "DELETE",
-    headers: { Prefer: "return=minimal" },
-  });
-}
-
-export async function clearVpnUserData(
-  env: SupabaseEnv,
-  userId: string
-): Promise<void> {
-  await sbRequest(env, `xui_client_inbounds?user_id=eq.${userId}`, {
-    method: "DELETE",
-    headers: { Prefer: "return=minimal" },
-  });
-  await patchSubscription(env, userId, {
-    status: "none",
-    plan_type: "basic",
-    plan_label: null,
-    billing_months: null,
-    starts_at: null,
-    ends_at: null,
-    is_trial: false,
-    xray_uuid: null,
-    xray_sub_id: null,
-    subscription_url: null,
-    client_email: null,
-    vpn_key: null,
-    purchased_at: null,
-  });
+  await d1Run(env.DB, "DELETE FROM xui_client_inbounds WHERE user_id = ?", userId);
 }
 
 export async function saveXuiInboundClients(
-  env: SupabaseEnv,
+  env: StorageEnv,
   userId: string,
   rows: Array<{ inboundId: number; clientUuid: string; clientEmail: string }>
 ): Promise<void> {
-  await Promise.all(
-    rows.map((row) =>
-      sbRequest(env, "xui_client_inbounds?on_conflict=user_id,inbound_id", {
-        method: "POST",
-        headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
-        body: JSON.stringify({
-          user_id: userId,
-          inbound_id: row.inboundId,
-          client_uuid: row.clientUuid,
-          client_email: row.clientEmail,
-        }),
-      })
-    )
-  );
+  const ts = nowIso();
+  for (const row of rows) {
+    await d1Run(
+      env.DB,
+      `INSERT INTO xui_client_inbounds (id, user_id, inbound_id, client_uuid, client_email, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(user_id, inbound_id) DO UPDATE SET
+         client_uuid = excluded.client_uuid,
+         client_email = excluded.client_email`,
+      newId(),
+      userId,
+      row.inboundId,
+      row.clientUuid,
+      row.clientEmail,
+      ts
+    );
+  }
 }
 
 export async function getXuiInboundClients(
-  env: SupabaseEnv,
+  env: StorageEnv,
   userId: string
 ): Promise<Array<{ inbound_id: number; client_uuid: string; client_email: string }>> {
-  return sbJson(
-    await sbRequest(
-      env,
-      `xui_client_inbounds?user_id=eq.${userId}&select=inbound_id,client_uuid,client_email`
-    )
+  const rows = await d1All<Record<string, unknown>>(
+    env.DB,
+    "SELECT inbound_id, client_uuid, client_email FROM xui_client_inbounds WHERE user_id = ?",
+    userId
   );
+  return rows.map((row) => ({
+    inbound_id: Number(row.inbound_id),
+    client_uuid: String(row.client_uuid),
+    client_email: String(row.client_email),
+  }));
 }
 
 export async function getSession(
-  env: SupabaseEnv,
+  env: StorageEnv,
   telegramId: number,
   botKind: "client" | "partner"
 ): Promise<BotSessionRow | null> {
-  const rows = await sbJson<BotSessionRow[]>(
-    await sbRequest(
-      env,
-      `bot_sessions?telegram_id=eq.${telegramId}&bot_kind=eq.${botKind}&select=*&limit=1`
-    )
-  );
-  return rows[0] ?? null;
+  return kvGetSession(env, telegramId, botKind);
 }
 
 export async function setSession(
-  env: SupabaseEnv,
+  env: StorageEnv,
   telegramId: number,
   botKind: "client" | "partner",
   state: string,
   payload: Record<string, unknown> = {}
 ): Promise<void> {
-  await sbRequest(env, "bot_sessions?on_conflict=telegram_id,bot_kind", {
-    method: "POST",
-    headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
-    body: JSON.stringify({
-      telegram_id: telegramId,
-      bot_kind: botKind,
-      state,
-      payload,
-      updated_at: new Date().toISOString(),
-    }),
-  });
+  await kvSetSession(env, telegramId, botKind, state, payload);
 }
 
 export async function clearSession(
-  env: SupabaseEnv,
+  env: StorageEnv,
   telegramId: number,
   botKind: "client" | "partner"
 ): Promise<void> {
-  await setSession(env, telegramId, botKind, "idle", {});
+  await kvClearSession(env, telegramId, botKind);
+}
+
+/** Защита от спама кнопок callback. */
+export async function checkCallbackRateLimit(
+  env: StorageEnv,
+  telegramId: number,
+  action: string,
+  windowMs = 1500
+): Promise<boolean> {
+  return kvCheckRateLimit(env, telegramId, action, windowMs);
 }
 
 export async function createTransaction(
-  env: SupabaseEnv,
+  env: StorageEnv,
   body: Record<string, unknown>
 ): Promise<TransactionRow> {
-  const rows = await sbJson<TransactionRow[]>(
-    await sbRequest(env, "transactions", {
-      method: "POST",
-      headers: { Prefer: "return=representation" },
-      body: JSON.stringify(body),
-    })
+  const id = String(body.id ?? newId());
+  const ts = nowIso();
+  await d1Run(
+    env.DB,
+    `INSERT INTO transactions (
+      id, user_id, amount, billing_months, extra_devices, plan_type, platega_transaction_id,
+      promo_code_id, payment_method, status, screenshot_file_id, sender_name, is_first_payment,
+      cardlink_bill_id, payment_url, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    id,
+    body.user_id,
+    body.amount,
+    body.billing_months,
+    body.extra_devices ?? 0,
+    body.plan_type ?? "basic",
+    body.platega_transaction_id ?? null,
+    body.promo_code_id ?? null,
+    body.payment_method,
+    body.status ?? "pending",
+    body.screenshot_file_id ?? null,
+    body.sender_name ?? null,
+    toBoolInt(Boolean(body.is_first_payment)),
+    body.cardlink_bill_id ?? null,
+    body.payment_url ?? null,
+    ts,
+    ts
   );
-  return rows[0];
+  const row = await getTransaction(env, id);
+  if (!row) throw new Error("createTransaction failed");
+  return row;
 }
 
 export async function getTransaction(
-  env: SupabaseEnv,
+  env: StorageEnv,
   id: string
 ): Promise<TransactionRow | null> {
-  const rows = await sbJson<TransactionRow[]>(
-    await sbRequest(env, `transactions?id=eq.${id}&select=*&limit=1`)
-  );
-  return rows[0] ?? null;
+  const row = await d1First(env.DB, "SELECT * FROM transactions WHERE id = ? LIMIT 1", id);
+  return row ? mapTransactionRow(row) : null;
 }
 
 export async function getTransactionByPlategaId(
-  env: SupabaseEnv,
+  env: StorageEnv,
   plategaId: string
 ): Promise<TransactionRow | null> {
-  const rows = await sbJson<TransactionRow[]>(
-    await sbRequest(
-      env,
-      `transactions?platega_transaction_id=eq.${encodeURIComponent(plategaId)}&select=*&limit=1`
-    )
+  const row = await d1First(
+    env.DB,
+    "SELECT * FROM transactions WHERE platega_transaction_id = ? LIMIT 1",
+    plategaId
   );
-  return rows[0] ?? null;
+  return row ? mapTransactionRow(row) : null;
 }
 
 export async function getTransactionByPayloadId(
-  env: SupabaseEnv,
+  env: StorageEnv,
   payloadId: string
 ): Promise<TransactionRow | null> {
-  const rows = await sbJson<TransactionRow[]>(
-    await sbRequest(env, `transactions?id=eq.${payloadId}&select=*&limit=1`)
-  );
-  return rows[0] ?? null;
+  return getTransaction(env, payloadId);
 }
 
 export async function patchTransaction(
-  env: SupabaseEnv,
+  env: StorageEnv,
   id: string,
   body: Record<string, unknown>
 ): Promise<void> {
-  await sbRequest(env, `transactions?id=eq.${id}`, {
-    method: "PATCH",
-    headers: { Prefer: "return=minimal" },
-    body: JSON.stringify({ ...body, updated_at: new Date().toISOString() }),
-  });
+  const fields: Record<string, unknown> = { ...body, updated_at: nowIso() };
+  if ("is_first_payment" in fields) {
+    fields.is_first_payment = toBoolInt(Boolean(fields.is_first_payment));
+  }
+  await d1Patch(env.DB, "transactions", fields, "id = ?", id);
 }
 
 export async function getPartner(
-  env: SupabaseEnv,
+  env: StorageEnv,
   telegramId: number
 ): Promise<PartnerRow | null> {
-  const rows = await sbJson<PartnerRow[]>(
-    await sbRequest(env, `partners?id=eq.${telegramId}&select=*&limit=1`)
-  );
-  return rows[0] ?? null;
+  const row = await d1First(env.DB, "SELECT * FROM partners WHERE id = ? LIMIT 1", telegramId);
+  return row ? mapPartnerRow(row) : null;
 }
 
 export async function countPartnerPaidReferrals(
-  env: SupabaseEnv,
+  env: StorageEnv,
   partnerId: number
 ): Promise<number> {
-  const rows = await sbJson<Array<{ id: string }>>(
-    await sbRequest(
-      env,
-      `users?ref_by_partner_id=eq.${partnerId}&first_payment_done=eq.true&select=id`
-    )
+  const row = await d1First<{ count: number }>(
+    env.DB,
+    "SELECT COUNT(*) AS count FROM users WHERE ref_by_partner_id = ? AND first_payment_done = 1",
+    partnerId
   );
-  return rows.length;
+  return Number(row?.count ?? 0);
 }
 
 export async function createPartner(
-  env: SupabaseEnv,
+  env: StorageEnv,
   tg: TelegramUser,
   socialLinks: string[]
 ): Promise<PartnerRow> {
-  const rows = await sbJson<PartnerRow[]>(
-    await sbRequest(env, "partners", {
-      method: "POST",
-      headers: { Prefer: "return=representation" },
-      body: JSON.stringify({
-        id: tg.id,
-        username: tg.username ?? null,
-        display_name: displayName(tg),
-        social_links: socialLinks,
-      }),
-    })
+  const ts = nowIso();
+  await d1Run(
+    env.DB,
+    `INSERT INTO partners (id, username, display_name, social_links, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    tg.id,
+    tg.username ?? null,
+    displayName(tg),
+    JSON.stringify(socialLinks),
+    ts,
+    ts
   );
-  return rows[0];
+  const partner = await getPartner(env, tg.id);
+  if (!partner) throw new Error("createPartner failed");
+  return partner;
 }
 
 export async function incrementPartnerReferrals(
-  env: SupabaseEnv,
+  env: StorageEnv,
   partnerId: number
 ): Promise<void> {
-  const partner = await getPartner(env, partnerId);
-  if (!partner) return;
-  await sbRequest(env, `partners?id=eq.${partnerId}`, {
-    method: "PATCH",
-    headers: { Prefer: "return=minimal" },
-    body: JSON.stringify({
-      total_referrals: partner.total_referrals + 1,
-      updated_at: new Date().toISOString(),
-    }),
-  });
+  await d1Run(
+    env.DB,
+    `UPDATE partners SET total_referrals = total_referrals + 1, updated_at = ? WHERE id = ?`,
+    nowIso(),
+    partnerId
+  );
 }
 
 export async function addPartnerBalance(
-  env: SupabaseEnv,
+  env: StorageEnv,
   partnerId: number,
   amount: number
 ): Promise<void> {
-  const partner = await getPartner(env, partnerId);
-  if (!partner) return;
-  await sbRequest(env, `partners?id=eq.${partnerId}`, {
-    method: "PATCH",
-    headers: { Prefer: "return=minimal" },
-    body: JSON.stringify({
-      balance: Number(partner.balance) + amount,
-      updated_at: new Date().toISOString(),
-    }),
-  });
+  await d1Run(
+    env.DB,
+    `UPDATE partners SET balance = balance + ?, updated_at = ? WHERE id = ?`,
+    amount,
+    nowIso(),
+    partnerId
+  );
 }
 
 export async function getDefaultRequisite(
-  env: SupabaseEnv,
+  env: StorageEnv,
   partnerId: number
 ): Promise<{ method: string; details: string; sbp_bank_id?: string | null } | null> {
-  const rows = await sbJson<Array<{ method: string; details: string; sbp_bank_id?: string | null }>>(
-    await sbRequest(
-      env,
-      `partner_requisites?partner_id=eq.${partnerId}&is_default=eq.true&select=method,details,sbp_bank_id&limit=1`
-    )
+  const row = await d1First(
+    env.DB,
+    `SELECT method, details, sbp_bank_id FROM partner_requisites
+     WHERE partner_id = ? AND is_default = 1 LIMIT 1`,
+    partnerId
   );
-  return rows[0] ?? null;
+  if (!row) return null;
+  return {
+    method: String(row.method),
+    details: String(row.details),
+    sbp_bank_id: row.sbp_bank_id != null ? String(row.sbp_bank_id) : null,
+  };
 }
 
 export async function listRequisites(
-  env: SupabaseEnv,
+  env: StorageEnv,
   partnerId: number
 ): Promise<
   Array<{ id: string; method: string; details: string; is_default: boolean; sbp_bank_id?: string | null }>
 > {
-  return sbJson(
-    await sbRequest(
-      env,
-      `partner_requisites?partner_id=eq.${partnerId}&select=id,method,details,is_default,sbp_bank_id&order=created_at.asc`
-    )
+  const rows = await d1All(
+    env.DB,
+    `SELECT id, method, details, is_default, sbp_bank_id FROM partner_requisites
+     WHERE partner_id = ? ORDER BY created_at ASC`,
+    partnerId
   );
+  return rows.map((row) => ({
+    id: String(row.id),
+    method: String(row.method),
+    details: String(row.details),
+    is_default: row.is_default === 1,
+    sbp_bank_id: row.sbp_bank_id != null ? String(row.sbp_bank_id) : null,
+  }));
 }
 
 export async function addRequisite(
-  env: SupabaseEnv,
+  env: StorageEnv,
   partnerId: number,
   method: "sbp" | "card",
   details: string,
   makeDefault: boolean,
   sbpBankId?: string | null
 ): Promise<void> {
-  if (makeDefault) {
-    await sbRequest(env, `partner_requisites?partner_id=eq.${partnerId}`, {
-      method: "PATCH",
-      headers: { Prefer: "return=minimal" },
-      body: JSON.stringify({ is_default: false }),
-    });
-  }
   const existing = await listRequisites(env, partnerId);
-  await sbRequest(env, "partner_requisites", {
-    method: "POST",
-    headers: { Prefer: "return=minimal" },
-    body: JSON.stringify({
-      partner_id: partnerId,
-      method,
-      details,
-      sbp_bank_id: method === "sbp" ? sbpBankId ?? null : null,
-      is_default: makeDefault || existing.length === 0,
-    }),
-  });
+  if (makeDefault) {
+    await d1Run(
+      env.DB,
+      "UPDATE partner_requisites SET is_default = 0 WHERE partner_id = ?",
+      partnerId
+    );
+  }
+  await d1Run(
+    env.DB,
+    `INSERT INTO partner_requisites (id, partner_id, method, details, is_default, sbp_bank_id, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    newId(),
+    partnerId,
+    method,
+    details,
+    makeDefault || existing.length === 0 ? 1 : 0,
+    method === "sbp" ? sbpBankId ?? null : null,
+    nowIso()
+  );
 }
 
 export async function setDefaultRequisite(
-  env: SupabaseEnv,
+  env: StorageEnv,
   partnerId: number,
   requisiteId: string
 ): Promise<void> {
-  await sbRequest(env, `partner_requisites?partner_id=eq.${partnerId}`, {
-    method: "PATCH",
-    headers: { Prefer: "return=minimal" },
-    body: JSON.stringify({ is_default: false }),
-  });
-  await sbRequest(env, `partner_requisites?id=eq.${requisiteId}`, {
-    method: "PATCH",
-    headers: { Prefer: "return=minimal" },
-    body: JSON.stringify({ is_default: true }),
-  });
+  await d1Run(
+    env.DB,
+    "UPDATE partner_requisites SET is_default = 0 WHERE partner_id = ?",
+    partnerId
+  );
+  await d1Run(
+    env.DB,
+    "UPDATE partner_requisites SET is_default = 1 WHERE id = ? AND partner_id = ?",
+    requisiteId,
+    partnerId
+  );
 }
 
 export async function createWithdrawal(
-  env: SupabaseEnv,
+  env: StorageEnv,
   body: Record<string, unknown>
 ): Promise<{ id: string }> {
-  const rows = await sbJson<Array<{ id: string }>>(
-    await sbRequest(env, "withdrawals", {
-      method: "POST",
-      headers: { Prefer: "return=representation" },
-      body: JSON.stringify(body),
-    })
+  const id = newId();
+  const ts = nowIso();
+  await d1Run(
+    env.DB,
+    `INSERT INTO withdrawals (id, partner_id, amount, method, details, status, sbp_bank_id, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    id,
+    body.partner_id,
+    body.amount,
+    body.method,
+    body.details,
+    body.status ?? "pending",
+    body.sbp_bank_id ?? null,
+    ts,
+    ts
   );
-  return rows[0];
+  return { id };
 }
 
 export async function getWithdrawal(
-  env: SupabaseEnv,
+  env: StorageEnv,
   id: string
 ): Promise<Record<string, unknown> | null> {
-  const rows = await sbJson<Record<string, unknown>[]>(
-    await sbRequest(env, `withdrawals?id=eq.${id}&select=*&limit=1`)
-  );
-  return rows[0] ?? null;
+  return d1First(env.DB, "SELECT * FROM withdrawals WHERE id = ? LIMIT 1", id);
 }
 
 export async function patchWithdrawal(
-  env: SupabaseEnv,
+  env: StorageEnv,
   id: string,
   body: Record<string, unknown>
 ): Promise<void> {
-  await sbRequest(env, `withdrawals?id=eq.${id}`, {
-    method: "PATCH",
-    headers: { Prefer: "return=minimal" },
-    body: JSON.stringify({ ...body, updated_at: new Date().toISOString() }),
-  });
+  await d1Patch(env.DB, "withdrawals", { ...body, updated_at: nowIso() }, "id = ?", id);
 }
 
 export async function createPromoRequest(
-  env: SupabaseEnv,
+  env: StorageEnv,
   partnerId: number,
   code: string
 ): Promise<{ id: string }> {
-  const rows = await sbJson<Array<{ id: string }>>(
-    await sbRequest(env, "promo_requests", {
-      method: "POST",
-      headers: { Prefer: "return=representation" },
-      body: JSON.stringify({
-        partner_id: partnerId,
-        requested_code: code,
-      }),
-    })
+  const id = newId();
+  await d1Run(
+    env.DB,
+    `INSERT INTO promo_requests (id, partner_id, requested_code, status, created_at)
+     VALUES (?, ?, ?, 'pending', ?)`,
+    id,
+    partnerId,
+    code,
+    nowIso()
   );
-  return rows[0];
+  return { id };
 }
 
 export async function getPromoByCode(
-  env: SupabaseEnv,
+  env: StorageEnv,
   code: string
 ): Promise<{ id: string; discount_percent: number } | null> {
-  const rows = await sbJson<Array<{ id: string; discount_percent: number }>>(
-    await sbRequest(
-      env,
-      `promo_codes?code=eq.${encodeURIComponent(code)}&is_active=eq.true&select=id,discount_percent&limit=1`
-    )
+  const row = await d1First(
+    env.DB,
+    `SELECT id, discount_percent FROM promo_codes WHERE code = ? AND is_active = 1 LIMIT 1`,
+    code
   );
-  return rows[0] ?? null;
+  if (!row) return null;
+  return { id: String(row.id), discount_percent: Number(row.discount_percent) };
 }
 
 export interface VpnDeviceBinding {
@@ -639,78 +720,73 @@ export interface VpnDeviceBinding {
 }
 
 export async function listVpnDeviceBindings(
-  env: SupabaseEnv,
+  env: StorageEnv,
   userId: string
 ): Promise<VpnDeviceBinding[]> {
-  return sbJson<VpnDeviceBinding[]>(
-    await sbRequest(
-      env,
-      `vpn_device_bindings?user_id=eq.${userId}&select=*&order=last_seen_at.desc`
-    )
+  const rows = await d1All(
+    env.DB,
+    "SELECT * FROM vpn_device_bindings WHERE user_id = ? ORDER BY last_seen_at DESC",
+    userId
   );
+  return rows.map((row) => ({
+    id: String(row.id),
+    user_id: String(row.user_id),
+    os: String(row.os),
+    vpn_client: String(row.vpn_client),
+    label: String(row.label),
+    first_seen_at: String(row.first_seen_at),
+    last_seen_at: String(row.last_seen_at),
+  }));
 }
 
 export async function upsertVpnDeviceBinding(
-  env: SupabaseEnv,
+  env: StorageEnv,
   userId: string,
   os: string,
   vpnClient: string,
   label: string
 ): Promise<void> {
-  const now = new Date().toISOString();
-  const existing = await sbJson<VpnDeviceBinding[]>(
-    await sbRequest(
-      env,
-      `vpn_device_bindings?user_id=eq.${userId}&os=eq.${encodeURIComponent(os)}&vpn_client=eq.${encodeURIComponent(vpnClient)}&select=id&limit=1`
-    )
+  const ts = nowIso();
+  const existing = await d1First(
+    env.DB,
+    "SELECT id FROM vpn_device_bindings WHERE user_id = ? AND os = ? AND vpn_client = ? LIMIT 1",
+    userId,
+    os,
+    vpnClient
   );
-  if (existing[0]) {
-    await sbRequest(
-      env,
-      `vpn_device_bindings?id=eq.${existing[0].id}`,
-      {
-        method: "PATCH",
-        headers: { Prefer: "return=minimal" },
-        body: JSON.stringify({ label, last_seen_at: now }),
-      }
+  if (existing) {
+    await d1Run(
+      env.DB,
+      "UPDATE vpn_device_bindings SET label = ?, last_seen_at = ? WHERE id = ?",
+      label,
+      ts,
+      existing.id
     );
     return;
   }
-  await sbRequest(env, "vpn_device_bindings", {
-    method: "POST",
-    headers: { Prefer: "return=minimal" },
-    body: JSON.stringify({
-      user_id: userId,
-      os,
-      vpn_client: vpnClient,
-      label,
-      first_seen_at: now,
-      last_seen_at: now,
-    }),
-  });
-}
-
-export async function deleteVpnDeviceBinding(
-  env: SupabaseEnv,
-  userId: string,
-  bindingId: string
-): Promise<void> {
-  await sbRequest(
-    env,
-    `vpn_device_bindings?id=eq.${encodeURIComponent(bindingId)}&user_id=eq.${userId}`,
-    {
-      method: "DELETE",
-      headers: { Prefer: "return=minimal" },
-    }
+  await d1Run(
+    env.DB,
+    `INSERT INTO vpn_device_bindings (id, user_id, os, vpn_client, label, first_seen_at, last_seen_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    newId(),
+    userId,
+    os,
+    vpnClient,
+    label,
+    ts,
+    ts
   );
 }
 
 export async function clearVpnDeviceBindings(
-  env: SupabaseEnv,
+  env: StorageEnv,
   userId: string
 ): Promise<void> {
-  await sbRequest(env, `vpn_device_bindings?user_id=eq.${userId}`, {
-    method: "DELETE",
-    headers: { Prefer: "return=minimal" },
-  });
+  await d1Run(env.DB, "DELETE FROM vpn_device_bindings WHERE user_id = ?", userId);
 }
+
+export {
+  kvGetSubscriptionPayloadCache,
+  kvSetSubscriptionPayloadCache,
+  kvClearSubscriptionPayloadCache,
+} from "./kv-store";

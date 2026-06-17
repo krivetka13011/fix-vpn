@@ -9,6 +9,7 @@ export interface DbUser {
   display_name: string;
   photo_url: string | null;
   has_used_trial?: boolean;
+  trial_first_connect_at?: string | null;
   is_tester?: boolean;
   ref_by_partner_id?: number | null;
   first_payment_done?: boolean;
@@ -29,7 +30,6 @@ export interface DbSubscription {
   xray_uuid?: string | null;
   xray_sub_id?: string | null;
   subscription_url?: string | null;
-  subscription_payload_cache?: string | null;
   client_email?: string | null;
   is_trial?: boolean;
   extra_devices: number;

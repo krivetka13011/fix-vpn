@@ -10,12 +10,14 @@ alwaysApply: true
 - Поле `email` в панели — **имя слота**: `@username-1` или `{telegramId}-1`, без суффикса срока.
 - Срок действия — только поле `expiryTime` (и колонка «Срок действия» в UI).
 - **Никогда** не добавлять `· до DD.MM.YYYY` в `email` — переименование ломает inbound и выключает тумблер.
+- `expiryTime` — **целое число** Unix ms (`Math.floor`), только внутри объекта клиента в `settings: JSON.stringify({ clients: [...] })`.
 
 ## Жизненный цикл
 
 1. **`/start`** → `ensureClientPrepared`: создать клиента **включённым** (`enable: true`), `expiryTime: 0` (без лимита до подписки).
 2. **Пробный / оплата** → `provisionTrial` / `provisionUser`: обновить `expiryTime`, **сохранить тот же email**, `forceEnableClient` после `updateClient`.
-3. **Истечение** → `expireClientAccess`: `expiryTime` в прошлое + `enable: false`, без `forceEnableClient`.
+3. **Кнопка «Пробный период»** → скрывается через **24 ч** после первого выбора VPN-клиента (HAPP и др.); до этого видна в меню. Затем `has_used_trial = true`.
+4. **Истечение** → `expireClientAccess`: `expiryTime` в прошлое + `enable: false`, без `forceEnableClient`.
 
 ## Обязательные вызовы
 

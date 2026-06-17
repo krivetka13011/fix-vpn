@@ -18,5 +18,15 @@ binding = "ASSETS"
 not_found_handling = "single-page-application"
 run_worker_first = true
 
+[[d1_databases]]
+binding = "DB"
+database_name = "fix-vpn"
+database_id = "de753b71-e8b6-4d60-8eab-2b10ce0ed098"
+migrations_dir = "migrations/d1"
+
+[[kv_namespaces]]
+binding = "KV"
+id = "1d9c845eb4c54a2d9db139b05104aaf3"
+
 [triggers]
 crons = ["* * * * *"]

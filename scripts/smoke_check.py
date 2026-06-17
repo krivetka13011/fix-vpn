@@ -93,7 +93,8 @@ def check_worker_health(worker: str, report: SmokeReport) -> dict | None:
         if response.ok:
             report.add("telegram clientBotOk", bool(data.get("clientBotOk")), "")
             report.add("telegram webhook", bool(data.get("clientWebhookOk")), data.get("clientWebhookUrl") or "")
-            report.add("supabase", bool(data.get("supabaseOk")), "")
+            report.add("d1", bool(data.get("d1Ok")), "")
+            report.add("kv", bool(data.get("kvOk")), "")
             xui_ok = bool(data.get("xuiOk"))
             report.add(
                 "xui panel (optional)",
@@ -116,27 +117,22 @@ def check_catalog(worker: str, report: SmokeReport) -> None:
 
 
 def fetch_tester_sub_id(tester_tg: int) -> str | None:
-    key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
-    base = os.environ.get("SUPABASE_URL", "").rstrip("/")
-    if not key or not base:
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from d1_utils import fetch_subscription_by_user_id, fetch_user_by_telegram_id, load_env
+
+        load_env()
+        if not os.environ.get("CLOUDFLARE_API_TOKEN"):
+            return None
+        user = fetch_user_by_telegram_id(tester_tg)
+        if not user:
+            return None
+        sub = fetch_subscription_by_user_id(str(user["id"]))
+        if not sub or sub.get("status") != "active":
+            return None
+        return str(sub.get("xray_sub_id") or "").strip() or None
+    except Exception:
         return None
-    headers = {"apikey": key, "Authorization": f"Bearer {key}"}
-    sb = base + "/rest/v1/"
-    users = requests.get(
-        f"{sb}users?telegram_id=eq.{tester_tg}&select=id&limit=1",
-        headers=headers,
-        timeout=25,
-    ).json()
-    if not users:
-        return None
-    subs = requests.get(
-        f"{sb}subscriptions?user_id=eq.{users[0]['id']}&select=status,xray_sub_id&limit=1",
-        headers=headers,
-        timeout=25,
-    ).json()
-    if not subs or subs[0].get("status") != "active":
-        return None
-    return str(subs[0].get("xray_sub_id") or "").strip() or None
 
 
 def check_subscription_chain(worker: str, sub_id: str, report: SmokeReport) -> None:

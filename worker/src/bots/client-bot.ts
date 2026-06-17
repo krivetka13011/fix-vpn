@@ -3,22 +3,24 @@ import { clientBotToken } from "../env";
 import {
   clearSession,
   createTransaction,
+  checkCallbackRateLimit,
+  finalizeTrialButtonGrace,
   getPartner,
   getPromoByCode,
   getSession,
   getSubscription,
   getUserByTelegramId,
   getTransaction,
-  claimTrialByTelegramId,
+  markTrialFirstConnectAt,
   patchSubscription,
   patchTransaction,
-  releaseTrialClaim,
   resetTesterTrialPlan,
   saveXuiInboundClients,
   setSession,
   upsertTelegramUser,
   upsertVpnDeviceBinding,
 } from "../repository";
+import { trialButtonHidden } from "../trial-button";
 import { XuiApi } from "../xui";
 import type { TelegramUser } from "../telegram";
 import {
@@ -288,7 +290,7 @@ function parseStartRef(text?: string): number | null {
 }
 
 function expiryMsFromDays(days: number): number {
-  return Date.now() + days * 24 * 60 * 60 * 1000;
+  return Math.floor(Date.now() + days * 24 * 60 * 60 * 1000);
 }
 
 function deviceBindingLabel(os: string, vpnClient: string): string {
@@ -312,6 +314,11 @@ async function recordDeviceConnect(
   const label = deviceBindingLabel(os, vpnClient);
   await upsertVpnDeviceBinding(env, userId, os, vpnClient, label);
   await syncPanelDeviceLimit(env, userId);
+
+  const sub = await getSubscription(env, userId);
+  if (sub?.is_trial) {
+    await markTrialFirstConnectAt(env, tg.id);
+  }
 }
 
 function buildProfileKeyboard(
@@ -511,8 +518,9 @@ async function showMainMenu(
 ): Promise<void> {
   const token = clientBotToken(env)!;
   const user = await upsertTelegramUser(env, tg);
-  const text = mainMenuText(user.display_name);
-  const markup = mainMenuKeyboard(env, Boolean(user.has_used_trial));
+  const freshUser = (await finalizeTrialButtonGrace(env, tg.id)) ?? user;
+  const text = mainMenuText(freshUser.display_name);
+  const markup = mainMenuKeyboard(env, trialButtonHidden(freshUser));
   if (messageId) {
     await editMessage(token, chatId, messageId, text, markup);
   } else {
@@ -539,8 +547,12 @@ async function activateTrial(
     return;
   }
 
-  const trialClaim = await claimTrialByTelegramId(env, tg.id);
-  if (!trialClaim) {
+  const existingSub = await getSubscription(env, user.id);
+  if (existingSub?.is_trial) {
+    if (existingSub.status === "active") {
+      await showConnectOsMenu(token, chatId, messageId);
+      return;
+    }
     await sendMessage(
       token,
       chatId,
@@ -549,17 +561,16 @@ async function activateTrial(
     );
     return;
   }
-  const claimed = trialClaim;
 
   const TRIAL_MS = trialDurationMs(env);
-  const expiryMs = Date.now() + TRIAL_MS;
+  const expiryMs = Math.floor(Date.now() + TRIAL_MS);
   const trialPlanLabel = isTestMode(env)
     ? `Пробный · ${Math.round(TRIAL_MS / 60000)} мин`
     : "Пробный · 24 ч";
   const trialDates = formatSubscriptionDateFields(expiryMs);
 
-  let sub = await getSubscription(env, claimed.id);
-  await patchSubscription(env, claimed.id, {
+  let sub = await getSubscription(env, user.id);
+  await patchSubscription(env, user.id, {
     status: "active",
     plan_type: "basic",
     plan_label: trialPlanLabel,
@@ -576,19 +587,19 @@ async function activateTrial(
   await showConnectOsMenu(token, chatId, messageId);
 
   try {
-    sub = await getSubscription(env, claimed.id);
+    sub = await getSubscription(env, user.id);
     const xui = new XuiApi(env);
     const provision = await xui.provisionTrial(env, {
-      userId: claimed.id,
-      username: claimed.username ?? tg.username ?? null,
-      displayName: claimed.display_name,
+      userId: user.id,
+      username: user.username ?? tg.username ?? null,
+      displayName: user.display_name,
       telegramId: tg.id,
       expiryMs,
       limitIp: 1,
       dbSubscription: sub,
     });
 
-    await persistProvision(env, claimed.id, provision, {
+    await persistProvision(env, user.id, provision, {
       status: "active",
       plan_type: "basic",
       plan_label: trialPlanLabel,
@@ -602,8 +613,7 @@ async function activateTrial(
       extra_devices: 0,
     });
   } catch (error) {
-    await releaseTrialClaim(env, tg.id);
-    await resetTesterTrialPlan(env, claimed.id);
+    await resetTesterTrialPlan(env, user.id);
     const detail = error instanceof Error ? error.message : "unknown";
     console.error("activateTrial:", detail);
     await sendMessage(
@@ -773,6 +783,10 @@ export async function handleClientBotUpdate(
       return;
     }
     if (data === "c:trial") {
+      if (!(await checkCallbackRateLimit(env, tg.id, "trial"))) {
+        await safeAnswerCallback(token, cq.id);
+        return;
+      }
       await safeAnswerCallback(token, cq.id);
       await activateTrial(env, tg, chatId, messageId);
       return;
@@ -995,6 +1009,10 @@ export async function handleClientBotUpdate(
       return;
     }
     if (data === "c:connect") {
+      if (!(await checkCallbackRateLimit(env, tg.id, "connect"))) {
+        await safeAnswerCallback(token, cq.id);
+        return;
+      }
       await safeAnswerCallback(token, cq.id);
       const user = await upsertTelegramUser(env, tg);
       const gate = await canConnectNewDevice(env, user.id, tg.id);

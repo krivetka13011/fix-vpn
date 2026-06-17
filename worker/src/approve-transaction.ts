@@ -22,7 +22,7 @@ import {
   saveXuiInboundClients,
 } from "./repository";
 import { applyReferralPaymentBonuses } from "./referral-bonus";
-import { sbJson, sbRequest } from "./supabase";
+import { getUserById } from "./repository";
 
 function formatDateFromMs(ms: number): string {
   return formatMskDateOnly(ms);
@@ -31,25 +31,6 @@ function formatDateFromMs(ms: number): string {
 function buildSubscriptionUrl(env: BotEnv, subId: string): string {
   const base = env.WEBAPP_URL?.replace(/\/$/, "") || "";
   return base ? `${base}/sub/${subId}` : `/sub/${subId}`;
-}
-
-async function sbUserById(env: BotEnv, userId: string) {
-  const rows = await sbJson<
-    Array<{
-      id: string;
-      telegram_id: number;
-      username: string | null;
-      display_name: string | null;
-      ref_by_partner_id: number | null;
-      first_payment_done: boolean;
-    }>
-  >(
-    await sbRequest(
-      env,
-      `users?id=eq.${userId}&select=id,telegram_id,username,display_name,ref_by_partner_id,first_payment_done&limit=1`
-    )
-  );
-  return rows[0] ?? null;
 }
 
 export async function approvePaidTransaction(
@@ -61,7 +42,7 @@ export async function approvePaidTransaction(
   if (txn.status === "approved") return { ok: true, message: "Уже оплачено" };
   if (txn.status !== "pending") return { ok: false, message: "Заявка не в ожидании" };
 
-  const user = await sbUserById(env, txn.user_id);
+  const user = await getUserById(env, txn.user_id);
   if (!user) return { ok: false, message: "Пользователь не найден" };
 
   const months = txn.billing_months as BillingMonths;
@@ -81,7 +62,7 @@ export async function approvePaidTransaction(
       : sub?.status === "active" && sub.ends_at
         ? new Date(`${sub.ends_at}T23:59:59`).getTime()
         : Date.now();
-  const expiryMs = Math.max(Date.now(), baseMs) + extendMs;
+  const expiryMs = Math.floor(Math.max(Date.now(), baseMs) + extendMs);
   const provision = await xui.provisionUser(env, {
     userId: user.id,
     username: user.username,

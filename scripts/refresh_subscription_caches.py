@@ -1,6 +1,5 @@
-"""Refresh subscription_payload_cache for all active subscriptions (runs outside Worker)."""
+"""Refresh subscription payload cache in KV for all active subscriptions."""
 import base64
-import json
 import os
 import re
 import sys
@@ -8,31 +7,12 @@ import sys
 import requests
 import urllib3
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from d1_utils import d1_query, kv_clear_subcache, kv_set_subcache, load_env, require_d1_env
+
 urllib3.disable_warnings()
 
 PLAIN_RE = re.compile(r"^(vless|vmess|trojan|ss|hysteria2|tuic)://", re.I)
-
-
-def load_env(path="project_config.env"):
-    if not os.path.isfile(path):
-        return
-    with open(path, encoding="utf-8") as handle:
-        for line in handle:
-            line = line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, value = line.split("=", 1)
-            os.environ[key.strip()] = value.strip()
-
-
-def sb_headers():
-    key = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
-    return {
-        "apikey": key,
-        "Authorization": f"Bearer {key}",
-        "Content-Type": "application/json",
-        "Prefer": "return=minimal",
-    }
 
 
 def normalize_body(raw: str) -> str:
@@ -95,14 +75,11 @@ def fetch_payload(session: requests.Session, base: str, sub_id: str) -> str | No
 
 
 def main():
-    load_env()
-    sb = os.environ["SUPABASE_URL"].rstrip("/") + "/rest/v1/"
-    rows = requests.get(
-        sb
-        + "subscriptions?select=user_id,xray_sub_id,status&xray_sub_id=not.is.null&status=eq.active",
-        headers={**sb_headers(), "Prefer": "return=representation"},
-        timeout=30,
-    ).json()
+    require_d1_env()
+    rows = d1_query(
+        "SELECT user_id, xray_sub_id, status FROM subscriptions "
+        "WHERE xray_sub_id IS NOT NULL AND status = 'active'"
+    )
 
     session = requests.Session()
     session.verify = False
@@ -113,24 +90,15 @@ def main():
     updated = 0
     for row in rows:
         sub_id = str(row.get("xray_sub_id") or "").strip()
-        if not sub_id:
+        user_id = str(row.get("user_id") or "").strip()
+        if not sub_id or not user_id:
             continue
         body = fetch_payload(session, panel_base, sub_id)
         if not body:
             print("clear stale cache", sub_id)
-            requests.patch(
-                sb + f"subscriptions?user_id=eq.{row['user_id']}",
-                headers=sb_headers(),
-                json={"subscription_payload_cache": None},
-                timeout=30,
-            )
+            kv_clear_subcache(user_id)
             continue
-        requests.patch(
-            sb + f"subscriptions?user_id=eq.{row['user_id']}",
-            headers=sb_headers(),
-            json={"subscription_payload_cache": body},
-            timeout=30,
-        )
+        kv_set_subcache(user_id, body)
         updated += 1
         print("cached", sub_id, len(body), "bytes")
 

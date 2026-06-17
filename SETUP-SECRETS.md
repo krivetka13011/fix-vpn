@@ -1,78 +1,94 @@
-# Где взять ссылки и ключи Supabase (новый интерфейс)
+# GitHub Secrets и локальный project_config.env
 
-Проект: **fix-vpn** · организация **krivetka13011**
+Проект: **fix-vpn** · репозиторий [krivetka13011/fix-vpn](https://github.com/krivetka13011/fix-vpn)
 
----
-
-## 1. Project URL (для `SUPABASE_URL`)
-
-Слева в меню проекта:
-
-**Settings** → прокрутите блок **Integrations** → **Data API**
-
-Там будет **Project URL**, например:
-
-`https://xxxxxxxx.supabase.co`
-
-Можно скопировать и с хвостом `/rest/v1/` — приложение обрежет само.
-
-В GitHub Secret **`SUPABASE_URL`** вставьте:
-
-`https://dtxdbni*****dcryst.supabase.co`
-
-(без `/rest/v1/` — так надёжнее)
-
-Если в Data API пусто: **Settings** → **General** → вверху **Reference ID** / ссылка на API — или кнопка **Connect** вверху страницы проекта.
+Хранилище: **Cloudflare D1** (пользователи, подписки, платежи) + **KV** (сессии бота, кэш подписок, rate limits).
 
 ---
 
-## 2. Секретный ключ (для `SUPABASE_SERVICE_ROLE_KEY`)
+## 1. Cloudflare API Token
 
-Вы уже на нужной странице: **Settings** → **API Keys**.
+[Cloudflare Dashboard](https://dash.cloudflare.com/profile/api-tokens) → **Create Token** → шаблон **Edit Cloudflare Workers** (или custom с правами D1 + Workers KV + Workers Scripts).
 
-Нужен блок **Secret keys** (не Publishable):
+В GitHub Secret и в `project_config.env`:
 
-| Блок | Нужен? |
-|------|--------|
-| **Publishable key** (`sb_publishable_...`) | Нет — только для браузера |
-| **Secret keys** (`sb_secret_...`) | **Да** |
+| Name | Значение |
+|------|----------|
+| `CLOUDFLARE_API_TOKEN` | токен API |
+| `CLOUDFLARE_ACCOUNT_ID` | `abd3a9f30b070ba7b27946ecb6b82945` |
 
-Действия:
+Опционально (есть дефолты в `scripts/d1_utils.py`):
 
-1. Строка **default** в **Secret keys**
-2. Иконка глаза **Reveal**
-3. **Copy**
-4. GitHub Secret **`SUPABASE_SERVICE_ROLE_KEY`**
+| Name | Значение |
+|------|----------|
+| `D1_DATABASE_ID` | `de753b71-e8b6-4d60-8eab-2b10ce0ed098` |
+| `KV_NAMESPACE_ID` | `1d9c845eb4c54a2d9db139b05104aaf3` |
 
 ---
 
-## 3. GitHub Secrets
+## 2. Остальные секреты (без изменений)
 
 [github.com/krivetka13011/fix-vpn/settings/secrets/actions](https://github.com/krivetka13011/fix-vpn/settings/secrets/actions)
 
-| Name | Что вставить |
-|------|----------------|
-| `SUPABASE_URL` | URL из Data API |
-| `SUPABASE_SERVICE_ROLE_KEY` | Secret key (`sb_secret_...`) |
+| Name | Назначение |
+|------|------------|
+| `TELEGRAM_BOT_TOKEN` / `CLIENT_BOT_TOKEN` | бот FIX VPN |
+| `PARTNER_BOT_TOKEN` | партнёрский бот |
+| `XUI_BASE_URL`, `XUI_API_TOKEN` | панель 3X-UI |
+| `WEBAPP_URL` | `https://app.fixvp.xyz` |
+| `E2E_TRACE_SECRET` | E2E-тесты в CI |
+
+**Supabase больше не нужен** — секреты `SUPABASE_URL` и `SUPABASE_SERVICE_ROLE_KEY` можно удалить.
 
 ---
 
-## 4. Подключить Worker
+## 3. D1 миграции
 
-[Actions → Connect Supabase to Worker → Run workflow](https://github.com/krivetka13011/fix-vpn/actions/workflows/connect-supabase.yml)
+При деплое CI выполняет:
+
+```bash
+npx wrangler d1 migrations apply fix-vpn --remote
+```
+
+Локально (из корня репозитория):
+
+```bash
+npx wrangler d1 migrations apply fix-vpn --remote
+```
 
 ---
 
-## 5. Проверка
+## 4. Проверка
 
-https://fix-vpn.krivetkagames.workers.dev/api/health  
+**Health:** https://app.fixvp.xyz/api/health
 
-Нужно: `"supabaseOk": true`
+Нужно:
+
+```json
+"ok": true,
+"d1Ok": true,
+"kvOk": true,
+"clientBotOk": true
+```
+
+**Бот:** https://t.me/FIXVPNfast_bot → «FIX VPN» / «Открыть FIX VPN»
+
+**Локальные скрипты:** скопируйте `project_config.env.example` → `project_config.env`, заполните `CLOUDFLARE_API_TOKEN` и ключи панели.
+
+```bash
+python scripts/smoke_check.py
+python scripts/cleanup_for_fresh_test.py   # workflow_dispatch в Actions
+```
 
 ---
 
-## Таблицы
+## 5. Workflows (cron)
 
-**Table Editor** → `users`, `subscriptions`, `addon_purchases`
-
-Если нет: **SQL Editor** → `supabase/schema.sql` → Run
+| Workflow | Что делает |
+|----------|------------|
+| Deploy FIX VPN | push → Worker + D1 migrate + provision |
+| Provision pending VPN clients | каждые 2 мин |
+| Sync panel clients | каждую минуту |
+| Refresh subscription caches | каждые 15 мин → KV `subcache:` |
+| Cleanup fresh test | ручной сброс D1 + панели |
+| Health monitor | smoke + Telegram alert |

@@ -1,6 +1,6 @@
-import type { SupabaseEnv } from "./supabase";
+import type { StorageEnv } from "./storage-env";
 
-export interface BotEnv extends SupabaseEnv {
+export interface BotEnv extends StorageEnv {
   WEBAPP_URL?: string;
   TELEGRAM_BOT_TOKEN?: string;
   CLIENT_BOT_TOKEN?: string;

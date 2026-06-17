@@ -7,33 +7,12 @@ import requests
 import urllib3
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from d1_utils import fetch_subscriptions, kv_set_subcache, load_env, patch_subscription, require_d1_env
 from panel_enable_utils import force_enable_panel_client
 
 urllib3.disable_warnings()
 
 INBOUND_IDS = [19, 20, 21, 24]
-
-
-def load_env():
-    path = os.environ.get("PROJECT_CONFIG", "project_config.env")
-    if not os.path.isfile(path):
-        return
-    with open(path, encoding="utf-8") as handle:
-        for line in handle:
-            line = line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, value = line.split("=", 1)
-            os.environ.setdefault(key.strip(), value.strip())
-
-
-def sb_headers():
-    key = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
-    return {
-        "apikey": key,
-        "Authorization": f"Bearer {key}",
-        "Content-Type": "application/json",
-    }
 
 
 def panel_session():
@@ -95,20 +74,8 @@ def add_panel_client(session, base, email, sub_id, client_uuid, tg_id):
 
 
 def main():
-    load_env()
-    required = ("SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "XUI_BASE_URL", "XUI_API_TOKEN")
-    for name in required:
-        if not os.environ.get(name):
-            print(f"missing {name}", file=sys.stderr)
-            sys.exit(1)
-
-    sb_base = os.environ["SUPABASE_URL"].rstrip("/") + "/rest/v1/"
-    rows = requests.get(
-        sb_base
-        + "subscriptions?select=user_id,client_email,xray_sub_id,xray_uuid,subscription_url,status,ends_at,plan_type,extra_devices,users(telegram_id)&client_email=not.is.null",
-        headers=sb_headers(),
-        timeout=30,
-    ).json()
+    require_d1_env()
+    rows = fetch_subscriptions("s.client_email IS NOT NULL")
 
     session, base = panel_session()
     sub_base = os.environ.get(
@@ -155,14 +122,9 @@ def main():
             "xray_uuid": existing["uuid"],
             "subscription_url": protected_url,
         }
+        patch_subscription(str(row["user_id"]), patch)
         if payload_cache:
-            patch["subscription_payload_cache"] = payload_cache
-        requests.patch(
-            sb_base + f"subscriptions?user_id=eq.{row['user_id']}",
-            headers={**sb_headers(), "Prefer": "return=minimal"},
-            json=patch,
-            timeout=30,
-        )
+            kv_set_subcache(str(row["user_id"]), payload_cache)
 
     print(
         f"synced {synced} panel clients, enabled {enabled}/{len(rows)}, "

@@ -1,0 +1,71 @@
+name: Connect D1 + KV to Worker
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  connect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check GitHub secrets
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        run: |
+          test -n "$CLOUDFLARE_API_TOKEN" || (echo "Нет CLOUDFLARE_API_TOKEN" >&2; exit 1)
+          test -n "$TELEGRAM_BOT_TOKEN" || (echo "Нет TELEGRAM_BOT_TOKEN" >&2; exit 1)
+          curl -fsS -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "https://api.cloudflare.com/client/v4/user/tokens/verify" | grep -q '"status":"active"'
+          echo "GitHub secrets OK"
+
+      - name: Apply D1 migrations
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: npx wrangler@4.69.0 d1 migrations apply fix-vpn --remote
+
+      - name: Test D1 API
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || 'abd3a9f30b070ba7b27946ecb6b82945' }}
+          D1_DATABASE_ID: ${{ secrets.D1_DATABASE_ID || 'de753b71-e8b6-4d60-8eab-2b10ce0ed098' }}
+        run: |
+          pip install requests
+          CODE=$(curl -sS -o /tmp/d1.json -w '%{http_code}' \
+            -X POST "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/d1/database/${D1_DATABASE_ID}/query" \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{"sql":"SELECT COUNT(*) AS count FROM users","params":[]}')
+          echo "D1 HTTP $CODE"
+          cat /tmp/d1.json
+          test "$CODE" = "200" || exit 1
+          grep -q '"success":true' /tmp/d1.json
+
+      - name: Verify Worker health
+        env:
+          WEBAPP_URL: ${{ secrets.WEBAPP_URL || 'https://app.fixvp.xyz' }}
+        run: |
+          URL="${WEBAPP_URL%/}"
+          for i in 1 2 3 4 5 6; do
+            curl -fsS "$URL/api/health" | tee /tmp/health.json
+            if grep -q '"d1Ok":true' /tmp/health.json && grep -q '"kvOk":true' /tmp/health.json; then
+              echo "## D1 + KV connected" >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            sleep 5
+          done
+          cat /tmp/health.json >&2
+          exit 1

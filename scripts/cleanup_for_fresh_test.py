@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Wipe auto-created Supabase users + panel clients; never touch manual panel entries."""
+"""Wipe auto-created D1 users + panel clients; never touch manual panel entries."""
 from __future__ import annotations
 
 import json
@@ -9,9 +9,11 @@ import sys
 import requests
 import urllib3
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from d1_utils import count_table, load_env, require_d1_env, wipe_customer_data, wipe_kv_customer_data
+
 urllib3.disable_warnings()
 
-# Manual panel clients — NEVER delete, edit, or recreate (user-added).
 MANUAL_PANEL_CLIENT_EMAILS = frozenset(
     {
         "max-mobile",
@@ -27,28 +29,6 @@ MANUAL_PANEL_CLIENT_EMAILS = frozenset(
 )
 
 INBOUND_IDS = [19, 20, 21, 24]
-
-
-def load_env(path: str = "project_config.env") -> None:
-    if not os.path.isfile(path):
-        return
-    with open(path, encoding="utf-8") as handle:
-        for line in handle:
-            line = line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, value = line.split("=", 1)
-            os.environ[key.strip()] = value.strip().strip('"').strip("'")
-
-
-def sb_headers(prefer: str = "return=representation") -> dict[str, str]:
-    key = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
-    return {
-        "apikey": key,
-        "Authorization": f"Bearer {key}",
-        "Content-Type": "application/json",
-        "Prefer": prefer,
-    }
 
 
 def panel_session() -> tuple[requests.Session, str]:
@@ -103,49 +83,8 @@ def delete_panel_client(session: requests.Session, base: str, email: str) -> boo
     return ok
 
 
-def wipe_supabase(sb: str) -> None:
-    deletes: list[tuple[str, dict]] = [
-        ("bot_sessions", {"telegram_id": "neq.0"}),
-        ("vpn_device_bindings", {"id": "neq.00000000-0000-0000-0000-000000000000"}),
-        ("xui_client_inbounds", {"id": "neq.00000000-0000-0000-0000-000000000000"}),
-        ("addon_purchases", {"id": "neq.00000000-0000-0000-0000-000000000000"}),
-        ("transactions", {"id": "neq.00000000-0000-0000-0000-000000000000"}),
-        ("subscriptions", {"id": "neq.00000000-0000-0000-0000-000000000000"}),
-        ("users", {"telegram_id": "neq.0"}),
-    ]
-    for table, params in deletes:
-        response = requests.delete(
-            f"{sb}{table}",
-            headers=sb_headers("return=minimal"),
-            params=params,
-            timeout=60,
-        )
-        print("supabase", table, response.status_code)
-
-
-def count_table(sb: str, table: str, params: dict | None = None) -> int:
-    headers = {**sb_headers(), "Prefer": "count=exact"}
-    response = requests.head(
-        f"{sb}{table}",
-        headers=headers,
-        params=params or {"select": "id"},
-        timeout=30,
-    )
-    content_range = response.headers.get("Content-Range", "")
-    if "/" in content_range:
-        return int(content_range.split("/")[-1])
-    rows = requests.get(f"{sb}{table}?select=id&limit=1000", headers=sb_headers(), timeout=30).json()
-    return len(rows) if isinstance(rows, list) else 0
-
-
 def main() -> int:
-    load_env()
-    for name in ("SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "XUI_BASE_URL", "XUI_API_TOKEN"):
-        if not os.environ.get(name):
-            print(f"missing {name} in project_config.env", file=sys.stderr)
-            return 1
-
-    sb = os.environ["SUPABASE_URL"].rstrip("/") + "/rest/v1/"
+    require_d1_env()
     session, base = panel_session()
 
     print("=== BEFORE ===")
@@ -154,7 +93,7 @@ def main() -> int:
     for row in sorted(clients, key=lambda r: r["email"].lower()):
         tag = "KEEP" if row["email"] in MANUAL_PANEL_CLIENT_EMAILS else "DEL"
         print(f"  [{tag}] {row['email']} sub={row['subId']} uuid={row['uuid'][:8]}…")
-    print("supabase users:", count_table(sb, "users"))
+    print("d1 users:", count_table("users"))
 
     to_delete = [row for row in clients if row["email"] not in MANUAL_PANEL_CLIENT_EMAILS]
     print(f"\n=== DELETE {len(to_delete)} auto panel clients ===")
@@ -163,16 +102,17 @@ def main() -> int:
         if delete_panel_client(session, base, row["email"]):
             deleted += 1
 
-    print("\n=== WIPE SUPABASE (customers only; partners kept) ===")
-    wipe_supabase(sb)
+    print("\n=== WIPE D1 + KV (customers only; partners kept) ===")
+    wipe_customer_data()
+    wipe_kv_customer_data()
 
     print("\n=== AFTER ===")
     clients_after = dedupe_by_uuid(scan_clients(session, base))
     print("panel clients:", len(clients_after))
     for row in sorted(clients_after, key=lambda r: r["email"].lower()):
         print(f"  {row['email']} sub={row['subId']}")
-    print("supabase users:", count_table(sb, "users"))
-    print("supabase partners:", count_table(sb, "partners"))
+    print("d1 users:", count_table("users"))
+    print("d1 partners:", count_table("partners"))
     print(f"\nDone. Removed {deleted} panel clients.")
     return 0
 

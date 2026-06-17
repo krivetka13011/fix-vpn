@@ -1,37 +1,32 @@
 import { clientBotToken, type BotEnv } from "./env";
 import { sendMessage } from "./bots/telegram-api";
-import { sbJson, sbRequest } from "./supabase";
+import { d1All } from "./d1-db";
 import { patchSubscription } from "./repository";
 import { XuiApi } from "./xui";
-import { telegramIdFromClientEmail } from "./device-limit";
 
 type ExpiringRow = {
   id: string;
   user_id: string;
   plan_type: string;
-  is_trial: boolean;
+  is_trial: number | boolean;
   expires_at: string;
-  users: { telegram_id: number } | Array<{ telegram_id: number }>;
+  telegram_id: number;
 };
-
-function telegramIdFromRow(row: ExpiringRow): number | null {
-  const users = row.users;
-  if (Array.isArray(users)) return users[0]?.telegram_id ?? null;
-  return users?.telegram_id ?? null;
-}
 
 async function fetchExpiringRows(
   env: BotEnv,
-  params: Record<string, string>
+  extraWhere: string,
+  extraParams: unknown[] = []
 ): Promise<ExpiringRow[]> {
-  const search = new URLSearchParams({
-    status: "eq.active",
-    expires_at: "not.is.null",
-    select: "id,user_id,plan_type,is_trial,expires_at,users!inner(telegram_id)",
-    ...params,
-  });
-  return sbJson<ExpiringRow[]>(
-    await sbRequest(env, `subscriptions?${search.toString()}`)
+  return d1All<ExpiringRow>(
+    env.DB,
+    `SELECT s.id, s.user_id, s.plan_type, s.is_trial, s.expires_at, u.telegram_id
+     FROM subscriptions s
+     INNER JOIN users u ON u.id = s.user_id
+     WHERE s.status = 'active'
+       AND s.expires_at IS NOT NULL
+       ${extraWhere}`,
+    ...extraParams
   );
 }
 
@@ -42,11 +37,11 @@ export async function runSubscriptionExpiryJobs(env: BotEnv): Promise<void> {
   const now = Date.now();
   const warnBeforeMs = 60_000;
 
-  const warnRows = await fetchExpiringRows(env, {
-    expiry_warned_at: "is.null",
-    expires_at: `gt.${new Date(now).toISOString()}`,
-    order: "expires_at.asc",
-  });
+  const warnRows = await fetchExpiringRows(
+    env,
+    "AND s.expiry_warned_at IS NULL AND s.expires_at > ? ORDER BY s.expires_at ASC",
+    [new Date(now).toISOString()]
+  );
 
   for (const row of warnRows) {
     const expiresMs = new Date(row.expires_at).getTime();
@@ -54,14 +49,15 @@ export async function runSubscriptionExpiryJobs(env: BotEnv): Promise<void> {
     const msLeft = expiresMs - now;
     if (msLeft > warnBeforeMs || msLeft <= 0) continue;
 
-    const chatId = telegramIdFromRow(row);
+    const chatId = row.telegram_id;
     if (!chatId) continue;
 
+    const isTrial = row.is_trial === 1 || row.is_trial === true;
     try {
       await sendMessage(
         token,
         chatId,
-        row.is_trial
+        isTrial
           ? "⏳ Через минуту закончится пробный период.\n\n" +
               "Оформите подписку, чтобы продолжить:"
           : "⏳ Через минуту закончится подписка.\n\n" +
@@ -81,17 +77,18 @@ export async function runSubscriptionExpiryJobs(env: BotEnv): Promise<void> {
     }
   }
 
-  const expiredRows = await fetchExpiringRows(env, {
-    expires_at: `lt.${new Date(now).toISOString()}`,
-    order: "expires_at.asc",
-  });
+  const expiredRows = await fetchExpiringRows(
+    env,
+    "AND s.expires_at < ? ORDER BY s.expires_at ASC",
+    [new Date(now).toISOString()]
+  );
 
   for (const row of expiredRows) {
     try {
       await patchSubscription(env, row.user_id, {
         status: "expired",
       });
-      const chatId = telegramIdFromRow(row);
+      const chatId = row.telegram_id;
       if (chatId) {
         try {
           const xui = new XuiApi(env);
@@ -101,10 +98,11 @@ export async function runSubscriptionExpiryJobs(env: BotEnv): Promise<void> {
         }
       }
       if (!chatId) continue;
+      const isTrial = row.is_trial === 1 || row.is_trial === true;
       await sendMessage(
         token,
         chatId,
-        row.is_trial
+        isTrial
           ? "Пробный период завершён.\n\nОформите подписку, чтобы продолжить пользоваться FIX VPN:"
           : "Подписка завершена.\n\nПродлите доступ в боте:",
         {

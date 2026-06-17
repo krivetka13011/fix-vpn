@@ -7,7 +7,14 @@ import {
   type PlanType,
 } from "./catalog";
 import { syncPanelDeviceLimit } from "./device-limit";
-import { sbJson, sbRequest, type SupabaseEnv } from "./supabase";
+import { d1All, d1First, d1Patch, d1Run, mapSubscriptionRow, mapUserRow, newId, nowIso } from "./d1-db";
+import {
+  getSubscription,
+  getUserByTelegramId,
+  patchSubscription,
+  upsertTelegramUser,
+} from "./repository";
+import type { StorageEnv } from "./storage-env";
 import type { DbAddon, DbSubscription, DbUser, UserBundle } from "./types";
 import type { TelegramUser } from "./telegram";
 import { displayName } from "./telegram";
@@ -55,105 +62,82 @@ function addMonths(date: Date, months: number): Date {
 }
 
 export async function getBundle(
-  env: SupabaseEnv,
+  env: StorageEnv,
   telegramId: number
 ): Promise<UserBundle | null> {
-  const users = await sbJson<DbUser[]>(
-    await sbRequest(
-      env,
-      `users?telegram_id=eq.${telegramId}&select=*&limit=1`
-    )
+  const user = await getUserByTelegramId(env, telegramId);
+  if (!user) return null;
+
+  const subRow = await d1First(
+    env.DB,
+    "SELECT * FROM subscriptions WHERE user_id = ? LIMIT 1",
+    user.id
   );
-  if (!users.length) return null;
-  const user = users[0];
-  const subs = await sbJson<DbSubscription[]>(
-    await sbRequest(
-      env,
-      `subscriptions?user_id=eq.${user.id}&select=*&limit=1`
-    )
+  const addons = await d1All<Record<string, unknown>>(
+    env.DB,
+    "SELECT * FROM addon_purchases WHERE user_id = ? ORDER BY purchased_at DESC",
+    user.id
   );
-  const addons = await sbJson<DbAddon[]>(
-    await sbRequest(
-      env,
-      `addon_purchases?user_id=eq.${user.id}&select=*&order=purchased_at.desc`
-    )
-  );
+
   const subscription = applyExpiry(
-    subs[0] ?? emptySubscription(user.id)
+    subRow ? mapSubscriptionRow(subRow) : emptySubscription(user.id)
   );
-  if (subscription.status === "expired" && subs[0]) {
-    await sbRequest(
-      env,
-      `subscriptions?user_id=eq.${user.id}`,
-      {
-        method: "PATCH",
-        headers: { Prefer: "return=minimal" },
-        body: JSON.stringify({ status: "expired", updated_at: new Date().toISOString() }),
-      }
-    );
+  if (subscription.status === "expired" && subRow) {
+    await patchSubscription(env, user.id, { status: "expired" });
   }
-  return { user, subscription, addons };
+
+  return {
+    user,
+    subscription,
+    addons: addons.map((row) => ({
+      id: String(row.id),
+      user_id: String(row.user_id),
+      addon_type: String(row.addon_type),
+      label: String(row.label),
+      quantity: Number(row.quantity),
+      price_rub: Number(row.price_rub),
+      purchased_at: String(row.purchased_at),
+    })),
+  };
 }
 
 export async function ensureUser(
-  env: SupabaseEnv,
+  env: StorageEnv,
   tg: TelegramUser
 ): Promise<UserBundle> {
   const existing = await getBundle(env, tg.id);
   if (existing) {
-    const patch = await sbRequest(env, `users?id=eq.${existing.user.id}`, {
-      method: "PATCH",
-      headers: { Prefer: "return=representation" },
-      body: JSON.stringify({
+    await d1Patch(
+      env.DB,
+      "users",
+      {
         display_name: displayName(tg),
         username: tg.username ?? null,
         photo_url: tg.photo_url ?? existing.user.photo_url,
-        updated_at: new Date().toISOString(),
-      }),
-    });
-    const updated = await sbJson<DbUser[]>(patch);
+        updated_at: nowIso(),
+      },
+      "id = ?",
+      existing.user.id
+    );
+    const user = (await getUserByTelegramId(env, tg.id)) ?? existing.user;
     return {
       ...existing,
-      user: updated[0] ?? existing.user,
+      user,
       subscription: applyExpiry(existing.subscription),
     };
   }
 
-  const created = await sbJson<DbUser[]>(
-    await sbRequest(env, "users", {
-      method: "POST",
-      headers: { Prefer: "return=representation" },
-      body: JSON.stringify({
-        telegram_id: tg.id,
-        username: tg.username ?? null,
-        display_name: displayName(tg),
-        photo_url: tg.photo_url ?? null,
-      }),
-    })
-  );
-  const user = created[0];
-  const subRow = await sbJson<DbSubscription[]>(
-    await sbRequest(env, "subscriptions", {
-      method: "POST",
-      headers: { Prefer: "return=representation" },
-      body: JSON.stringify({
-        user_id: user.id,
-        plan_type: "basic",
-        status: "none",
-        extra_devices: 0,
-        plan_label: null,
-      }),
-    })
-  );
+  const user = await upsertTelegramUser(env, tg);
+  const sub = await getSubscription(env, user.id);
   return {
     user,
-    subscription: subRow[0] ?? emptySubscription(user.id),
+    subscription: sub ?? emptySubscription(user.id),
     addons: [],
   };
 }
 
 export async function purchaseSubscription(
-  env: SupabaseEnv,
+  env: StorageEnv,
   tg: TelegramUser,
   planType: PlanType,
   months: BillingMonths,
@@ -174,7 +158,8 @@ export async function purchaseSubscription(
   const label = `${tariff.name} · ${periodLabel(months)}`;
   const vpnKey =
     prev.vpn_key ?? `FIX-${tg.id}-${planType}-${months}M`;
-  const patchBody = {
+
+  await patchSubscription(env, bundle.user.id, {
     plan_type: planType,
     status: "active",
     plan_label: label,
@@ -187,34 +172,29 @@ export async function purchaseSubscription(
     vpn_key: vpnKey,
     extra_devices: extra,
     purchased_at: now.toISOString(),
-    updated_at: now.toISOString(),
-  };
-  await sbRequest(env, `subscriptions?user_id=eq.${bundle.user.id}`, {
-    method: "PATCH",
-    headers: { Prefer: "return=minimal" },
-    body: JSON.stringify(patchBody),
   });
+
   const total = calcTotalRub(planType, months, extra);
   if (extra > 0) {
-    await sbRequest(env, "addon_purchases", {
-      method: "POST",
-      headers: { Prefer: "return=minimal" },
-      body: JSON.stringify({
-        user_id: bundle.user.id,
-        addon_type: "extra_devices",
-        label: `Доп. устройства: +${extra}`,
-        quantity: extra,
-        price_rub: extra * EXTRA_DEVICE_PRICE_PER_MONTH * months,
-      }),
-    });
+    await d1Run(
+      env.DB,
+      `INSERT INTO addon_purchases (id, user_id, addon_type, label, quantity, price_rub, purchased_at)
+       VALUES (?, ?, 'extra_devices', ?, ?, ?, ?)`,
+      newId(),
+      bundle.user.id,
+      `Доп. устройства: +${extra}`,
+      extra,
+      extra * EXTRA_DEVICE_PRICE_PER_MONTH * months,
+      nowIso()
+    );
   }
   const fresh = await getBundle(env, tg.id);
-  await syncPanelDeviceLimit(env, fresh.user.id);
+  await syncPanelDeviceLimit(env, fresh!.user.id);
   return fresh!;
 }
 
 export async function purchaseExtraDevices(
-  env: SupabaseEnv,
+  env: StorageEnv,
   tg: TelegramUser,
   addDevices: number
 ): Promise<UserBundle> {
@@ -230,27 +210,23 @@ export async function purchaseExtraDevices(
   const months = (sub.billing_months ?? 1) as BillingMonths;
   const newExtra = sub.extra_devices + add;
   const price = add * EXTRA_DEVICE_PRICE_PER_MONTH * months;
-  await sbRequest(env, `subscriptions?user_id=eq.${bundle.user.id}`, {
-    method: "PATCH",
-    headers: { Prefer: "return=minimal" },
-    body: JSON.stringify({
-      extra_devices: newExtra,
-      updated_at: new Date().toISOString(),
-    }),
+
+  await patchSubscription(env, bundle.user.id, {
+    extra_devices: newExtra,
   });
-  await sbRequest(env, "addon_purchases", {
-    method: "POST",
-    headers: { Prefer: "return=minimal" },
-    body: JSON.stringify({
-      user_id: bundle.user.id,
-      addon_type: "extra_devices",
-      label: `Доп. устройства: +${add}`,
-      quantity: add,
-      price_rub: price,
-    }),
-  });
+  await d1Run(
+    env.DB,
+    `INSERT INTO addon_purchases (id, user_id, addon_type, label, quantity, price_rub, purchased_at)
+     VALUES (?, ?, 'extra_devices', ?, ?, ?, ?)`,
+    newId(),
+    bundle.user.id,
+    `Доп. устройства: +${add}`,
+    add,
+    price,
+    nowIso()
+  );
   const fresh = await getBundle(env, tg.id);
-  await syncPanelDeviceLimit(env, fresh.user.id);
+  await syncPanelDeviceLimit(env, fresh!.user.id);
   return fresh!;
 }
 

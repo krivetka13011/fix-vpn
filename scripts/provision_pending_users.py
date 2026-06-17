@@ -11,6 +11,13 @@ import requests
 import urllib3
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from d1_utils import (
+    d1_execute,
+    fetch_subscriptions,
+    kv_set_subcache,
+    patch_subscription,
+    require_d1_env,
+)
 from panel_enable_utils import enable_inbound_clients, force_enable_panel_client
 
 urllib3.disable_warnings()
@@ -89,7 +96,7 @@ def delete_panel_client(session, base, email):
     return response.ok or "success" in response.text.lower()
 
 
-def dedupe_panel_clients(sb, session, base, clients, rows):
+def dedupe_panel_clients(session, base, clients, rows):
     unique = dedupe_clients_index(clients)
     db_by_tg = {}
     for row in rows:
@@ -238,25 +245,9 @@ def ensure_panel_client(session, base, clients, row, worker, sub_links_fn, panel
 
 
 def load_env(path="project_config.env"):
-    if not os.path.isfile(path):
-        return
-    with open(path, encoding="utf-8") as handle:
-        for line in handle:
-            line = line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, value = line.split("=", 1)
-            os.environ.setdefault(key.strip(), value.strip())
+    from d1_utils import load_env as _load
 
-
-def sb_headers(prefer="return=minimal"):
-    key = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
-    return {
-        "apikey": key,
-        "Authorization": f"Bearer {key}",
-        "Content-Type": "application/json",
-        "Prefer": prefer,
-    }
+    _load(path)
 
 
 def random_sub_id(length=16):
@@ -360,13 +351,10 @@ def find_inbound_client_rows(session, base, tg_id, email_hint=None):
     return hits
 
 
-def clear_pending_panel_ips(sb: str, session: requests.Session, base: str) -> int:
-    pending = requests.get(
-        sb
-        + "subscriptions?panel_ip_clear_requested_at=not.is.null&select=user_id,client_email&client_email=not.is.null",
-        headers={**sb_headers("return=representation"), "Prefer": "return=representation"},
-        timeout=30,
-    ).json()
+def clear_pending_panel_ips(session: requests.Session, base: str) -> int:
+    pending = fetch_subscriptions(
+        "s.panel_ip_clear_requested_at IS NOT NULL AND s.client_email IS NOT NULL"
+    )
     cleared = 0
     for row in pending:
         email = str(row.get("client_email") or "").strip()
@@ -384,55 +372,38 @@ def clear_pending_panel_ips(sb: str, session: requests.Session, base: str) -> in
                 timeout=30,
             )
         if response.ok or "success" in response.text.lower():
-            requests.patch(
-                sb + f"subscriptions?user_id=eq.{row['user_id']}",
-                headers=sb_headers(),
-                json={
+            patch_subscription(
+                str(row["user_id"]),
+                {
                     "panel_ip_clear_requested_at": None,
                     "last_device_reset": datetime.now(timezone.utc).isoformat(),
                 },
-                timeout=30,
             )
             cleared += 1
             print("cleared panel ips for", email)
     return cleared
 
 
-def clear_stuck_swap_flags(sb: str) -> int:
-    cleared = 0
+def clear_stuck_swap_flags() -> int:
     try:
-        response = requests.patch(
-            sb
-            + "subscriptions?or=(panel_sub_rotate_requested_at.not.is.null,pending_xray_sub_id.not.is.null)",
-            headers={**sb_headers("return=representation"), "Prefer": "return=representation"},
-            json={
-                "panel_sub_rotate_requested_at": None,
-                "pending_xray_sub_id": None,
-            },
-            timeout=30,
+        cleared = d1_execute(
+            "UPDATE subscriptions SET panel_sub_rotate_requested_at = NULL, "
+            "pending_xray_sub_id = NULL "
+            "WHERE panel_sub_rotate_requested_at IS NOT NULL OR pending_xray_sub_id IS NOT NULL"
         )
-        if response.ok:
-            payload = response.json()
-            if isinstance(payload, list):
-                cleared = len(payload)
     except Exception as error:
         print("clear_stuck_swap_flags warn:", error)
+        cleared = 0
     if cleared:
         print("cleared stuck rotation flags", cleared)
     return cleared
 
 
-def process_pending_sub_rotations(sb: str, session: requests.Session, base: str, clients: list, worker: str) -> int:
+def process_pending_sub_rotations(session: requests.Session, base: str, clients: list, worker: str) -> int:
     try:
-        pending = requests.get(
-            sb
-            + "subscriptions?pending_xray_sub_id=not.is.null&select=user_id,client_email,pending_xray_sub_id,xray_uuid,users!inner(telegram_id)&client_email=not.is.null",
-            headers={**sb_headers("return=representation"), "Prefer": "return=representation"},
-            timeout=30,
+        pending_rows = fetch_subscriptions(
+            "s.pending_xray_sub_id IS NOT NULL AND s.client_email IS NOT NULL"
         )
-        if not pending.ok:
-            return 0
-        pending_rows = pending.json()
     except Exception as error:
         print("process_pending_sub_rotations skip:", error)
         return 0
@@ -477,28 +448,19 @@ def process_pending_sub_rotations(sb: str, session: requests.Session, base: str,
             "panel_sub_rotate_requested_at": None,
             "panel_ip_clear_requested_at": None,
         }
+        patch_subscription(str(row["user_id"]), patch)
         if links:
-            patch["subscription_payload_cache"] = "\n".join(
-                str(line).strip() for line in links if str(line).strip()
+            kv_set_subcache(
+                str(row["user_id"]),
+                "\n".join(str(line).strip() for line in links if str(line).strip()),
             )
-        requests.patch(
-            sb + f"subscriptions?user_id=eq.{row['user_id']}",
-            headers=sb_headers(),
-            json=patch,
-            timeout=30,
-        )
         rotated += 1
         print("rotated subId", email, new_sub_id)
     return rotated
 
 
-def sync_client_limits(sb: str, session: requests.Session, base: str, clients: list) -> int:
-    rows = requests.get(
-        sb
-        + "subscriptions?status=eq.active&select=user_id,client_email,plan_type,extra_devices,xray_uuid,xray_sub_id,users!inner(telegram_id)&client_email=not.is.null",
-        headers={**sb_headers("return=representation"), "Prefer": "return=representation"},
-        timeout=30,
-    ).json()
+def sync_client_limits(session: requests.Session, base: str, clients: list) -> int:
+    rows = fetch_subscriptions("s.status = 'active' AND s.client_email IS NOT NULL")
     by_email = {str(c.get("email") or ""): c for c in clients}
     by_tg = {}
     for c in clients:
@@ -530,13 +492,8 @@ def sync_client_limits(sb: str, session: requests.Session, base: str, clients: l
     return synced
 
 
-def sync_active_panel_clients(sb: str, session: requests.Session, base: str, clients: list) -> int:
-    rows = requests.get(
-        sb
-        + "subscriptions?status=eq.active&select=user_id,client_email,plan_type,extra_devices,xray_uuid,xray_sub_id,ends_at,users!inner(telegram_id)&client_email=not.is.null",
-        headers={**sb_headers("return=representation"), "Prefer": "return=representation"},
-        timeout=30,
-    ).json()
+def sync_active_panel_clients(session: requests.Session, base: str, clients: list) -> int:
+    rows = fetch_subscriptions("s.status = 'active' AND s.client_email IS NOT NULL")
     by_email = {str(c.get("email") or ""): c for c in clients}
     by_tg = {}
     for c in clients:
@@ -562,31 +519,21 @@ def sync_active_panel_clients(sb: str, session: requests.Session, base: str, cli
 
 
 def main():
-    load_env()
-    for name in ("SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "XUI_BASE_URL", "XUI_API_TOKEN"):
-        if not os.environ.get(name):
-            raise RuntimeError(f"missing {name}")
-
-    sb = os.environ["SUPABASE_URL"].rstrip("/") + "/rest/v1/"
+    require_d1_env()
     worker = os.environ.get("WEBAPP_URL", "https://app.fixvp.xyz").rstrip("/")
 
-    rows = requests.get(
-        sb
-        + "subscriptions?select=user_id,xray_sub_id,xray_uuid,plan_type,extra_devices,pending_xray_sub_id,subscription_payload_cache,status,ends_at,starts_at,users!inner(telegram_id,username)",
-        headers={**sb_headers("return=representation"), "Prefer": "return=representation"},
-        timeout=30,
-    ).json()
+    rows = fetch_subscriptions()
 
     session, base = panel_session()
-    flags_cleared = clear_stuck_swap_flags(sb)
-    ip_cleared = clear_pending_panel_ips(sb, session, base)
+    flags_cleared = clear_stuck_swap_flags()
+    ip_cleared = clear_pending_panel_ips(session, base)
     clients = dedupe_clients_index(scan_clients(session, base))
-    dupes_removed = dedupe_panel_clients(sb, session, base, clients, rows)
+    dupes_removed = dedupe_panel_clients(session, base, clients, rows)
     if dupes_removed:
         clients = dedupe_clients_index(scan_clients(session, base))
-    sub_rotated = process_pending_sub_rotations(sb, session, base, clients, worker)
-    limits_synced = sync_client_limits(sb, session, base, clients)
-    active_synced = sync_active_panel_clients(sb, session, base, clients)
+    sub_rotated = process_pending_sub_rotations(session, base, clients, worker)
+    limits_synced = sync_client_limits(session, base, clients)
+    active_synced = sync_active_panel_clients(session, base, clients)
 
     if not rows:
         print(
@@ -638,17 +585,13 @@ def main():
         }
         links = sub_links(session, base, sub_id)
         if links:
-            patch["subscription_payload_cache"] = "\n".join(
-                str(line).strip() for line in links if str(line).strip()
+            kv_set_subcache(
+                user_id,
+                "\n".join(str(line).strip() for line in links if str(line).strip()),
             )
-        elif not str(row.get("subscription_payload_cache") or "").strip():
+        else:
             print("warn empty cache", tg_id, sub_id)
-        requests.patch(
-            sb + f"subscriptions?user_id=eq.{user_id}",
-            headers=sb_headers(),
-            json=patch,
-            timeout=30,
-        )
+        patch_subscription(user_id, patch)
         provisioned += 1
 
     print(

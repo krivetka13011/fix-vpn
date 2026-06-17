@@ -39,7 +39,7 @@ async function extendSubscriptionDays(
     sub?.status === "active" && sub.ends_at
       ? new Date(`${sub.ends_at}T23:59:59`).getTime()
       : Date.now();
-  const expiryMs = Math.max(Date.now(), baseMs) + extraDays * 24 * 60 * 60 * 1000;
+  const expiryMs = Math.floor(Math.max(Date.now(), baseMs) + extraDays * 24 * 60 * 60 * 1000);
 
   try {
     const xui = new XuiApi(env);

@@ -2,7 +2,14 @@ import type { BotEnv } from "./env";
 import { parseIdList, subscriptionBaseUrl, xuiBaseUrlCandidates, xuiWorkerBaseUrl } from "./env";
 import { isPanelErrorBody, panelFetch } from "./panel-fetch";
 import { canonicalClientKey, panelDisplayLabel } from "./panel-client-label";
-import type { SupabaseEnv } from "./supabase";
+import type { StorageEnv } from "./storage-env";
+
+/** 3X-UI принимает expiryTime только как целое число — Unix ms (0 = без срока). */
+export function panelExpiryTimeMs(ms: number): number {
+  const value = Number(ms);
+  if (!Number.isFinite(value) || value <= 0) return 0;
+  return Math.floor(value);
+}
 
 export interface XuiClientRecord {
   id: string;
@@ -482,8 +489,9 @@ export class XuiApi {
         ? desiredLabel
         : panelEmail;
 
-    const effectiveExpiry =
-      expiryMs && expiryMs > 0 ? expiryMs : record.expiryTime;
+    const effectiveExpiry = panelExpiryTimeMs(
+      expiryMs && expiryMs > 0 ? expiryMs : record.expiryTime
+    );
     const effectiveLimit = limitIp ?? record.limitIp;
     const active = effectiveExpiry === 0 || effectiveExpiry > Date.now();
 
@@ -566,7 +574,7 @@ export class XuiApi {
       email,
       subId,
       limitIp: limitIp ?? this.limitIp,
-      expiryTime: expiryMs,
+      expiryTime: panelExpiryTimeMs(expiryMs),
       enable,
       tgId: telegramId,
       totalGB: totalGb,
@@ -582,7 +590,7 @@ export class XuiApi {
       email: client.email,
       subId: client.subId,
       limitIp: client.limitIp,
-      expiryTime: client.expiryTime,
+      expiryTime: panelExpiryTimeMs(client.expiryTime),
       enable: client.enable,
       tgId: client.tgId,
       totalGB: client.totalGB,
@@ -705,7 +713,7 @@ export class XuiApi {
       email: String(row.email || email),
       subId: String(row.subId ?? ""),
       limitIp: Number(row.limitIp ?? this.limitIp),
-      expiryTime: Number(row.expiryTime ?? 0),
+      expiryTime: panelExpiryTimeMs(Number(row.expiryTime ?? 0)),
       enable: true,
       tgId: Number(row.tgId) || telegramId,
       totalGB: Number(row.totalGB ?? 0),
@@ -735,6 +743,9 @@ export class XuiApi {
       }
       apply(row);
       if (!row.tgId) row.tgId = telegramId;
+      if (row.expiryTime !== undefined && row.expiryTime !== null) {
+        row.expiryTime = panelExpiryTimeMs(Number(row.expiryTime));
+      }
       touched = true;
     }
     if (!touched) return false;
@@ -814,6 +825,23 @@ export class XuiApi {
         console.error(`syncInboundClientFields ${inboundId}:`, error);
       }
     }
+  }
+
+  private async resolveClientExpiryMs(
+    telegramId: number,
+    emailHint: string
+  ): Promise<number> {
+    const hint = emailHint.trim() || String(telegramId);
+    const global = await this.fetchClientRecord(hint);
+    const fromGlobal = panelExpiryTimeMs(global?.expiryTime ?? 0);
+    if (fromGlobal > 0) return fromGlobal;
+
+    const rows = await this.findInboundClientRows(telegramId, hint);
+    for (const hit of rows) {
+      const inbound = panelExpiryTimeMs(Number(hit.row.expiryTime ?? 0));
+      if (inbound > 0) return inbound;
+    }
+    return 0;
   }
 
   private async patchGlobalClientEnabled(record: XuiClientRecord): Promise<boolean> {
@@ -916,11 +944,13 @@ export class XuiApi {
       }
 
       let globalOk = false;
+      const resolvedExpiry = await this.resolveClientExpiryMs(telegramId, resolved);
       const record = await this.fetchClientRecord(resolved);
       if (record?.id) {
         globalOk = await this.patchGlobalClientEnabled({
           ...record,
           enable: true,
+          expiryTime: resolvedExpiry || panelExpiryTimeMs(record.expiryTime),
           tgId: telegramId || record.tgId,
           limitIp: record.limitIp > 0 ? record.limitIp : 1,
         });
@@ -934,7 +964,12 @@ export class XuiApi {
             telegramId
           );
           if (globalRecord.id) {
-            globalOk = await this.patchGlobalClientEnabled(globalRecord);
+            globalOk = await this.patchGlobalClientEnabled({
+              ...globalRecord,
+              enable: true,
+              expiryTime:
+                resolvedExpiry || panelExpiryTimeMs(globalRecord.expiryTime),
+            });
           }
         }
       }
@@ -1013,7 +1048,7 @@ export class XuiApi {
       email: String(row.email ?? email),
       subId: String(row.subId ?? ""),
       limitIp: Number(row.limitIp ?? this.limitIp),
-      expiryTime: Number(row.expiryTime ?? 0),
+      expiryTime: panelExpiryTimeMs(Number(row.expiryTime ?? 0)),
       enable: Boolean(row.enable ?? true),
       tgId: Number(row.tgId ?? 0),
       totalGB: Number(row.totalGB ?? 0),
@@ -1028,7 +1063,7 @@ export class XuiApi {
       email: client.email,
       subId: client.subId,
       limitIp: client.limitIp,
-      expiryTime: client.expiryTime,
+      expiryTime: panelExpiryTimeMs(client.expiryTime),
       enable: client.enable !== false,
       tgId: client.tgId,
       totalGB: client.totalGB ?? 0,
@@ -1047,6 +1082,8 @@ export class XuiApi {
           email: client.email?.trim() || existing.email,
         }
       : client;
+
+    merged.expiryTime = panelExpiryTimeMs(merged.expiryTime);
 
     const active =
       merged.expiryTime === 0 || merged.expiryTime > Date.now();
@@ -1069,9 +1106,10 @@ export class XuiApi {
     this.invalidateScan();
 
     const tgId = merged.tgId || Number(merged.email) || 0;
+    const expiryMs = panelExpiryTimeMs(merged.expiryTime);
     if (tgId) {
       await this.syncInboundClientFields(tgId, merged.email, (row) => {
-        row.expiryTime = merged.expiryTime;
+        row.expiryTime = expiryMs;
         row.enable = active;
         row.limitIp = merged.limitIp;
         if (merged.subId) row.subId = merged.subId;
@@ -1090,7 +1128,7 @@ export class XuiApi {
       (await this.resolvePanelEmail(telegramId)) || String(telegramId);
     const record = await this.fetchClientRecord(email);
     if (!record) return;
-    const past = Date.now() - 60_000;
+    const past = panelExpiryTimeMs(Date.now() - 60_000);
     await this.updateClient({
       ...record,
       email,
@@ -1361,7 +1399,7 @@ export class XuiApi {
   }
 
   async syncPanelWithDb(
-    env: SupabaseEnv,
+    env: StorageEnv,
     userId: string,
     telegramId: number,
     db?: {

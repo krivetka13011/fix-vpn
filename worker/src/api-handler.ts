@@ -15,10 +15,23 @@ import {
   purchaseExtraDevices,
   purchaseSubscription,
 } from "./db";
-import { sbRequest } from "./supabase";
+import {
+  getSubscriptionBySubId,
+  getTransactionByPayloadId,
+  getTransactionByPlategaId,
+  kvGetSubscriptionPayloadCache,
+} from "./repository";
 import { validateInitData, type TelegramUser } from "./telegram";
 import type { BotEnv } from "./env";
-import { clientBotToken, partnerBotToken, subscriptionBaseUrl, subscriptionClientBaseUrl, workerSubscriptionFetchBase, xuiBaseUrl, happProviderId } from "./env";
+import {
+  clientBotToken,
+  partnerBotToken,
+  subscriptionBaseUrl,
+  subscriptionClientBaseUrl,
+  workerSubscriptionFetchBase,
+  xuiBaseUrl,
+  happProviderId,
+} from "./env";
 import { isPanelErrorBody, panelFetch } from "./panel-fetch";
 import { handleClientBotUpdate } from "./bots/client-bot";
 import { handlePartnerBotUpdate } from "./bots/partner-bot";
@@ -41,11 +54,6 @@ import {
   plategaResultHtml,
   verifyPlategaCallback,
 } from "./platega";
-import {
-  getSubscriptionBySubId,
-  getTransactionByPayloadId,
-  getTransactionByPlategaId,
-} from "./repository";
 import { XuiApi } from "./xui";
 import {
   buildMiniappConnectUrl,
@@ -255,7 +263,7 @@ export async function handleApiRequest(
     }
 
     try {
-      const cached = dbSub.subscription_payload_cache?.trim();
+      const cached = (await kvGetSubscriptionPayloadCache(env, dbSub.user_id))?.trim();
       if (cached && cached.length > 100) {
         const headers: Record<string, string> = {
           ...lockedHeaders,
@@ -416,8 +424,8 @@ export async function handleApiRequest(
     let clientBotOk = false;
     let partnerBotOk = false;
     let clientWebhookUrl: string | null = null;
-    let supabaseOk = false;
-    let supabaseStatus: number | null = null;
+    let d1Ok = false;
+    let kvOk = false;
     let xuiOk = false;
     let xuiBase: string | null = null;
     const clientToken = clientBotToken(env);
@@ -445,14 +453,17 @@ export async function handleApiRequest(
         partnerBotOk = false;
       }
     }
-    if (env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY) {
-      try {
-        const sb = await sbRequest(env, "users?select=id&limit=1");
-        supabaseStatus = sb.status;
-        supabaseOk = sb.ok;
-      } catch {
-        supabaseOk = false;
-      }
+    try {
+      await env.DB.prepare("SELECT 1 AS ok").first();
+      d1Ok = true;
+    } catch {
+      d1Ok = false;
+    }
+    try {
+      await env.KV.put("health:ping", "1", { expirationTtl: 60 });
+      kvOk = (await env.KV.get("health:ping")) === "1";
+    } catch {
+      kvOk = false;
     }
     if (env.XUI_BASE_URL && env.XUI_API_TOKEN) {
       try {
@@ -490,12 +501,12 @@ export async function handleApiRequest(
       hasClientToken: Boolean(clientToken),
       hasPartnerToken: Boolean(partnerToken),
       hasWebAppUrl: Boolean(env.WEBAPP_URL),
-      hasSupabaseUrl: Boolean(env.SUPABASE_URL),
-      hasSupabaseKey: Boolean(env.SUPABASE_SERVICE_ROLE_KEY),
+      hasD1: Boolean(env.DB),
+      hasKv: Boolean(env.KV),
       clientBotOk,
       partnerBotOk,
-      supabaseOk,
-      supabaseStatus,
+      d1Ok,
+      kvOk,
       xuiOk,
       xuiBaseUrl: xuiBase,
       subscriptionBaseUrl: subscriptionBaseUrl(env) || null,
@@ -665,7 +676,7 @@ export async function handleApiRequest(
     return json({ error: "Unauthorized: open via Telegram Mini App" }, 401);
   }
 
-  if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
+  if (!env.DB || !env.KV) {
     return json({ error: "Database not configured" }, 503);
   }
 

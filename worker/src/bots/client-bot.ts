@@ -575,9 +575,7 @@ async function activateTrial(
     });
     await syncPanelDeviceLimit(env, claimed.id);
 
-    const text =
-      `Пробный период на 24 часа успешно активирован!\n` +
-      `🎉 Выберите операционную систему вашего устройства для настройки подключения:`;
+    const text = "Выберите ОС:";
     const markup = connectOsKeyboard();
     if (messageId) {
       await editMessage(token, chatId, messageId, text, markup);
@@ -810,9 +808,7 @@ export async function handleClientBotUpdate(
       return;
     }
     if (data === "c:trial") {
-      await safeAnswerCallback(token, cq.id, "Активируем пробный период...", {
-        showAlert: true,
-      });
+      await safeAnswerCallback(token, cq.id);
       await activateTrial(env, tg, chatId, messageId);
       return;
     }

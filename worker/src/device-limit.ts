@@ -40,8 +40,8 @@ export function formatConnectedDevices(
   if (!ips.length) return "";
   const lines = ips
     .slice(0, 10)
-    .map((row, index) => `• ${deviceSlotDisplayName(username, telegramId, index + 1, row.ip)}`);
-  return `\n\nПодключения:\n${lines.join("\n")}`;
+    .map((_, index) => `• ${deviceSlotDisplayName(username, telegramId, index + 1)}`);
+  return `\n\nПодключённые устройства:\n${lines.join("\n")}`;
 }
 
 export async function countUsedDeviceSlots(

@@ -469,23 +469,27 @@ export class XuiApi {
     limitIp?: number,
     expiryMs?: number
   ): Promise<string> {
-    const desired = panelDisplayLabel(username, displayName, telegramId, {
-      expiryMs: expiryMs && expiryMs > Date.now() ? expiryMs : undefined,
-    });
-    if (panel.email === desired) return desired;
-
     const record = await this.fetchClientRecord(panel.email);
     if (!record) return panel.email;
+
+    const desired = panelDisplayLabel(username, displayName, telegramId, {
+      expiryMs: expiryMs && expiryMs > Date.now() ? expiryMs : undefined,
+      slot: 1,
+    });
+
+    const effectiveExpiry =
+      expiryMs && expiryMs > 0 ? expiryMs : record.expiryTime;
+    const effectiveLimit = limitIp ?? record.limitIp;
 
     const client = this.buildClient(
       desired,
       panel.subId,
       telegramId,
-      record.expiryTime,
+      effectiveExpiry,
       record.totalGB,
       true,
       panel.primaryUuid,
-      limitIp ?? record.limitIp
+      effectiveLimit
     );
 
     try {
@@ -1305,7 +1309,8 @@ export class XuiApi {
     const panelLabel = panelDisplayLabel(
       params.username,
       params.displayName,
-      params.telegramId
+      params.telegramId,
+      { slot: 1 }
     );
 
     await this.syncPanelWithDb(

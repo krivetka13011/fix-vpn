@@ -84,17 +84,14 @@ export function devicesKeyboard(
   const price = calcCheckoutPrice(plan, months, extraDevicesForTotal(selected), promo);
   const rows: Array<Array<{ text: string; callback_data: string }>> = [];
 
-  for (let i = 0; i < DEVICE_OPTIONS.length; i += 5) {
-    const row: Array<{ text: string; callback_data: string }> = [];
-    for (let j = 0; j < 5 && i + j < DEVICE_OPTIONS.length; j += 1) {
-      const count = DEVICE_OPTIONS[i + j];
-      const mark = count === selected ? " ✅" : "";
-      row.push({
+  for (const count of DEVICE_OPTIONS) {
+    const mark = count === selected ? " ✅" : "";
+    rows.push([
+      {
         text: `${count}${mark}`,
         callback_data: `c:dev:${plan}:${months}:${count}:${promo}`,
-      });
-    }
-    rows.push(row);
+      },
+    ]);
   }
 
   rows.push([

@@ -290,8 +290,8 @@ function buildProfileKeyboard(
   if (hasClient) {
     rows.push([{ text: "🔄 Сбросить подключение", callback_data: "c:resetip" }]);
   }
-  if (planType === "basic" || !planType) {
-    rows.push([{ text: "➕ Докупить устройства", callback_data: "c:buy" }]);
+  if (planType !== "personal") {
+    rows.push([{ text: "➕ Докупить устройства", callback_data: "c:adddevices" }]);
   }
   rows.push([{ text: "◀️ Назад", callback_data: "c:menu" }]);
   return { inline_keyboard: rows };
@@ -557,6 +557,7 @@ async function activateTrial(
       xray_uuid: sub.xray_uuid,
       subscription_url: subscriptionUrl,
     });
+    await syncPanelDeviceLimit(env, claimed.id);
 
     const text =
       `Пробный период на 24 часа успешно активирован! 🎉\n\n` +
@@ -781,7 +782,7 @@ export async function handleClientBotUpdate(
       await activateTrial(env, tg, chatId, messageId);
       return;
     }
-    if (data === "c:buy") {
+    if (data === "c:buy" || data === "c:adddevices") {
       await safeAnswerCallback(token, cq.id);
       await editMessage(token, chatId, messageId, tariffsText(), tariffsKeyboard());
       return;
@@ -1069,6 +1070,7 @@ export async function handleClientBotUpdate(
 
       await safeAnswerCallback(token, cq.id);
 
+      await syncPanelDeviceLimit(env, user.id);
       const subId = await resolvePanelSubId(env, user, tg);
       if (!subId) {
         await editMessage(

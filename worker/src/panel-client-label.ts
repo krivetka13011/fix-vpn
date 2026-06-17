@@ -22,16 +22,16 @@ export function panelDeviceSlotLabel(
   return `${telegramId}-${slot}`;
 }
 
-/** Имя клиента в 3X-UI (поле email в UI панели). */
+/** Имя клиента в 3X-UI (поле email в UI панели). По умолчанию слот 1: @username-1 */
 export function panelDisplayLabel(
   username: string | null | undefined,
   displayName: string | null | undefined,
   telegramId: number,
   options?: { expiryMs?: number; slot?: number }
 ): string {
-  const slot = options?.slot;
+  const slot = options?.slot ?? 1;
   let base: string;
-  if (slot && slot > 0) {
+  if (slot > 0) {
     base = panelDeviceSlotLabel(username, telegramId, slot);
   } else {
     const handle = username?.trim().replace(/^@+/, "");
@@ -51,9 +51,7 @@ export function panelDisplayLabel(
 export function deviceSlotDisplayName(
   username: string | null | undefined,
   telegramId: number,
-  slot: number,
-  ip?: string
+  slot: number
 ): string {
-  const label = panelDeviceSlotLabel(username, telegramId, slot);
-  return ip ? `${label} (${ip})` : label;
+  return panelDeviceSlotLabel(username, telegramId, slot);
 }

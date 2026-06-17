@@ -3,13 +3,7 @@ export function canonicalClientKey(telegramId: number): string {
   return String(telegramId);
 }
 
-function formatExpiryShort(expiryMs: number): string {
-  return new Date(expiryMs).toLocaleDateString("ru-RU", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-  });
-}
+import { formatMskShortDateTime } from "./datetime-msk";
 
 /** Имя слота устройства в панели: @username-1, @username-2 … */
 export function panelDeviceSlotLabel(
@@ -43,7 +37,7 @@ export function panelDisplayLabel(
   }
 
   if (options?.expiryMs && options.expiryMs > Date.now()) {
-    return `${base} · до ${formatExpiryShort(options.expiryMs)}`;
+    return `${base} · до ${formatMskShortDateTime(options.expiryMs)}`;
   }
   return base;
 }

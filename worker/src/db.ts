@@ -30,8 +30,16 @@ function emptySubscription(userId: string): DbSubscription {
 }
 
 function applyExpiry(sub: DbSubscription): DbSubscription {
-  if (sub.status !== "active" || !sub.ends_at) return sub;
-  const end = new Date(`${sub.ends_at}T23:59:59`);
+  if (sub.status !== "active") return sub;
+  if (sub.expires_at) {
+    const end = new Date(sub.expires_at).getTime();
+    if (Number.isFinite(end) && end < Date.now()) {
+      return { ...sub, status: "expired" };
+    }
+    return sub;
+  }
+  if (!sub.ends_at) return sub;
+  const end = new Date(`${sub.ends_at}T23:59:59+03:00`);
   if (end < new Date()) return { ...sub, status: "expired" };
   return sub;
 }

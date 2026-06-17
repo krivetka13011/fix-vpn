@@ -4,9 +4,11 @@ import type { PlanType } from "./catalog";
 import { clientBotToken, type BotEnv } from "./env";
 import {
   formatExpiresAtIso,
+  formatSubscriptionDateFields,
   isTestMode,
   paidSubscriptionDurationMs,
 } from "./test-mode";
+import { formatMskDateOnly } from "./datetime-msk";
 import { panelLimitIpForSubscription, syncPanelDeviceLimit } from "./device-limit";
 import { sendMessage } from "./bots/telegram-api";
 import { XuiApi } from "./xui";
@@ -23,7 +25,7 @@ import { applyReferralPaymentBonuses } from "./referral-bonus";
 import { sbJson, sbRequest } from "./supabase";
 
 function formatDateFromMs(ms: number): string {
-  return new Date(ms).toISOString().slice(0, 10);
+  return formatMskDateOnly(ms);
 }
 
 function buildSubscriptionUrl(env: BotEnv, subId: string): string {
@@ -107,6 +109,20 @@ export async function approvePaidTransaction(
     );
   }
 
+  const now = Date.now();
+  const activationStart =
+    sub?.status === "active" && sub.purchased_at
+      ? new Date(sub.purchased_at).getTime()
+      : now;
+  const dateFields = isTestMode(env)
+    ? formatSubscriptionDateFields(expiryMs, activationStart)
+    : {
+        starts_at: sub?.starts_at || formatDateFromMs(now),
+        ends_at: formatDateFromMs(expiryMs),
+        expires_at: formatExpiresAtIso(expiryMs),
+        purchased_at: sub?.purchased_at || new Date(now).toISOString(),
+      };
+
   await patchSubscription(env, user.id, {
     status: "active",
     plan_type: planType,
@@ -115,9 +131,10 @@ export async function approvePaidTransaction(
       : `${TARIFFS[planType].name} · ${periodLabel(months)}`,
     billing_months: months,
     extra_devices: extraDevices,
-    starts_at: sub?.starts_at || formatDateFromMs(Date.now()),
-    ends_at: formatDateFromMs(expiryMs),
-    expires_at: formatExpiresAtIso(expiryMs),
+    starts_at: dateFields.starts_at,
+    ends_at: dateFields.ends_at,
+    expires_at: dateFields.expires_at,
+    purchased_at: dateFields.purchased_at,
     expiry_warned_at: null,
     is_trial: false,
     client_email: provision.email,

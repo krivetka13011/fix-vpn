@@ -66,8 +66,9 @@ import {
   type VpnClientId,
 } from "../connect-links";
 import { syncPanelSubIdForUser } from "../panel-sync";
+import { formatSubscriptionPeriodMsk } from "../datetime-msk";
 import {
-  formatExpiresAtIso,
+  formatSubscriptionDateFields,
   isTestMode,
   trialDurationMs,
 } from "../test-mode";
@@ -290,19 +291,7 @@ function expiryMsFromDays(days: number): number {
   return Date.now() + days * 24 * 60 * 60 * 1000;
 }
 
-function formatDateFromMs(ms: number): string {
-  return new Date(ms).toISOString().slice(0, 10);
-}
-
-function formatDateTime(isoOrMs: string | number): string {
-  const date =
-    typeof isoOrMs === "number" ? new Date(isoOrMs) : new Date(isoOrMs);
-  if (Number.isNaN(date.getTime())) return "—";
-  const pad = (value: number) => String(value).padStart(2, "0");
-  return `${pad(date.getDate())}.${pad(date.getMonth() + 1)}.${date.getFullYear()} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
-}
-
-function deviceDisplayName(os: string, vpnClient: string): string {
+function deviceBindingLabel(os: string, vpnClient: string): string {
   const osNames: Record<string, string> = {
     ios: "iPhone / iPad",
     android: "Android",
@@ -567,6 +556,7 @@ async function activateTrial(
   const trialPlanLabel = isTestMode(env)
     ? `Пробный · ${Math.round(TRIAL_MS / 60000)} мин`
     : "Пробный · 24 ч";
+  const trialDates = formatSubscriptionDateFields(expiryMs);
 
   let sub = await getSubscription(env, claimed.id);
   await patchSubscription(env, claimed.id, {
@@ -574,9 +564,10 @@ async function activateTrial(
     plan_type: "basic",
     plan_label: trialPlanLabel,
     billing_months: 0,
-    starts_at: formatDateFromMs(Date.now()),
-    ends_at: formatDateFromMs(expiryMs),
-    expires_at: formatExpiresAtIso(expiryMs),
+    starts_at: trialDates.starts_at,
+    ends_at: trialDates.ends_at,
+    expires_at: trialDates.expires_at,
+    purchased_at: trialDates.purchased_at,
     expiry_warned_at: null,
     is_trial: true,
     extra_devices: 0,
@@ -602,9 +593,10 @@ async function activateTrial(
       plan_type: "basic",
       plan_label: trialPlanLabel,
       billing_months: 0,
-      starts_at: formatDateFromMs(Date.now()),
-      ends_at: formatDateFromMs(expiryMs),
-      expires_at: formatExpiresAtIso(expiryMs),
+      starts_at: trialDates.starts_at,
+      ends_at: trialDates.ends_at,
+      expires_at: trialDates.expires_at,
+      purchased_at: trialDates.purchased_at,
       expiry_warned_at: null,
       is_trial: true,
       extra_devices: 0,
@@ -626,35 +618,18 @@ function formatSubscriptionPeriod(
   startsAt: string | null | undefined,
   endsAt: string | null | undefined,
   planLabel: string | null | undefined,
-  expiresAt?: string | null
+  expiresAt?: string | null,
+  purchasedAt?: string | null,
+  durationMs?: number
 ): string {
-  const fmtDate = (iso: string) =>
-    new Date(`${iso}T12:00:00`).toLocaleDateString("ru-RU", {
-      day: "numeric",
-      month: "long",
-      year: "numeric",
-    });
-  const fmtDateTime = (iso: string) =>
-    new Date(iso).toLocaleString("ru-RU", {
-      day: "numeric",
-      month: "long",
-      year: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-  if (expiresAt) {
-    const end = new Date(expiresAt);
-    if (!Number.isNaN(end.getTime())) {
-      const start = startsAt
-        ? new Date(`${startsAt}T12:00:00`)
-        : new Date(end.getTime() - 5 * 60 * 1000);
-      return `${fmtDateTime(start.toISOString())} — ${fmtDateTime(expiresAt)}`;
-    }
-  }
-  if (startsAt && endsAt) return `${fmtDate(startsAt)} — ${fmtDate(endsAt)}`;
-  if (endsAt) return `до ${fmtDate(endsAt)}`;
-  if (planLabel) return planLabel;
-  return "—";
+  return formatSubscriptionPeriodMsk({
+    startsAt,
+    endsAt,
+    expiresAt,
+    purchasedAt,
+    planLabel,
+    durationMs,
+  });
 }
 
 async function showProfile(
@@ -679,7 +654,9 @@ async function showProfile(
     sub?.starts_at,
     sub?.ends_at,
     sub?.plan_label,
-    sub?.expires_at
+    sub?.expires_at,
+    sub?.purchased_at,
+    sub?.is_trial ? trialDurationMs(env) : undefined
   );
   const statusLabel =
     status === "active"

@@ -151,7 +151,10 @@ jobs:
           put_secret PARTNER_BOT_USERNAME "FIX_Partner_bot"
           put_secret PARTNER_DEFAULT_COMMISSION_PERCENT "${{ secrets.PARTNER_DEFAULT_COMMISSION_PERCENT || '30' }}"
           put_secret HAPP_PROVIDER_ID "${{ secrets.HAPP_PROVIDER_ID }}"
-          put_secret TEST_MODE "0"
+          put_secret TEST_MODE "1"
+          put_secret TRIAL_DURATION_MINUTES "2"
+          put_secret TEST_CHECKOUT_PRICE_RUB "1"
+          put_secret TEST_SUBSCRIPTION_MINUTES "5"
           npx wrangler@4.69.0 secret delete TESTER_TELEGRAM_IDS 2>/dev/null || true
           npx wrangler@4.69.0 secret delete CARDLINK_API_TOKEN 2>/dev/null || true
           npx wrangler@4.69.0 secret delete CARDLINK_SHOP_ID 2>/dev/null || true

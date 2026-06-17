@@ -1,5 +1,6 @@
 import type { BillingMonths } from "./catalog";
 import type { BotEnv } from "./env";
+import { formatMskDateOnly } from "./datetime-msk";
 
 export function isTestMode(env: BotEnv): boolean {
   const raw = env.TEST_MODE?.trim().toLowerCase();
@@ -8,7 +9,7 @@ export function isTestMode(env: BotEnv): boolean {
 
 export function trialDurationMs(env: BotEnv): number {
   if (isTestMode(env)) {
-    const minutes = Number(env.TRIAL_DURATION_MINUTES || "5");
+    const minutes = Number(env.TRIAL_DURATION_MINUTES || "2");
     return Math.max(1, minutes) * 60 * 1000;
   }
   const days = Number(env.TRIAL_DAYS || env.XUI_TRIAL_DAYS || "1");
@@ -33,4 +34,21 @@ export function paidSubscriptionDurationMs(
 
 export function formatExpiresAtIso(ms: number): string {
   return new Date(ms).toISOString();
+}
+
+export function formatSubscriptionDateFields(
+  expiryMs: number,
+  startMs = Date.now()
+): {
+  starts_at: string;
+  ends_at: string;
+  expires_at: string;
+  purchased_at: string;
+} {
+  return {
+    starts_at: formatMskDateOnly(startMs),
+    ends_at: formatMskDateOnly(expiryMs),
+    expires_at: formatExpiresAtIso(expiryMs),
+    purchased_at: new Date(startMs).toISOString(),
+  };
 }

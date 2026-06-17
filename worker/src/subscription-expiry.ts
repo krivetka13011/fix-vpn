@@ -61,8 +61,11 @@ export async function runSubscriptionExpiryJobs(env: BotEnv): Promise<void> {
       await sendMessage(
         token,
         chatId,
-        "⏳ Через минуту закончится подписка.\n\n" +
-          "Продлите сейчас, чтобы не потерять доступ:",
+        row.is_trial
+          ? "⏳ Через минуту закончится пробный период.\n\n" +
+              "Оформите подписку, чтобы продолжить:"
+          : "⏳ Через минуту закончится подписка.\n\n" +
+              "Продлите сейчас, чтобы не потерять доступ:",
         {
           inline_keyboard: [
             [{ text: "💳 Оформить подписку", callback_data: "c:buy" }],

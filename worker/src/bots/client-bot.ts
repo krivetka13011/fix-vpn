@@ -191,6 +191,41 @@ function connectOsKeyboard() {
   };
 }
 
+async function showConnectOsMenu(
+  token: string,
+  chatId: number,
+  messageId?: number
+): Promise<void> {
+  const text = "Выберите ОС:";
+  const markup = connectOsKeyboard();
+  try {
+    if (messageId) {
+      await editMessage(token, chatId, messageId, text, markup);
+    } else {
+      await sendMessage(token, chatId, text, markup);
+    }
+  } catch (error) {
+    console.error("showConnectOsMenu:", error);
+    await sendMessage(token, chatId, text, markup);
+  }
+}
+
+async function waitForActiveSubscription(
+  env: BotEnv,
+  userId: string,
+  attempts = 5,
+  delayMs = 800
+) {
+  for (let i = 0; i < attempts; i += 1) {
+    const sub = await getSubscription(env, userId);
+    if (sub?.status === "active") return sub;
+    if (i < attempts - 1) {
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+  return getSubscription(env, userId);
+}
+
 function clientButtonEmoji(client: VpnClientId): string {
   const map: Record<VpnClientId, string> = {
     happ: "🚀",
@@ -525,11 +560,12 @@ async function activateTrial(
   const TRIAL_MS = trialDurationMs(env);
   const expiryMs = Date.now() + TRIAL_MS;
 
-  try {
-    let sub = await getSubscription(env, claimed.id);
+  await showConnectOsMenu(token, chatId, messageId);
 
+  try {
+    const sub = await getSubscription(env, claimed.id);
     const xui = new XuiApi(env);
-    await xui.provisionUser(env, {
+    const provision = await xui.provisionUser(env, {
       userId: claimed.id,
       username: claimed.username ?? tg.username ?? null,
       displayName: claimed.display_name,
@@ -539,25 +575,7 @@ async function activateTrial(
       dbSubscription: sub,
     });
 
-    let panelSubId = await resolvePanelSubId(env, claimed, tg);
-    sub = await getSubscription(env, claimed.id);
-
-    if (!panelSubId && sub?.xray_sub_id?.trim() && sub?.xray_uuid?.trim()) {
-      panelSubId = sub.xray_sub_id.trim();
-    }
-
-    if (!panelSubId || !sub?.xray_sub_id || !sub?.xray_uuid) {
-      throw new Error(
-        tester
-          ? "клиент не подготовлен — подождите 1–2 минуты и нажмите «Пробный период» снова"
-          : "клиент не подготовлен — нажмите /start ещё раз через 1–2 минуты"
-      );
-    }
-
-    const subscriptionUrl =
-      sub.subscription_url || buildSubscriptionUrl(env, sub.xray_sub_id);
-
-    await patchSubscription(env, claimed.id, {
+    await persistProvision(env, claimed.id, provision, {
       status: "active",
       plan_type: "basic",
       plan_label: isTestMode(env)
@@ -570,35 +588,18 @@ async function activateTrial(
       expiry_warned_at: null,
       is_trial: true,
       extra_devices: 0,
-      client_email: String(tg.id),
-      xray_sub_id: sub.xray_sub_id,
-      xray_uuid: sub.xray_uuid,
-      subscription_url: subscriptionUrl,
     });
     await syncPanelDeviceLimit(env, claimed.id);
-
-    const text = "Выберите ОС:";
-    const markup = connectOsKeyboard();
-    if (messageId) {
-      await editMessage(token, chatId, messageId, text, markup);
-    } else {
-      await sendMessage(token, chatId, text, markup);
-    }
   } catch (error) {
     if (!tester) await releaseTrialClaim(env, tg.id);
     const detail = error instanceof Error ? error.message : "unknown";
     console.error("activateTrial:", detail);
-    const provisioning =
-      detail.includes("клиент не подготовлен") ||
-      detail.includes("подождите");
     await sendMessage(
       token,
       chatId,
       tester
         ? `Тест: ошибка активации — ${detail}`
-        : provisioning
-          ? "Аккаунт ещё готовится (обычно 1–2 минуты).\n\nНажмите /start, подождите и снова «Пробный период»."
-          : "Не удалось активировать пробный период. Попробуйте позже или напишите в поддержку."
+        : "Не удалось активировать пробный период в панели. Подождите минуту и нажмите «Пробный период» снова."
     );
   }
 }
@@ -1086,7 +1087,7 @@ export async function handleClientBotUpdate(
     if (data.startsWith("c:os:")) {
       const os = data.split(":")[2];
       const user = await upsertTelegramUser(env, tg);
-      const sub = await getSubscription(env, user.id);
+      let sub = await waitForActiveSubscription(env, user.id);
       if (sub?.status !== "active") {
         await safeAnswerCallback(token, cq.id, "Сначала активируйте подписку", { showAlert: true });
         return;

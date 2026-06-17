@@ -1465,6 +1465,11 @@ export class XuiApi {
       await this.updateClient(client);
     } catch (error) {
       console.error("provisionUser update:", error);
+      if (params.expiryMs > Date.now()) {
+        throw error instanceof Error
+          ? error
+          : new Error("Не удалось обновить срок в панели");
+      }
     } finally {
       await this.forceEnableClient(params.telegramId, panelEmail);
     }

@@ -1,0 +1,28 @@
+---
+description: FIX VPN — логика клиента в 3X-UI (включение, email, срок)
+alwaysApply: true
+---
+
+# Панель 3X-UI: клиент и тумблер «Включить»
+
+## Стабильный email
+
+- Поле `email` в панели — **имя слота**: `@username-1` или `{telegramId}-1`, без суффикса срока.
+- Срок действия — только поле `expiryTime` (и колонка «Срок действия» в UI).
+- **Никогда** не добавлять `· до DD.MM.YYYY` в `email` — переименование ломает inbound и выключает тумблер.
+
+## Жизненный цикл
+
+1. **`/start`** → `ensureClientPrepared`: создать клиента **включённым** (`enable: true`), `expiryTime: 0` (без лимита до подписки).
+2. **Пробный / оплата** → `provisionTrial` / `provisionUser`: обновить `expiryTime`, **сохранить тот же email**, `forceEnableClient` после `updateClient`.
+3. **Истечение** → `expireClientAccess`: `expiryTime` в прошлое + `enable: false`, без `forceEnableClient`.
+
+## Обязательные вызовы
+
+- Активная подписка (`expiryTime === 0` или `> now`): `updateClient` принудительно ставит `enable: true`, затем `syncInboundClientFields` + `forceEnableClient`.
+- `syncPanelClientDisplayName`: переименование только с числового `{telegramId}` на `@username-1`; иначе email не менять.
+
+## Проверка
+
+- После `/start` и после «Пробный период» тумблер в панели **включён**, VPN даёт интернет.
+- После cron-истечения тумблер **выключен**, интернет обрывается.

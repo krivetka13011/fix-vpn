@@ -3,8 +3,6 @@ export function canonicalClientKey(telegramId: number): string {
   return String(telegramId);
 }
 
-import { formatMskShortDateTime } from "./datetime-msk";
-
 /** Имя слота устройства в панели: @username-1, @username-2 … */
 export function panelDeviceSlotLabel(
   username: string | null | undefined,
@@ -21,25 +19,16 @@ export function panelDisplayLabel(
   username: string | null | undefined,
   displayName: string | null | undefined,
   telegramId: number,
-  options?: { expiryMs?: number; slot?: number }
+  options?: { slot?: number }
 ): string {
   const slot = options?.slot ?? 1;
-  let base: string;
   if (slot > 0) {
-    base = panelDeviceSlotLabel(username, telegramId, slot);
-  } else {
-    const handle = username?.trim().replace(/^@+/, "");
-    if (handle) base = `@${handle}`;
-    else {
-      const name = displayName?.trim().replace(/\s+/g, " ").slice(0, 48);
-      base = name ? `${name} · ${telegramId}` : String(telegramId);
-    }
+    return panelDeviceSlotLabel(username, telegramId, slot);
   }
-
-  if (options?.expiryMs && options.expiryMs > Date.now()) {
-    return `${base} · до ${formatMskShortDateTime(options.expiryMs)}`;
-  }
-  return base;
+  const handle = username?.trim().replace(/^@+/, "");
+  if (handle) return `@${handle}`;
+  const name = displayName?.trim().replace(/\s+/g, " ").slice(0, 48);
+  return name ? `${name} · ${telegramId}` : String(telegramId);
 }
 
 export function deviceSlotDisplayName(

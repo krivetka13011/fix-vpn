@@ -472,22 +472,28 @@ export class XuiApi {
     const record = await this.fetchClientRecord(panel.email);
     if (!record) return panel.email;
 
-    const desired = panelDisplayLabel(username, displayName, telegramId, {
-      expiryMs: expiryMs && expiryMs > Date.now() ? expiryMs : undefined,
+    const desiredLabel = panelDisplayLabel(username, displayName, telegramId, {
       slot: 1,
     });
+    const panelEmail = record.email.trim() || panel.email;
+    const numericKey = String(telegramId);
+    const targetEmail =
+      panelEmail === numericKey && desiredLabel !== numericKey
+        ? desiredLabel
+        : panelEmail;
 
     const effectiveExpiry =
       expiryMs && expiryMs > 0 ? expiryMs : record.expiryTime;
     const effectiveLimit = limitIp ?? record.limitIp;
+    const active = effectiveExpiry === 0 || effectiveExpiry > Date.now();
 
     const client = this.buildClient(
-      desired,
+      targetEmail,
       panel.subId,
       telegramId,
       effectiveExpiry,
       record.totalGB,
-      true,
+      active,
       panel.primaryUuid,
       effectiveLimit
     );
@@ -500,18 +506,20 @@ export class XuiApi {
           body: JSON.stringify({
             email: panel.email,
             inboundIds: this.inboundIds,
-            client: this.toPanelClientPayload(client),
+            client: this.panelClientBody({ ...client, enable: active }),
           }),
         }
       );
       await this.parseResponse(response, "syncPanelClientDisplayName");
       this.invalidateScan();
-      await this.syncInboundEnableFlags(telegramId, desired);
-      return desired;
     } catch (error) {
       console.error("syncPanelClientDisplayName:", error);
-      return panel.email;
     }
+
+    if (active) {
+      await this.forceEnableClient(telegramId, targetEmail);
+    }
+    return targetEmail;
   }
 
   buildSubscriptionUrl(env: BotEnv, subId: string): string {
@@ -1040,6 +1048,12 @@ export class XuiApi {
         }
       : client;
 
+    const active =
+      merged.expiryTime === 0 || merged.expiryTime > Date.now();
+    if (active) {
+      merged.enable = true;
+    }
+
     const response = await this.request(
       `/panel/api/clients/update/${encodeURIComponent(merged.email)}`,
       {
@@ -1058,13 +1072,13 @@ export class XuiApi {
     if (tgId) {
       await this.syncInboundClientFields(tgId, merged.email, (row) => {
         row.expiryTime = merged.expiryTime;
-        row.enable = merged.enable !== false;
+        row.enable = active;
         row.limitIp = merged.limitIp;
         if (merged.subId) row.subId = merged.subId;
         if (!row.id && merged.id) row.id = merged.id;
       });
-      if (merged.enable !== false) {
-        await this.syncInboundEnableFlags(tgId, merged.email);
+      if (active) {
+        await this.forceEnableClient(tgId, merged.email);
       }
     }
   }
@@ -1598,6 +1612,7 @@ export class XuiApi {
           limitIp,
           params.expiryMs
         );
+        await this.forceEnableClient(params.telegramId, panelEmail);
         return this.toProvisionResult(env, dbKey, subId, primaryUuid);
       }
     }

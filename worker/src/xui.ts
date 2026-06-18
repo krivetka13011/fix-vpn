@@ -454,20 +454,25 @@ export class XuiApi {
     try {
       let panel = await this.resolvePanelClientForTelegram(telegramId, db);
 
-      if (!panel && lockedSubId && lockedUuid) {
+      if (!panel && lockedSubId) {
         await this.addClientIfMissing(
           email,
           lockedSubId,
           telegramId,
           0,
           0,
-          lockedUuid
+          lockedUuid || undefined,
+          1,
+          db?.status === "active"
         );
         this.invalidateScan();
         panel = await this.resolvePanelClientForTelegram(telegramId, db);
       }
 
       if (!panel?.subId?.trim() || !panel.primaryUuid) {
+        if (lockedSubId && !lockedUuid) {
+          throw new Error("клиент в панели не найден после восстановления");
+        }
         return dbFallback();
       }
 

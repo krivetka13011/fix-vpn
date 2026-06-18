@@ -42,6 +42,9 @@ import { DeviceResetCooldownError, DeviceResetPanelError } from "./device-reset"
 import { approvePaidTransaction } from "./approve-transaction";
 import { isTestMode } from "./test-mode";
 import {
+  reconcilePlategaFromReturnUrl,
+} from "./platega-reconcile";
+import {
   cardlinkResultHtml,
   isCardlinkConfigured,
   parseCardlinkPostback,
@@ -56,6 +59,7 @@ import {
   plategaResultHtml,
   verifyPlategaCallback,
 } from "./platega";
+import { ensureActiveSubscriptionPanel } from "./subscription-activate";
 import { XuiApi } from "./xui";
 import {
   buildMiniappConnectUrl,
@@ -264,7 +268,11 @@ export async function handleApiRequest(
       console.error("subscription cache:", error);
     }
 
-    const live = await fetchPanelSubscriptionBody(env, subId);
+    let live = await fetchPanelSubscriptionBody(env, subId);
+    if (!live?.body) {
+      await ensureActiveSubscriptionPanel(env, dbSub);
+      live = await fetchPanelSubscriptionBody(env, subId);
+    }
     if (live?.body) {
       const headers = mergeHappSubscriptionHeaders(
         {
@@ -308,6 +316,22 @@ export async function handleApiRequest(
         ) {
           upstreamRes = attempt;
           break;
+        }
+      }
+      if (!upstreamRes) {
+        await ensureActiveSubscriptionPanel(env, dbSub);
+        for (const upstreamBase of upstreamBases) {
+          const upstream = `${upstreamBase}${subPath}/${encodedSubId}`;
+          const attempt = await panelFetch(env, upstream);
+          const preview = await attempt.clone().text();
+          if (
+            attempt.ok &&
+            preview.trim().length > 20 &&
+            !isPanelErrorBody(preview, attempt.status)
+          ) {
+            upstreamRes = attempt;
+            break;
+          }
         }
       }
       if (!upstreamRes) {
@@ -364,7 +388,25 @@ export async function handleApiRequest(
 
     const live = await fetchPanelJsonSubscription(env, subId);
     if (!live?.body) {
-      return new Response("json subscription unavailable", { status: 503, headers: CORS });
+      await ensureActiveSubscriptionPanel(env, dbSub);
+      const retried = await fetchPanelJsonSubscription(env, subId);
+      if (!retried?.body) {
+        return new Response("json subscription unavailable", { status: 503, headers: CORS });
+      }
+      const headers = mergeHappSubscriptionHeaders(
+        {
+          "Content-Type": "text/plain; charset=utf-8",
+          "Cache-Control": "no-store",
+          ...retried.headers,
+          ...CORS,
+          "Content-Disposition": `attachment; filename=${subId}`,
+        },
+        env
+      );
+      const userinfo = subscriptionUserinfoHeader(dbSub.ends_at ?? null);
+      if (userinfo) headers["Subscription-Userinfo"] = userinfo;
+      const wireBody = encodeJsonSubscriptionBodyForHapp(retried.body);
+      return new Response(wireBody, { status: 200, headers });
     }
 
     const headers = mergeHappSubscriptionHeaders(
@@ -558,9 +600,14 @@ export async function handleApiRequest(
   }
 
   if (path === "/api/payment/platega/success" && (request.method === "GET" || request.method === "POST")) {
+    const reconcile = reconcilePlategaFromReturnUrl(env, request).catch((error) =>
+      console.error("platega success reconcile:", error)
+    );
+    if (ctx) ctx.waitUntil(reconcile);
+    else await reconcile;
     return plategaResultHtml(
       "Оплата принята",
-      "Спасибо! Вернитесь в Telegram — бот пришлёт подтверждение в течение минуты."
+      "Спасибо! Подписка активируется автоматически. Вернитесь в Telegram — бот пришлёт подтверждение."
     );
   }
 
@@ -590,10 +637,19 @@ export async function handleApiRequest(
       if (!txn) txn = await getTransactionByPayloadId(env, callback.id);
 
       if (callback.status === "CONFIRMED" && txn) {
-        const result = await approvePaidTransaction(env, txn.id);
-        if (!result.ok) {
-          console.error("platega approve:", result.message, callback.id);
-        }
+        // #region agent log
+        const { dbg381494 } = await import("./debug-session-log");
+        await dbg381494(env, "A", "api-handler.ts:webhook", "confirmed_callback", {
+          txnSuffix: txn.id.slice(-8),
+        });
+        // #endregion
+        const approve = approvePaidTransaction(env, txn.id).then((result) => {
+          if (!result.ok) {
+            console.error("platega approve:", result.message, callback.id);
+          }
+        });
+        if (ctx) ctx.waitUntil(approve);
+        else await approve;
       } else if (callback.status === "CANCELED" && txn) {
         const { patchTransaction } = await import("./repository");
         await patchTransaction(env, txn.id, { status: "rejected" });

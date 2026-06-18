@@ -477,6 +477,41 @@ export async function getTransactionByPlategaId(
   return row ? mapTransactionRow(row) : null;
 }
 
+export async function listPendingPlategaTransactions(
+  env: StorageEnv,
+  limit = 25
+): Promise<TransactionRow[]> {
+  const rows = await d1All<Record<string, unknown>>(
+    env.DB,
+    `SELECT * FROM transactions
+     WHERE status = 'pending'
+       AND platega_transaction_id IS NOT NULL
+       AND TRIM(platega_transaction_id) != ''
+     ORDER BY created_at ASC
+     LIMIT ?`,
+    limit
+  );
+  return rows.map(mapTransactionRow);
+}
+
+export async function listPendingPlategaTransactionsForUser(
+  env: StorageEnv,
+  userId: string
+): Promise<TransactionRow[]> {
+  const rows = await d1All<Record<string, unknown>>(
+    env.DB,
+    `SELECT * FROM transactions
+     WHERE user_id = ?
+       AND status = 'pending'
+       AND platega_transaction_id IS NOT NULL
+       AND TRIM(platega_transaction_id) != ''
+     ORDER BY created_at DESC
+     LIMIT 5`,
+    userId
+  );
+  return rows.map(mapTransactionRow);
+}
+
 export async function getTransactionByPayloadId(
   env: StorageEnv,
   payloadId: string

@@ -8,6 +8,7 @@ import type { BotEnv } from "./env";
 import { withTimeout } from "./async-timeout";
 import {
   getSubscription,
+  getUserById,
   kvClearSubscriptionPayloadCache,
   kvGetSubscriptionPayloadCache,
   kvSetSubscriptionPayloadCache,
@@ -218,4 +219,48 @@ export async function ensurePanelClientRecord(
   }
 
   return subId;
+}
+
+/** Восстанавливает клиента в панели для активной подписки (после сброса устройства и т.п.). */
+export async function ensureActiveSubscriptionPanel(
+  env: BotEnv,
+  dbSub: DbSubscription
+): Promise<boolean> {
+  if (dbSub.status !== "active") return false;
+
+  const subId = dbSub.xray_sub_id?.trim();
+  if (subId) {
+    const live = await fetchPanelSubscriptionBody(env, subId);
+    if (live?.body) return true;
+  }
+
+  const user = await getUserById(env, dbSub.user_id);
+  if (!user) return false;
+
+  // #region agent log
+  await dbg381494(env, "C", "subscription-activate.ts", "reprovision_panel", {
+    hasSubId: Boolean(subId),
+    hasUuid: Boolean(dbSub.xray_uuid?.trim()),
+  });
+  // #endregion
+
+  try {
+    await ensurePanelClientRecord(env, {
+      userId: user.id,
+      telegramId: user.telegram_id,
+      username: user.username,
+      displayName: user.display_name,
+      dbSubscription: dbSub,
+      enableClient: true,
+    });
+    const refreshed = await getSubscription(env, user.id);
+    const newSubId = refreshed?.xray_sub_id?.trim();
+    if (newSubId) {
+      await refreshSubscriptionCache(env, user.id, newSubId);
+    }
+    return true;
+  } catch (error) {
+    console.error("ensureActiveSubscriptionPanel:", error);
+    return false;
+  }
 }

@@ -44,6 +44,7 @@ import {
   tariffsText,
 } from "./checkout-ui";
 import { resolvePaymentBackend } from "../payment-routing";
+import { runUserPendingPlategaReconcile } from "../platega-reconcile";
 import { PRIVACY_POLICY_URL, SUPPORT_TELEGRAM_USERNAME, TERMS_OF_SERVICE_URL } from "../catalog";
 import { managerTxnKeyboard, notifyManager } from "./manager";
 import { handleManagerPartnerCallback } from "./partner-bot";
@@ -779,6 +780,10 @@ async function handleClientBotUpdateInner(
     }
     if (data === "c:menu") {
       await safeAnswerCallback(token, cq.id);
+      const user = await upsertTelegramUser(env, tg);
+      void runUserPendingPlategaReconcile(env, user.id).catch((error) =>
+        console.error("menu platega reconcile:", error)
+      );
       await showMainMenu(env, chatId, tg, messageId);
       return;
     }
@@ -890,6 +895,16 @@ async function handleClientBotUpdateInner(
       const parsed = parseCheckoutPayData(data);
       if (!parsed) return;
       const { method, plan, months, promo, totalDevices } = parsed;
+      if (method === "card") {
+        await editMessage(
+          token,
+          chatId,
+          messageId,
+          "Оплата картой недоступна. Выберите СБП или USDT.",
+          paymentMethodsKeyboard(plan, months, totalDevices, promo)
+        );
+        return;
+      }
       const extraDevices = plan === "personal" ? 0 : extraDevicesForTotal(totalDevices);
       const price = calcCheckoutPrice(plan, months, extraDevices, promo, env);
       const user = await upsertTelegramUser(env, tg);
@@ -1146,6 +1161,9 @@ async function handleClientBotUpdateInner(
       } else {
         user = await upsertTelegramUser(env, tg);
       }
+      void runUserPendingPlategaReconcile(env, user.id).catch((error) =>
+        console.error("start platega reconcile:", error)
+      );
       await showMainMenu(env, chatId, tg);
       const sub = await getSubscription(env, user.id);
       const hasPanelBinding = Boolean(

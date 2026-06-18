@@ -40,7 +40,6 @@ export function isPlategaConfigured(env: BotEnv): boolean {
 
 export function plategaPaymentMethod(method: string): number | undefined {
   if (method === "sbp") return 2;
-  if (method === "card") return 11;
   if (method === "crypto_usdt") return 13;
   return undefined;
 }
@@ -180,8 +179,7 @@ export async function createPlategaPayment(
     });
   } catch (v1Error) {
     const status = v1Error instanceof PlategaApiError ? v1Error.status : 0;
-    const shouldTryV2 = status === 400 || input.method === "card";
-    if (!shouldTryV2) throw v1Error;
+    if (status !== 400) throw v1Error;
     payload = await postPlatega(env, "/v2/transaction/process", baseBody);
   }
 
@@ -226,6 +224,24 @@ export async function getPlategaBalance(
   if (!response.ok) return null;
   const rows = (await response.json()) as Array<{ amount: number; currency: string }>;
   return Array.isArray(rows) ? rows : null;
+}
+
+export async function getPlategaTransactionStatus(
+  env: BotEnv,
+  transactionId: string
+): Promise<string> {
+  const id = transactionId.trim();
+  if (!isPlategaConfigured(env) || !id) return "";
+  try {
+    const response = await fetch(`${PLATEGA_BASE}/transaction/${encodeURIComponent(id)}`, {
+      headers: plategaHeaders(env),
+    });
+    const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!response.ok) return "";
+    return String(payload.status || "").toUpperCase();
+  } catch {
+    return "";
+  }
 }
 
 export function plategaResultHtml(title: string, body: string): Response {

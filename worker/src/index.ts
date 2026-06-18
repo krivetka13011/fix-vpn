@@ -5,6 +5,7 @@ import {
 } from "./connect-links";
 import { subscriptionPublicHost, workerPaused } from "./env";
 import { runSubscriptionExpiryJobs } from "./subscription-expiry";
+import { runPendingPlategaReconcile } from "./platega-reconcile";
 
 export interface Env extends ApiEnv {
   ASSETS: Fetcher;
@@ -77,8 +78,11 @@ export default {
   ): Promise<void> {
     if (workerPaused(env)) return;
     ctx.waitUntil(
-      runSubscriptionExpiryJobs(env).catch((error) => {
-        console.error("scheduled expiry:", error);
+      Promise.all([
+        runSubscriptionExpiryJobs(env),
+        runPendingPlategaReconcile(env),
+      ]).catch((error) => {
+        console.error("scheduled jobs:", error);
       })
     );
   },

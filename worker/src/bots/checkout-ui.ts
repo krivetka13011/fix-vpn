@@ -154,7 +154,6 @@ export function paymentMethodsKeyboard(
   return {
     inline_keyboard: [
       [{ text: "📱 СБП", callback_data: `c:pay:sbp:${plan}:${months}:${promo}:${totalDevices}` }],
-      [{ text: "💳 Карта", callback_data: `c:pay:card:${plan}:${months}:${promo}:${totalDevices}` }],
       [{ text: "💎 USDT", callback_data: `c:pay:crypto_usdt:${plan}:${months}:${promo}:${totalDevices}` }],
       [{ text: "🎟 Ввести промокод", callback_data: `c:promo:${plan}:${months}:${totalDevices}` }],
       [{ text: "◀️ Назад", callback_data: back }],

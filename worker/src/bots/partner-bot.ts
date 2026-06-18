@@ -88,13 +88,7 @@ function partnerMenuKeyboard(env: BotEnv, partnerId: number) {
       [{ text: "📊 Статистика и баланс", callback_data: "p:stats" }],
       [{ text: "💳 Мои реквизиты", callback_data: "p:reqs" }],
       [{ text: "🎟 Запросить промокод", callback_data: "p:promo" }],
-      [{ text: "🏧 Вывести средства", callback_data: "p:withdraw" }],
-      [
-        {
-          text: "📚 База знаний",
-          url: "https://docs.google.com/document/d/1zME5hfnSUlIpzpcyqOroX1HrwCfOceDMbP6NZFW9koI/edit",
-        },
-      ],
+      [{ text: "🏧 Вывести деньги", callback_data: "p:withdraw" }],
     ],
   };
 }
@@ -302,7 +296,7 @@ export async function handlePartnerBotUpdate(
       if (!partner) return;
       await editMessage(token, chatId, messageId, await statsText(env, partner), {
         inline_keyboard: [
-          [{ text: "🏧 Вывести бабки", callback_data: "p:withdraw" }],
+          [{ text: "🏧 Вывести деньги", callback_data: "p:withdraw" }],
           backRow(),
         ],
       });

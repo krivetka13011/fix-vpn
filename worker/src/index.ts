@@ -3,11 +3,28 @@ import {
   isShortSubscriptionPath,
   shortSubscriptionPathToSub,
 } from "./connect-links";
-import { subscriptionPublicHost } from "./env";
+import { subscriptionPublicHost, workerPaused } from "./env";
 import { runSubscriptionExpiryJobs } from "./subscription-expiry";
 
 export interface Env extends ApiEnv {
   ASSETS: Fetcher;
+}
+
+function pausedResponse(path: string): Response {
+  if (path === "/api/health" || path === "/health") {
+    return Response.json(
+      { ok: false, paused: true, message: "FIX VPN temporarily paused" },
+      { status: 503, headers: { "Cache-Control": "no-store" } }
+    );
+  }
+  return new Response("FIX VPN temporarily paused", {
+    status: 503,
+    headers: {
+      "Content-Type": "text/plain; charset=utf-8",
+      "Retry-After": "3600",
+      "Cache-Control": "no-store",
+    },
+  });
 }
 
 function withAssetCors(request: Request, response: Response): Response {
@@ -42,6 +59,10 @@ export default {
       path = shortSubscriptionPathToSub(path);
     }
 
+    if (workerPaused(env)) {
+      return pausedResponse(path);
+    }
+
     if (path === "/health" || path.startsWith("/api/") || path.startsWith("/sub/") || path.startsWith("/json/")) {
       return handleApiRequest(request, env, path, ctx);
     }
@@ -54,6 +75,7 @@ export default {
     env: Env,
     ctx: ExecutionContext
   ): Promise<void> {
+    if (workerPaused(env)) return;
     ctx.waitUntil(
       runSubscriptionExpiryJobs(env).catch((error) => {
         console.error("scheduled expiry:", error);

@@ -60,12 +60,19 @@ export interface BotEnv extends StorageEnv {
   TRIAL_DURATION_MINUTES?: string;
   TEST_CHECKOUT_PRICE_RUB?: string;
   TEST_SUBSCRIPTION_MINUTES?: string;
+  /** "1" = временная пауза: 503 на все запросы, cron отключён */
+  WORKER_PAUSED?: string;
 }
 
 export const XUI_INBOUND_IDS_DEFAULT = [19, 20, 21, 24];
 
 export function clientBotToken(env: BotEnv): string | undefined {
   return env.CLIENT_BOT_TOKEN || env.TELEGRAM_BOT_TOKEN;
+}
+
+export function workerPaused(env: BotEnv): boolean {
+  const raw = env.WORKER_PAUSED?.trim().toLowerCase();
+  return raw === "1" || raw === "true" || raw === "yes";
 }
 
 export function partnerBotToken(env: BotEnv): string | undefined {

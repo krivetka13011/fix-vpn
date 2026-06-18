@@ -17,8 +17,6 @@ import {
 } from "./repository";
 import type { DbSubscription } from "./types";
 import { XuiApi, type ProvisionResult } from "./xui";
-import { dbg381494 } from "./debug-session-log";
-
 export async function persistPanelProvision(
   env: BotEnv,
   userId: string,
@@ -94,12 +92,6 @@ export async function activateTrialSubscription(
   params: ActivateTrialParams
 ): Promise<string> {
   const xui = new XuiApi(env);
-  // #region agent log
-  await dbg381494(env, "B", "subscription-activate.ts", "provision_trial_begin", {
-    telegramId: params.telegramId,
-    hasDbSubId: Boolean(params.dbSubscription?.xray_sub_id?.trim()),
-  });
-  // #endregion
   const provision = await withTimeout(
     xui.provisionTrial(env, {
       userId: params.userId,
@@ -120,13 +112,6 @@ export async function activateTrialSubscription(
     provision,
     params.subscriptionFields
   );
-  // #region agent log
-  await dbg381494(env, "E", "subscription-activate.ts", "trial_persisted", {
-    telegramId: params.telegramId,
-    subIdLen: subId.length,
-    emailLen: provision.email.length,
-  });
-  // #endregion
   void refreshSubscriptionCache(env, params.userId, subId).catch((error) =>
     console.error("refreshSubscriptionCache:", error)
   );
@@ -236,13 +221,6 @@ export async function ensureActiveSubscriptionPanel(
 
   const user = await getUserById(env, dbSub.user_id);
   if (!user) return false;
-
-  // #region agent log
-  await dbg381494(env, "C", "subscription-activate.ts", "reprovision_panel", {
-    hasSubId: Boolean(subId),
-    hasUuid: Boolean(dbSub.xray_uuid?.trim()),
-  });
-  // #endregion
 
   try {
     await ensurePanelClientRecord(env, {

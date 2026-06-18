@@ -74,7 +74,6 @@ import {
   activateTrialSubscription,
   ensurePanelClientRecord,
 } from "../subscription-activate";
-import { dbg381494 } from "../debug-session-log";
 import {
   formatSubscriptionDateFields,
   isTestMode,
@@ -500,16 +499,6 @@ async function activateTrial(
   const failText =
     "Не удалось активировать пробный период в панели. Подождите минуту и нажмите «Пробный период» снова.";
 
-  // #region agent log
-  await dbg381494(env, "A", "client-bot.ts:activateTrial", "trial_start", {
-    telegramId: tg.id,
-    hasUsedTrial: user.has_used_trial,
-    subStatus: existingSub?.status ?? null,
-    hasSubId: Boolean(existingSub?.xray_sub_id?.trim()),
-    hasUuid: Boolean(existingSub?.xray_uuid?.trim()),
-  });
-  // #endregion
-
   try {
     await activateTrialSubscription(env, {
       userId: user.id,
@@ -532,21 +521,10 @@ async function activateTrial(
         extra_devices: 0,
       },
     });
-    // #region agent log
-    await dbg381494(env, "C", "client-bot.ts:activateTrial", "trial_success", {
-      telegramId: tg.id,
-    });
-    // #endregion
     await showConnectOsMenu(token, chatId, messageId);
   } catch (error) {
     const detail = error instanceof Error ? error.message : "unknown";
     console.error("activateTrial:", detail);
-    // #region agent log
-    await dbg381494(env, "B", "client-bot.ts:activateTrial", "trial_error", {
-      telegramId: tg.id,
-      detail,
-    });
-    // #endregion
 
     const subAfter = await getSubscription(env, user.id);
     if (subAfter?.status === "active" && subAfter.is_trial) {
@@ -792,12 +770,6 @@ async function handleClientBotUpdateInner(
         await safeAnswerCallback(token, cq.id);
         return;
       }
-      // #region agent log
-      await dbg381494(env, "A", "client-bot.ts:callback", "trial_callback", {
-        telegramId: tg.id,
-        messageId,
-      });
-      // #endregion
       await safeAnswerCallback(token, cq.id);
       await activateTrial(env, tg, chatId, messageId);
       return;
@@ -1179,21 +1151,7 @@ async function handleClientBotUpdateInner(
             dbSubscription: sub,
             enableClient: true,
           });
-          // #region agent log
-          await dbg381494(env, "D", "client-bot.ts:/start", "start_panel_ok", {
-            telegramId: tg.id,
-            userId: user.id,
-          });
-          // #endregion
         } catch (panelError) {
-          const detail =
-            panelError instanceof Error ? panelError.message : String(panelError);
-          // #region agent log
-          await dbg381494(env, "D", "client-bot.ts:/start", "start_panel_fail", {
-            telegramId: tg.id,
-            detail,
-          });
-          // #endregion
           throw panelError;
         }
       } else if (sub?.status === "active") {

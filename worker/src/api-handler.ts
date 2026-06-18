@@ -37,7 +37,6 @@ import { isPanelErrorBody, panelFetch } from "./panel-fetch";
 import { handleClientBotUpdate } from "./bots/client-bot";
 import { handlePartnerBotUpdate } from "./bots/partner-bot";
 import { beginE2eTrace, endE2eTrace } from "./e2e-trace";
-import { readDbg381494 } from "./debug-session-log";
 import { DeviceResetCooldownError, DeviceResetPanelError } from "./device-reset";
 import { approvePaidTransaction } from "./approve-transaction";
 import { isTestMode } from "./test-mode";
@@ -458,16 +457,6 @@ export async function handleApiRequest(
     });
   }
 
-  if (path === "/api/debug/logs/381494" && request.method === "GET") {
-    const e2eSecret = env.E2E_TRACE_SECRET?.trim();
-    const e2eHeader = request.headers.get("X-Fix-Vpn-E2E")?.trim();
-    if (!e2eSecret || e2eHeader !== e2eSecret) {
-      return json({ error: "forbidden" }, 403);
-    }
-    const entries = await readDbg381494(env);
-    return json({ sessionId: "381494", entries });
-  }
-
   if (path === "/api/health" && request.method === "GET") {
     let clientBotOk = false;
     let partnerBotOk = false;
@@ -637,12 +626,6 @@ export async function handleApiRequest(
       if (!txn) txn = await getTransactionByPayloadId(env, callback.id);
 
       if (callback.status === "CONFIRMED" && txn) {
-        // #region agent log
-        const { dbg381494 } = await import("./debug-session-log");
-        await dbg381494(env, "A", "api-handler.ts:webhook", "confirmed_callback", {
-          txnSuffix: txn.id.slice(-8),
-        });
-        // #endregion
         const approve = approvePaidTransaction(env, txn.id).then((result) => {
           if (!result.ok) {
             console.error("platega approve:", result.message, callback.id);

@@ -1,5 +1,4 @@
 import { approvePaidTransaction } from "./approve-transaction";
-import { dbg381494 } from "./debug-session-log";
 import type { BotEnv } from "./env";
 import { getPlategaTransactionStatus, isPlategaConfigured } from "./platega";
 import {
@@ -16,12 +15,6 @@ export async function reconcilePlategaTransaction(
   plategaId: string
 ): Promise<{ ok: boolean; status: string }> {
   const status = await getPlategaTransactionStatus(env, plategaId);
-  // #region agent log
-  await dbg381494(env, "A", "platega-reconcile.ts", "poll_status", {
-    txnSuffix: txnId.slice(-8),
-    status,
-  });
-  // #endregion
   if (status === "CONFIRMED") {
     const result = await approvePaidTransaction(env, txnId);
     return { ok: result.ok, status };
@@ -81,10 +74,5 @@ export async function reconcilePlategaFromReturnUrl(
 
   const id = txn.platega_transaction_id?.trim() || plategaId;
   if (!id) return;
-  // #region agent log
-  await dbg381494(env, "B", "platega-reconcile.ts", "return_url_reconcile", {
-    txnSuffix: txn.id.slice(-8),
-  });
-  // #endregion
   await reconcilePlategaTransaction(env, txn.id, id);
 }

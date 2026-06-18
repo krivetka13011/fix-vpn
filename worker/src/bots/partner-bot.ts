@@ -120,7 +120,7 @@ function requisitesText(
   if (!reqs.length) {
     return (
       `💳 <b>Мои реквизиты</b>\n\n` +
-      `Укажи СБП или карту — сюда уйдут выплаты через Cardlink 🏧`
+      `Укажи СБП или карту — сюда уйдут выплаты 🏧`
     );
   }
   const lines = reqs
@@ -132,7 +132,7 @@ function requisitesText(
       return `${star}${icon} <b>${row.method.toUpperCase()}</b>${bankSuffix}: <code>${row.details}</code>`;
     })
     .join("\n");
-  return `💳 <b>Мои реквизиты</b>\n\n${lines}\n\n⭐ — куда уходит вывод через Cardlink`;
+  return `💳 <b>Мои реквизиты</b>\n\n${lines}\n\n⭐ — основной способ для вывода`;
 }
 
 function requisitesKeyboard(
@@ -319,7 +319,7 @@ export async function handlePartnerBotUpdate(
           chatId,
           messageId,
           `✍️ <b>СБП</b>\n\n` +
-            `Отправь номер телефона, привязанный к СБП — на него уйдёт выплата через Cardlink 📱`,
+            `Отправь номер телефона, привязанный к СБП — на него уйдёт выплата 📱`,
           cancelKeyboard("p:reqs")
         );
       } else {
@@ -330,7 +330,7 @@ export async function handlePartnerBotUpdate(
           messageId,
           `✍️ <b>Карта</b>\n\n` +
             `Отправь номер карты одним сообщением.\n` +
-            `Выплата пойдёт через Cardlink на эту карту 💳\n\n` +
+            `Выплата пойдёт на эту карту 💳\n\n` +
             `⚠️ Банк может взять свою комиссию — мы со своей стороны не дерём.`,
           cancelKeyboard("p:reqs")
         );
@@ -356,7 +356,7 @@ export async function handlePartnerBotUpdate(
         messageId,
         `✅ <b>СБП сохранён</b>\n\n` +
           `📱 <code>${phone}</code>${bank ? `\n🏦 ${bank}` : ""}\n\n` +
-          `Выплаты на эти реквизиты идут через Cardlink.`,
+          `Реквизит сохранён — выплаты пойдут на него.`,
         {
           inline_keyboard: [
             [{ text: "💳 Мои реквизиты", callback_data: "p:reqs" }],
@@ -422,7 +422,7 @@ export async function handlePartnerBotUpdate(
           (defaultReq.method === "sbp" && sbpBankLabel(defaultReq.sbp_bank_id)
             ? `🏦 ${sbpBankLabel(defaultReq.sbp_bank_id)}\n`
             : "") +
-          `\nВыплата на привязанные реквизиты через Cardlink.\n\nВыводим всё или свою сумму?`,
+          `\nВыплата на привязанные реквизиты.\n\nВыводим всё или свою сумму?`,
         {
           inline_keyboard: [
             [{ text: "💸 Вывести всё", callback_data: "p:wdall" }],
@@ -453,8 +453,8 @@ export async function handlePartnerBotUpdate(
       });
       const note =
         result.mode === "cardlink"
-          ? `Отправлено на ваши реквизиты через Cardlink.`
-          : `В очереди — выплата через Cardlink, как только поступят средства.`;
+          ? `Средства отправлены на ваши реквизиты.`
+          : `Заявка в очереди — выплата при поступлении средств.`;
       await editMessage(
         token,
         chatId,
@@ -574,7 +574,7 @@ export async function handlePartnerBotUpdate(
       token,
       chatId,
       `✅ <b>Карта сохранена</b>\n\n` +
-        `Выплаты на эти реквизиты идут через Cardlink 💳`,
+        `Выплаты пойдут на эти реквизиты 💳`,
       {
         inline_keyboard: [
           [{ text: "💳 Мои реквизиты", callback_data: "p:reqs" }],
@@ -636,8 +636,8 @@ export async function handlePartnerBotUpdate(
     await clearSession(env, tg.id, "partner");
     const note =
       result.mode === "cardlink"
-        ? `Средства отправлены на ваши реквизиты через Cardlink.`
-        : `В очереди — выплата через Cardlink, как только поступят средства.`;
+        ? `Средства отправлены на ваши реквизиты.`
+        : `Заявка в очереди — выплата при поступлении средств.`;
     await sendMessage(
       token,
       chatId,

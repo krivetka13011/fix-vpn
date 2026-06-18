@@ -116,13 +116,13 @@ export async function submitPartnerWithdrawal(
       input.partnerId,
       `✅ <b>Выплата отправлена</b>\n\n` +
         `Сумма: <b>${input.amount} ₽</b>\n` +
-        `Средства уходят на ваши реквизиты через Cardlink.\n` +
+        `Средства уходят на ваши реквизиты.\n` +
         `Обычно зачисление занимает от нескольких минут до суток.`
     );
     return {
       withdrawalId: wd.id,
       mode: "cardlink",
-      message: "Выплата отправлена через Cardlink",
+      message: "Выплата отправлена на реквизиты",
     };
   }
 
@@ -147,7 +147,7 @@ export async function submitPartnerWithdrawal(
     input.partnerId,
     `⏳ <b>Заявка в очереди</b>\n\n` +
       `Сумма: <b>${input.amount} ₽</b>\n` +
-      `Выплата пойдёт на ваши реквизиты через Cardlink, как только на балансе появятся средства.`
+      `Выплата пойдёт на ваши реквизиты, как только появятся средства.`
   );
 
   return {

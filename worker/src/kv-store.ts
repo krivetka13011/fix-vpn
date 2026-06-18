@@ -78,9 +78,13 @@ export async function kvCheckRateLimit(
 ): Promise<boolean> {
   const key = rateKey(telegramId, action);
   const existing = await env.KV.get(key);
-  if (existing) return false;
-  const ttlSec = Math.max(1, Math.ceil(windowMs / 1000));
-  await env.KV.put(key, "1", { expirationTtl: Math.min(ttlSec, RATE_LIMIT_TTL_SEC) });
+  if (existing) {
+    const ts = Number(existing);
+    if (Number.isFinite(ts) && Date.now() - ts < windowMs) return false;
+  }
+  await env.KV.put(key, String(Date.now()), {
+    expirationTtl: Math.max(60, RATE_LIMIT_TTL_SEC),
+  });
   return true;
 }
 

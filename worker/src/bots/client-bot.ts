@@ -783,16 +783,16 @@ async function handleClientBotUpdateInner(
       return;
     }
     if (data === "c:trial") {
+      if (!(await checkCallbackRateLimit(env, tg.id, "trial"))) {
+        await safeAnswerCallback(token, cq.id);
+        return;
+      }
       // #region agent log
       await dbg381494(env, "A", "client-bot.ts:callback", "trial_callback", {
         telegramId: tg.id,
         messageId,
       });
       // #endregion
-      if (!(await checkCallbackRateLimit(env, tg.id, "trial"))) {
-        await safeAnswerCallback(token, cq.id);
-        return;
-      }
       await safeAnswerCallback(token, cq.id);
       await activateTrial(env, tg, chatId, messageId);
       return;

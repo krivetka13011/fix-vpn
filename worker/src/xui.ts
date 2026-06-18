@@ -1645,8 +1645,13 @@ export class XuiApi {
       limitIp
     );
     if (enableClient) {
-      await this.touchPanelClient(params.telegramId, panelEmail, { limitIp });
-      await this.forceEnableClient(params.telegramId, panelEmail);
+      const alreadyEnabled = await this.inboundClientsEnabled(
+        params.telegramId,
+        panelEmail
+      );
+      if (!alreadyEnabled) {
+        await this.forceEnableClient(params.telegramId, panelEmail);
+      }
     }
 
     return this.toProvisionResult(
@@ -1733,7 +1738,13 @@ export class XuiApi {
       limitIp,
       params.expiryMs
     );
-    await this.forceEnableClient(params.telegramId, panelEmail);
+    const alreadyEnabled = await this.inboundClientsEnabled(
+      params.telegramId,
+      panelEmail
+    );
+    if (!alreadyEnabled) {
+      await this.forceEnableClient(params.telegramId, panelEmail);
+    }
 
     return this.toProvisionResult(env, panelEmail, subId, primaryUuid);
   }

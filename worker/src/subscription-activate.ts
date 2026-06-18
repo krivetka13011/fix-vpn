@@ -195,11 +195,11 @@ export async function ensurePanelClientRecord(
     displayName: params.displayName,
     telegramId: params.telegramId,
     limitIp: panelLimitIpForSubscription(sub),
-    enableClient: params.enableClient,
+    enableClient: false,
     dbSubscription: sub,
   });
 
-  return persistPanelProvision(env, params.userId, provision, {
+  const subId = await persistPanelProvision(env, params.userId, provision, {
     status: sub?.status || "none",
     plan_type: sub?.plan_type || "basic",
     plan_label: sub?.plan_label ?? null,
@@ -208,4 +208,14 @@ export async function ensurePanelClientRecord(
     ends_at: sub?.ends_at ?? null,
     is_trial: sub?.is_trial ?? false,
   });
+
+  if (params.enableClient) {
+    try {
+      await xui.forceEnableClient(params.telegramId, provision.email);
+    } catch (error) {
+      console.error("ensurePanelClientRecord enable:", error);
+    }
+  }
+
+  return subId;
 }

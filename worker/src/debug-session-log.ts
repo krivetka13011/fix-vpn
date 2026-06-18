@@ -39,16 +39,6 @@ export async function dbg381494(
     timestamp: Date.now(),
   };
   console.error(`[DBG381494] ${JSON.stringify(entry)}`);
-  // #region agent log
-  fetch("http://127.0.0.1:7461/ingest/ee45bef0-757b-42ac-b41b-7b7017f150db", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Debug-Session-Id": SESSION,
-    },
-    body: JSON.stringify(entry),
-  }).catch(() => {});
-  // #endregion
   try {
     const kv = env.KV;
     if (!kv) return;

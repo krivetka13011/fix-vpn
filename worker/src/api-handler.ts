@@ -31,7 +31,6 @@ import {
   subscriptionClientBaseUrl,
   workerSubscriptionFetchBase,
   xuiBaseUrl,
-  happProviderId,
   healthPingPanel,
 } from "./env";
 import { isPanelErrorBody, panelFetch } from "./panel-fetch";
@@ -70,6 +69,7 @@ import {
 import {
   buildClientImportTarget,
   buildSubscriptionResponseHeaders,
+  mergeHappSubscriptionHeaders,
   encodeJsonSubscriptionBodyForHapp,
   fetchPanelJsonSubscription,
   encodeStandardSubscriptionBody,
@@ -247,16 +247,13 @@ export async function handleApiRequest(
     try {
       const cached = (await kvGetSubscriptionPayloadCache(env, dbSub.user_id))?.trim();
       if (cached && cached.length > 100) {
-        const headers: Record<string, string> = {
-          ...lockedHeaders,
-          ...buildSubscriptionResponseHeaders(env),
-        };
-        headers["hide-settings"] = "1";
-        const happPid = happProviderId(env);
-        if (happPid) headers["providerid"] = happPid;
-        headers["ping-type"] = "tcp";
-        delete headers["check-url-via-proxy"];
-        headers["Content-Disposition"] = `attachment; filename=${subId}`;
+        const headers = mergeHappSubscriptionHeaders(
+          {
+            ...lockedHeaders,
+            "Content-Disposition": `attachment; filename=${subId}`,
+          },
+          env
+        );
         const userinfo = subscriptionUserinfoHeader(dbSub.ends_at ?? null);
         if (userinfo) headers["Subscription-Userinfo"] = userinfo;
         const body = encodeStandardSubscriptionBody(normalizeSubscriptionBody(cached), env);
@@ -268,18 +265,14 @@ export async function handleApiRequest(
 
     const live = await fetchPanelSubscriptionBody(env, subId);
     if (live?.body) {
-      const headers: Record<string, string> = {
-        ...lockedHeaders,
-        ...live.headers,
-        ...buildSubscriptionResponseHeaders(env),
-      };
-      // hide-settings всегда последним — не перезаписывать панелью
-      headers["hide-settings"] = "1";
-      const happPid = happProviderId(env);
-      if (happPid) headers["providerid"] = happPid;
-      headers["ping-type"] = "tcp";
-      delete headers["check-url-via-proxy"];
-      headers["Content-Disposition"] = `attachment; filename=${subId}`;
+      const headers = mergeHappSubscriptionHeaders(
+        {
+          ...lockedHeaders,
+          ...live.headers,
+          "Content-Disposition": `attachment; filename=${subId}`,
+        },
+        env
+      );
       const userinfo = subscriptionUserinfoHeader(dbSub.ends_at ?? null);
       if (userinfo) headers["Subscription-Userinfo"] = userinfo;
       const body = encodeStandardSubscriptionBody(live.body, env);
@@ -324,11 +317,13 @@ export async function handleApiRequest(
         return new Response("subscription unavailable", { status: 503, headers: CORS });
       }
       const body = encodeStandardSubscriptionBody(normalizeSubscriptionBody(rawBody), env);
-      const headers: Record<string, string> = {
-        ...lockedHeaders,
-        "Content-Type": "application/json",
-        ...buildSubscriptionResponseHeaders(env),
-      };
+      const headers = mergeHappSubscriptionHeaders(
+        {
+          ...lockedHeaders,
+          "Content-Type": "application/json",
+        },
+        env
+      );
       const userinfo = subscriptionUserinfoHeader(dbSub.ends_at ?? null);
       if (userinfo) headers["Subscription-Userinfo"] = userinfo;
       for (const name of [
@@ -340,11 +335,6 @@ export async function handleApiRequest(
         const value = upstreamRes.headers.get(name);
         if (value && !headers[name]) headers[name] = value;
       }
-      headers["hide-settings"] = "1";
-      const happPid = happProviderId(env);
-      if (happPid) headers["providerid"] = happPid;
-      headers["ping-type"] = "tcp";
-      delete headers["check-url-via-proxy"];
       headers["Content-Disposition"] = `attachment; filename=${subId}`;
       return new Response(body, { status: 200, headers });
     } catch (error) {
@@ -376,21 +366,18 @@ export async function handleApiRequest(
       return new Response("json subscription unavailable", { status: 503, headers: CORS });
     }
 
-    const headers: Record<string, string> = {
-      "Content-Type": "text/plain; charset=utf-8",
-      "Cache-Control": "no-store",
-      ...live.headers,
-      ...buildSubscriptionResponseHeaders(env),
-      ...CORS,
-    };
-    headers["hide-settings"] = "1";
-    const happPid = happProviderId(env);
-    if (happPid) headers["providerid"] = happPid;
-    headers["ping-type"] = "tcp";
-    delete headers["check-url-via-proxy"];
+    const headers = mergeHappSubscriptionHeaders(
+      {
+        "Content-Type": "text/plain; charset=utf-8",
+        "Cache-Control": "no-store",
+        ...live.headers,
+        ...CORS,
+        "Content-Disposition": `attachment; filename=${subId}`,
+      },
+      env
+    );
     const userinfo = subscriptionUserinfoHeader(dbSub.ends_at ?? null);
     if (userinfo) headers["Subscription-Userinfo"] = userinfo;
-    headers["Content-Disposition"] = `attachment; filename=${subId}`;
     const wireBody = encodeJsonSubscriptionBodyForHapp(live.body);
     return new Response(wireBody, { status: 200, headers });
   }

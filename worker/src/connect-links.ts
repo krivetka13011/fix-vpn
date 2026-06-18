@@ -328,23 +328,44 @@ type JsonRecord = Record<string, unknown>;
 
 const HAPP_CHECK_URL_VIA_PROXY = "https://cp.cloudflare.com/generate_204";
 
-const HAPP_SUB_META_LINES = [
-  "#hide-settings: 1",
-  "#ping-type: tcp",
-  "#subscription-ping-onopen-enabled: 1",
-  "#subscription-autoconnect: 1",
-  "#subscription-autoconnect-type: lowestdelay",
-];
+/** Happ: без фрагментации/шумов/Mux/TUN; Desktop — Proxy; пинг via Proxy GET. */
+export function happDefaultSettingsHeaders(): Record<string, string> {
+  return {
+    "fragmentation-enable": "0",
+    "noises-enable": "0",
+    "mux-enable": "0",
+    "proxy-enable": "1",
+    "tun-enable": "0",
+    "ping-type": "proxy",
+    "check-url-via-proxy": HAPP_CHECK_URL_VIA_PROXY,
+  };
+}
+
+function happSubscriptionMetaLines(env: BotEnv): string[] {
+  const pid = happProviderId(env);
+  return [
+    "#hide-settings: 1",
+    ...(pid ? [`#providerid: ${pid}`] : []),
+    "#fragmentation-enable: 0",
+    "#noises-enable: 0",
+    "#mux-enable: 0",
+    "#proxy-enable: 1",
+    "#tun-enable: 0",
+    "#ping-type: proxy",
+    `#check-url-via-proxy: ${HAPP_CHECK_URL_VIA_PROXY}`,
+    "#subscription-ping-onopen-enabled: 1",
+    "#subscription-autoconnect: 1",
+    "#subscription-autoconnect-type: lowestdelay",
+  ];
+}
 
 const HAPP_SUB_META_LINE_RE =
-  /^#(?:hide-settings|providerid|ping-type|check-url-via-proxy|subscription-ping-onopen-enabled|subscription-autoconnect(?:-type)?|subscription-auto-update)/i;
+  /^#(?:hide-settings|providerid|ping-type|check-url-via-proxy|fragmentation-enable|noises-enable|mux-enable|proxy-enable|tun-enable|tun-type|subscription-ping-onopen-enabled|subscription-autoconnect(?:-type)?|subscription-auto-update)/i;
 
 function withHappLockedMetaLines(body: string, env: BotEnv): string {
   const plain = stripHappSubscriptionMetaLines(body.trim());
   if (!plain) return "";
-  const pid = happProviderId(env);
-  const providerLine = pid ? `#providerid ${pid}\n` : "";
-  return `#hide-settings: 1\n${providerLine}${plain}`;
+  return `${happSubscriptionMetaLines(env).join("\n")}\n${plain}`;
 }
 
 function stripHappSubscriptionMetaLines(body: string): string {
@@ -359,10 +380,11 @@ function stripHappSubscriptionMetaLines(body: string): string {
     .trim();
 }
 
-function withHappSubscriptionMetaLines(body: string): string {
+function withHappSubscriptionMetaLines(body: string, env: BotEnv): string {
   const plain = stripHappSubscriptionMetaLines(body.trim());
-  if (!plain) return HAPP_SUB_META_LINES.join("\n");
-  return `${HAPP_SUB_META_LINES.join("\n")}\n${plain}`;
+  const meta = happSubscriptionMetaLines(env).join("\n");
+  if (!plain) return meta;
+  return `${meta}\n${plain}`;
 }
 
 function jsonProxyPort(item: JsonRecord): number | null {
@@ -568,11 +590,11 @@ export function subscriptionAnnounceHeader(env: BotEnv): string {
   );
 }
 
-/** Happ: hide-settings + опциональный providerid (header + body + URL). */
+/** Happ: hide-settings + дефолты приложения (см. happDefaultSettingsHeaders). */
 export function buildSubscriptionResponseHeaders(env: BotEnv): Record<string, string> {
   const headers: Record<string, string> = {
+    ...happDefaultSettingsHeaders(),
     "hide-settings": "1",
-    "ping-type": "tcp",
     "subscription-ping-onopen-enabled": "1",
     "subscription-auto-update-enable": "1",
     "Profile-Update-Interval": "1",
@@ -584,6 +606,20 @@ export function buildSubscriptionResponseHeaders(env: BotEnv): Record<string, st
   const providerId = happProviderId(env);
   if (providerId) headers.providerid = providerId;
   return headers;
+}
+
+/** Панель может отдавать свои заголовки — наши Happ-дефолты имеют приоритет. */
+export function mergeHappSubscriptionHeaders(
+  base: Record<string, string>,
+  env: BotEnv
+): Record<string, string> {
+  const pid = happProviderId(env);
+  return {
+    ...base,
+    ...buildSubscriptionResponseHeaders(env),
+    "hide-settings": "1",
+    ...(pid ? { providerid: pid } : {}),
+  };
 }
 
 /** HTTPS-цель импорта Happ (внутри happ://add/…). */
@@ -619,8 +655,8 @@ export function buildClientConnectUrl(
 
 /** @deprecated use buildSubscriptionResponseHeaders(env) */
 export const SUBSCRIPTION_RESPONSE_HEADERS: Record<string, string> = {
+  ...happDefaultSettingsHeaders(),
   "hide-settings": "1",
-  "ping-type": "tcp",
   "Profile-Update-Interval": "1",
   "Profile-Title": "base64:8J+Up0ZJWCBWUE4=",
 };

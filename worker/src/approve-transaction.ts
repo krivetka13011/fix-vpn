@@ -103,7 +103,9 @@ export async function approvePaidTransaction(
     return { ok: false, message: "Не удалось активировать подписку в панели" };
   }
 
-  await syncPanelDeviceLimit(env, user.id);
+  void syncPanelDeviceLimit(env, user.id).catch((error) =>
+    console.error("syncPanelDeviceLimit:", error)
+  );
 
   let commission = 0;
   if (user.ref_by_partner_id) {

@@ -150,7 +150,7 @@ export async function activatePaidSubscription(
   params: ActivatePaidParams
 ): Promise<string> {
   const xui = new XuiApi(env);
-  const provision = await xui.provisionUser(env, {
+  const provision = await xui.provisionTrial(env, {
     userId: params.userId,
     username: params.username,
     displayName: params.displayName,

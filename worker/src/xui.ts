@@ -1701,6 +1701,34 @@ export class XuiApi {
       }
     }
 
+    if (subId && !primaryUuid) {
+      const bySub = await this.findClientBySubId(subId);
+      if (bySub?.primaryUuid) {
+        panelEmail = bySub.email;
+        primaryUuid = bySub.primaryUuid;
+      }
+    }
+
+    if (subId && !primaryUuid) {
+      await this.addClientIfMissing(
+        panelEmail,
+        subId,
+        params.telegramId,
+        params.expiryMs,
+        0,
+        undefined,
+        limitIp,
+        true
+      );
+      this.invalidateScan();
+      const resolved = await this.findClientByTelegramId(params.telegramId);
+      if (resolved?.subId && resolved.primaryUuid) {
+        panelEmail = resolved.email;
+        subId = resolved.subId;
+        primaryUuid = resolved.primaryUuid;
+      }
+    }
+
     if (!subId || !primaryUuid) {
       // #region agent log
       await dbg381494(this.env, "B", "xui.ts:provisionTrial", "fallback_provisionUser", {

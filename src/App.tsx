@@ -148,7 +148,7 @@ export default function App() {
         {syncing && <div className="sync-line" aria-hidden />}
         {tab === "help" && <HelpTab catalog={catalog} user={user} />}
         {tab === "plans" && (
-          <PlansTab catalog={catalog} onPurchased={load} />
+          <PlansTab catalog={catalog} user={user} onPurchased={load} />
         )}
         {tab === "profile" && (
           <ProfileTab

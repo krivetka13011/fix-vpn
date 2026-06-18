@@ -45,13 +45,16 @@ export function ProfileTab({ user, catalog, fallbackPhoto, onRefresh }: Props) {
       ? "Истекла"
       : "Неактивна";
 
-  const tariffName =
-    sub.planLabel?.split("·")[0]?.trim() ??
-    (sub.planType === "personal"
-      ? "Про"
-      : sub.planType === "basic"
-        ? "Базовый"
-        : "—");
+  const tariffName = isActive
+    ? sub.planLabel?.split("·")[0]?.trim() ??
+      (sub.planType === "personal"
+        ? "Про"
+        : sub.planType === "basic"
+          ? "Базовый"
+          : "—")
+    : sub.status === "expired"
+      ? "Истекла"
+      : "—";
 
   const periodText =
     sub.periodText ||
@@ -142,7 +145,10 @@ export function ProfileTab({ user, catalog, fallbackPhoto, onRefresh }: Props) {
             <div>
               <p className="profile-card-label">Текущий тариф</p>
               <p className="profile-card-value large">{tariffName}</p>
-              {sub.planLabel && (
+              {isActive && sub.planLabel && (
+                <p className="profile-card-sub">{sub.planLabel}</p>
+              )}
+              {!isActive && sub.status === "expired" && sub.planLabel && (
                 <p className="profile-card-sub">{sub.planLabel}</p>
               )}
             </div>

@@ -1,3 +1,11 @@
+import type { BotEnv } from "./env";
+import {
+  isTestMode,
+  paidSubscriptionDurationMs,
+  testCheckoutPriceRub,
+  trialDurationMs,
+} from "./test-mode";
+
 export type PlanType = "basic" | "personal";
 export type BillingMonths = 1 | 2 | 3 | 6 | 12;
 
@@ -84,4 +92,33 @@ export function calcTotalRub(
   const base = TARIFFS[planType].periods[months];
   if (planType === "personal") return base;
   return base + extraDevices * EXTRA_DEVICE_PRICE_PER_MONTH * months;
+}
+
+/** Каталог для Mini App с учётом test mode (1 ₽ за любой период). */
+export function catalogForEnv(env: BotEnv) {
+  const testPrice = testCheckoutPriceRub(env);
+  const testMode = isTestMode(env);
+  const tariffs = Object.values(TARIFFS).map((tariff) => {
+    if (testPrice === null) return tariff;
+    const periods = { ...tariff.periods };
+    for (const m of BILLING_MONTHS) {
+      periods[m] = testPrice;
+    }
+    return {
+      ...tariff,
+      subtitle: `${testPrice} ₽ (тест)`,
+      periods,
+    };
+  });
+  return {
+    tariffs,
+    testMode,
+    testCheckoutPriceRub: testPrice,
+    testSubscriptionMinutes: testMode
+      ? Math.round(paidSubscriptionDurationMs(env, 1) / 60000)
+      : null,
+    trialDurationMinutes: testMode
+      ? Math.round(trialDurationMs(env) / 60000)
+      : null,
+  };
 }

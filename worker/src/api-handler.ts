@@ -5,6 +5,7 @@ import {
   SUPPORT_TELEGRAM_USERNAME,
   TELEGRAM_CHANNEL_URL,
   calcTotalRub,
+  catalogForEnv,
   type BillingMonths,
   type PlanType,
 } from "./catalog";
@@ -13,8 +14,11 @@ import {
   ensureUser,
   getBundle,
   purchaseExtraDevices,
-  purchaseSubscription,
 } from "./db";
+import { startMiniappPlategaCheckout } from "./miniapp-checkout";
+import { activateMiniappTrial } from "./miniapp-trial";
+import { runUserPendingPlategaReconcile } from "./platega-reconcile";
+import { trialButtonHidden } from "./trial-button";
 import {
   getSubscriptionBySubId,
   getTransactionByPayloadId,
@@ -709,8 +713,9 @@ export async function handleApiRequest(
   }
 
   if (path === "/api/catalog" && request.method === "GET") {
+    const catalog = catalogForEnv(env);
     return json({
-      tariffs: Object.values(TARIFFS),
+      ...catalog,
       extraDevicePricePerMonth: EXTRA_DEVICE_PRICE_PER_MONTH,
       supportTelegramUsername:
         env.SUPPORT_TELEGRAM_USERNAME || SUPPORT_TELEGRAM_USERNAME,
@@ -731,14 +736,20 @@ export async function handleApiRequest(
 
   if (path === "/api/me" && request.method === "GET") {
     try {
-      const bundle = await ensureUser(env, tgUser);
-      const fresh = await ensureUser(env, tgUser);
-      const deviceInfo = await fetchMiniappDevices(env, fresh.user.id, { lightweight: true });
+      const userRow = await ensureUser(env, tgUser);
+      void runUserPendingPlategaReconcile(env, userRow.user.id).catch((error) =>
+        console.error("miniapp platega reconcile:", error)
+      );
+      const fresh = (await getBundle(env, tgUser.id)) ?? userRow;
+      const deviceInfo = await fetchMiniappDevices(env, fresh.user.id, {
+        lightweight: true,
+      });
       const sub = fresh.subscription;
       const base = bundleToApiUser(fresh);
       return json({
         user: {
           ...base,
+          trialAvailable: !trialButtonHidden(fresh.user, sub),
           subscription: {
             ...base.subscription,
             isTrial: Boolean(sub.is_trial),
@@ -806,12 +817,34 @@ export async function handleApiRequest(
     }
   }
 
+  if (path === "/api/trial" && request.method === "POST") {
+    try {
+      const result = await activateMiniappTrial(env, tgUser);
+      const bundle = (await getBundle(env, tgUser.id))!;
+      const profile = await buildMiniappUserProfile(env, bundle);
+      return json({
+        ok: true,
+        message: result.message,
+        user: {
+          ...profile,
+          trialAvailable: !trialButtonHidden(bundle.user, bundle.subscription),
+        },
+      });
+    } catch (e) {
+      return json(
+        { error: e instanceof Error ? e.message : "Trial activation failed" },
+        400
+      );
+    }
+  }
+
   if (path === "/api/purchase" && request.method === "POST") {
     try {
       const body = (await request.json()) as {
         planType?: PlanType;
         billingMonths?: number;
         extraDevices?: number;
+        paymentMethod?: string;
       };
       const planType = body.planType;
       const months = body.billingMonths as BillingMonths | undefined;
@@ -824,22 +857,18 @@ export async function handleApiRequest(
         return json({ error: "Invalid plan" }, 400);
       }
       const extraDevices = body.extraDevices ?? 0;
-      const bundle = await purchaseSubscription(
-        env,
-        tgUser,
+      const method = body.paymentMethod?.trim() || "sbp";
+      const checkout = await startMiniappPlategaCheckout(env, tgUser, {
         planType,
         months,
-        extraDevices
-      );
-      const total = calcTotalRub(
-        planType,
-        months,
-        planType === "basic" ? extraDevices : 0
-      );
+        extraDevices,
+        method,
+      });
       return json({
         ok: true,
-        message: `Демо-оплата: ${total} ₽ · подписка активирована`,
-        user: await buildMiniappUserProfile(env, bundle),
+        paymentUrl: checkout.paymentUrl,
+        amount: checkout.amount,
+        message: checkout.message,
       });
     } catch (e) {
       return json(

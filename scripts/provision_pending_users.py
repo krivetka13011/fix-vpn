@@ -34,6 +34,7 @@ PROTECTED_EMAILS = {
     "Ba-mobile",
     "Ba-pc",
     "mom-mobile",
+    "Sanya-mobile",
 }
 
 

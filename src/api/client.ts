@@ -42,11 +42,25 @@ export function purchasePlan(payload: {
   planType: PlanType;
   billingMonths: BillingMonths;
   extraDevices: number;
-}): Promise<{ ok: boolean; message: string; user: UserProfile }> {
+  paymentMethod?: "sbp" | "crypto_usdt";
+}): Promise<{
+  ok: boolean;
+  paymentUrl: string;
+  amount: number;
+  message: string;
+}> {
   return api("/api/purchase", {
     method: "POST",
     body: JSON.stringify(payload),
   });
+}
+
+export function activateTrial(): Promise<{
+  ok: boolean;
+  message: string;
+  user: UserProfile;
+}> {
+  return api("/api/trial", { method: "POST", body: "{}" });
 }
 
 export function fetchConnect(

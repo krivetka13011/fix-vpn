@@ -1,12 +1,15 @@
 import { useCallback, useMemo, useState } from "react";
-import type { BillingMonths, Catalog, PlanType } from "../types";
-import { purchasePlan } from "../api/client";
+import type { BillingMonths, Catalog, PlanType, UserProfile } from "../types";
+import { activateTrial, purchasePlan } from "../api/client";
 import { useTelegramMainButton } from "../hooks/useTelegramMainButton";
 
 interface Props {
   catalog: Catalog;
+  user: UserProfile;
   onPurchased: () => void;
 }
+
+type PaymentMethod = "sbp" | "crypto_usdt";
 
 const PERIOD_LABELS: Record<BillingMonths, string> = {
   1: "1 мес",
@@ -16,12 +19,18 @@ const PERIOD_LABELS: Record<BillingMonths, string> = {
   12: "1 год",
 };
 
-export function PlansTab({ catalog, onPurchased }: Props) {
+export function PlansTab({ catalog, user, onPurchased }: Props) {
   const [planType, setPlanType] = useState<PlanType | null>(null);
   const [months, setMonths] = useState<BillingMonths | null>(null);
   const [extraDevices, setExtraDevices] = useState(0);
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("sbp");
   const [loading, setLoading] = useState(false);
+  const [trialLoading, setTrialLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+
+  const testHint = catalog.testMode
+    ? `Тест: оплата ${catalog.testCheckoutPriceRub ?? 1} ₽ · подписка ${catalog.testSubscriptionMinutes ?? 10} мин`
+    : null;
 
   const total = useMemo(() => {
     if (!planType || !months) return null;
@@ -32,6 +41,21 @@ export function PlansTab({ catalog, onPurchased }: Props) {
     return base + extraDevices * catalog.extraDevicePricePerMonth * months;
   }, [planType, months, extraDevices, catalog]);
 
+  const handleTrial = useCallback(async () => {
+    setTrialLoading(true);
+    setMessage(null);
+    try {
+      const res = await activateTrial();
+      setMessage(res.message);
+      window.Telegram?.WebApp?.HapticFeedback?.impactOccurred("medium");
+      onPurchased();
+    } catch (e) {
+      setMessage(e instanceof Error ? e.message : "Не удалось активировать пробный период");
+    } finally {
+      setTrialLoading(false);
+    }
+  }, [onPurchased]);
+
   const handleBuy = useCallback(async () => {
     if (!planType || !months) return;
     setLoading(true);
@@ -41,34 +65,58 @@ export function PlansTab({ catalog, onPurchased }: Props) {
         planType,
         billingMonths: months,
         extraDevices: planType === "basic" ? extraDevices : 0,
+        paymentMethod,
       });
       setMessage(res.message);
       window.Telegram?.WebApp?.HapticFeedback?.impactOccurred("medium");
-      onPurchased();
+      const tg = window.Telegram?.WebApp;
+      if (tg?.openLink) {
+        tg.openLink(res.paymentUrl);
+      } else {
+        window.open(res.paymentUrl, "_blank", "noopener,noreferrer");
+      }
     } catch (e) {
-      setMessage(e instanceof Error ? e.message : "Ошибка покупки");
+      setMessage(e instanceof Error ? e.message : "Ошибка оплаты");
     } finally {
       setLoading(false);
     }
-  }, [planType, months, extraDevices, onPurchased]);
+  }, [planType, months, extraDevices, paymentMethod]);
 
   useTelegramMainButton(
-    "Оформить подписку",
+    "Оплатить",
     planType != null && months != null,
     handleBuy,
     loading
   );
+
+  const showTrial = user.trialAvailable !== false;
 
   return (
     <>
       <section className="page-hero">
         <h1 className="page-title">Тарифы</h1>
         <p className="page-desc">
-          Базовый — от 199 ₽/мес · Про — личный сервер
+          {testHint ??
+            "Базовый — от 199 ₽/мес · Про — личный сервер"}
         </p>
       </section>
 
       <div className="stack">
+        {showTrial && (
+          <button
+            type="button"
+            className="btn btn-fill btn-pill trial-top-btn"
+            disabled={trialLoading}
+            onClick={handleTrial}
+          >
+            {trialLoading
+              ? "Активация…"
+              : catalog.trialDurationMinutes
+                ? `🧪 Пробный период · ${catalog.trialDurationMinutes} мин`
+                : "🧪 Пробный период"}
+          </button>
+        )}
+
         {catalog.tariffs.map((tariff) => {
           const selected = planType === tariff.id;
           const monthly = tariff.periods[1];
@@ -137,7 +185,7 @@ export function PlansTab({ catalog, onPurchased }: Props) {
                     ))}
                   </div>
 
-                  {tariff.id === "basic" && (
+                  {tariff.id === "basic" && !catalog.testMode && (
                     <>
                       <div className="tariff-divider" />
                       <p className="section-label">Доп. устройства</p>
@@ -174,6 +222,31 @@ export function PlansTab({ catalog, onPurchased }: Props) {
                       </div>
                     </>
                   )}
+
+                  <div className="tariff-divider" />
+                  <p className="section-label">Способ оплаты</p>
+                  <div className="chip-row">
+                    <button
+                      type="button"
+                      className={`chip ${paymentMethod === "sbp" ? "active" : ""}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setPaymentMethod("sbp");
+                      }}
+                    >
+                      📱 СБП
+                    </button>
+                    <button
+                      type="button"
+                      className={`chip ${paymentMethod === "crypto_usdt" ? "active" : ""}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setPaymentMethod("crypto_usdt");
+                      }}
+                    >
+                      💎 USDT
+                    </button>
+                  </div>
                 </div>
               )}
             </article>
@@ -182,7 +255,7 @@ export function PlansTab({ catalog, onPurchased }: Props) {
 
         {total != null && (
           <div className="glass-panel total-bar">
-            <span className="total-label">Итого (демо)</span>
+            <span className="total-label">К оплате</span>
             <span className="total-price">{total} ₽</span>
           </div>
         )}
@@ -193,7 +266,7 @@ export function PlansTab({ catalog, onPurchased }: Props) {
           disabled={!planType || !months || loading}
           onClick={handleBuy}
         >
-          {loading ? "Оформление…" : "Оформить подписку"}
+          {loading ? "Открываем оплату…" : "Оплатить"}
         </button>
 
         {message && <p className="toast">{message}</p>}

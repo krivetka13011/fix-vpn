@@ -25,6 +25,7 @@ MANUAL_PANEL_CLIENT_EMAILS = frozenset(
         "Ba-pc",
         "mom-mobile",
         "lv",
+        "Sanya-mobile",
     }
 )
 

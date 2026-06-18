@@ -48,6 +48,7 @@ export interface UserProfile {
   photoUrl: string | null;
   subscription: Subscription;
   addons: UserAddon[];
+  trialAvailable?: boolean;
 }
 
 export interface Tariff {
@@ -66,6 +67,10 @@ export interface Catalog {
   supportTelegramUsername: string;
   telegramChannelUrl: string;
   billingMonths: BillingMonths[];
+  testMode?: boolean;
+  testCheckoutPriceRub?: number | null;
+  testSubscriptionMinutes?: number | null;
+  trialDurationMinutes?: number | null;
 }
 
 export type TabId = "help" | "plans" | "profile";

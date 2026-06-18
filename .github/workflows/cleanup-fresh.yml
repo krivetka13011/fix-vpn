@@ -2,6 +2,11 @@ name: Cleanup fresh test
 
 on:
   workflow_dispatch:
+    inputs:
+      db_only:
+        description: "Only wipe D1 + KV (skip panel API)"
+        type: boolean
+        default: false
 
 jobs:
   cleanup:
@@ -16,8 +21,10 @@ jobs:
       - name: Install requests
         run: pip install requests
 
-      - name: Wipe auto panel clients and D1 customers
+      - name: Wipe D1/KV (and panel unless db_only)
         env:
+          DB_ONLY: ${{ inputs.db_only && '1' || '0' }}
+          PANEL_SYNC_DISABLED: "1"
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           D1_DATABASE_ID: ${{ secrets.D1_DATABASE_ID }}

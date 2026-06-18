@@ -262,7 +262,9 @@ def kv_clear_prefix(prefix: str) -> int:
 
 def require_d1_env(*extra: str) -> None:
     load_env()
-    required = ["CLOUDFLARE_API_TOKEN", "XUI_BASE_URL", "XUI_API_TOKEN", *extra]
+    required = ["CLOUDFLARE_API_TOKEN", *extra]
+    if not os.environ.get("DB_ONLY", "").strip().lower() in ("1", "true", "yes"):
+        required.extend(["XUI_BASE_URL", "XUI_API_TOKEN"])
     missing = [name for name in required if not os.environ.get(name)]
     if missing:
         print(f"missing {', '.join(missing)}", file=sys.stderr)

@@ -84,7 +84,24 @@ def delete_panel_client(session: requests.Session, base: str, email: str) -> boo
 
 
 def main() -> int:
+    db_only = os.environ.get("DB_ONLY", "").strip().lower() in ("1", "true", "yes") or "--db-only" in sys.argv
+    if db_only:
+        os.environ["DB_ONLY"] = "1"
+
     require_d1_env()
+
+    if db_only:
+        print("=== DB ONLY (panel skipped) ===")
+        print("BEFORE d1 users:", count_table("users"))
+        print("BEFORE d1 subscriptions:", count_table("subscriptions"))
+        wipe_customer_data()
+        wipe_kv_customer_data()
+        print("\n=== AFTER ===")
+        print("d1 users:", count_table("users"))
+        print("d1 subscriptions:", count_table("subscriptions"))
+        print("d1 partners:", count_table("partners"))
+        return 0
+
     session, base = panel_session()
 
     print("=== BEFORE ===")

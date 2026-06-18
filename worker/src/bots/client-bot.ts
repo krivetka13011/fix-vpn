@@ -1101,14 +1101,14 @@ async function handleClientBotUpdateInner(
         sub?.xray_sub_id?.trim() && sub?.xray_uuid?.trim()
       );
       if (!hasPanelBinding) {
-        void ensurePanelClientRecord(env, {
+        await ensurePanelClientRecord(env, {
           userId: user.id,
           telegramId: tg.id,
           username: user.username,
           displayName: user.display_name,
           dbSubscription: sub,
-          enableClient: sub?.status === "active",
-        }).catch((error) => console.error("start panel record:", error));
+          enableClient: true,
+        });
       } else if (sub?.status === "active") {
         await syncPanelSubIdForUser(
           env,

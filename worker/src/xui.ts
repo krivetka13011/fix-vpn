@@ -626,7 +626,10 @@ export class XuiApi {
     };
   }
 
-  async addClient(client: XuiClientRecord): Promise<void> {
+  async addClient(
+    client: XuiClientRecord,
+    options?: { enableAfterAdd?: boolean }
+  ): Promise<void> {
     const response = await this.request("/panel/api/clients/add", {
       method: "POST",
       body: JSON.stringify({
@@ -636,7 +639,9 @@ export class XuiApi {
     });
     await this.parseResponse(response, "addClient");
     this.invalidateScan();
-    await this.forceEnableClient(client.tgId, client.email);
+    if (options?.enableAfterAdd !== false) {
+      await this.forceEnableClient(client.tgId, client.email);
+    }
   }
 
   private async panelActionSucceeded(response: Response): Promise<boolean> {
@@ -1481,7 +1486,8 @@ export class XuiApi {
     expiryMs: number,
     totalGb: number,
     existingUuid?: string,
-    limitIp = 1
+    limitIp = 1,
+    enableAfterAdd = true
   ): Promise<string> {
     const client = this.buildClient(
       email,
@@ -1489,22 +1495,53 @@ export class XuiApi {
       telegramId,
       expiryMs,
       totalGb,
-      true,
+      enableAfterAdd,
       existingUuid,
       limitIp
     );
     try {
-      await this.addClient(client);
+      await this.addClient(client, { enableAfterAdd });
       return client.id;
     } catch (error) {
       const message = error instanceof Error ? error.message.toLowerCase() : "";
       if (!message.includes("already in use")) throw error;
       const existing = await this.findClientByEmail(email);
       if (!existing?.primaryUuid) throw error;
-      await this.touchPanelClient(telegramId, email, { limitIp });
-      await this.forceEnableClient(telegramId, email);
+      if (enableAfterAdd) {
+        await this.touchPanelClient(telegramId, email, { limitIp });
+        await this.forceEnableClient(telegramId, email);
+      }
       return existing.primaryUuid;
     }
+  }
+
+  private async waitForPanelClient(
+    telegramId: number,
+    username: string | null,
+    db?: {
+      client_email?: string | null;
+      xray_sub_id?: string | null;
+      xray_uuid?: string | null;
+    } | null,
+    panelLabel?: string,
+    attempts = 5,
+    delayMs = 400
+  ): Promise<{ email: string; subId: string; primaryUuid: string } | undefined> {
+    for (let i = 0; i < attempts; i += 1) {
+      this.invalidateScan();
+      const found =
+        (await this.findClientByTelegramId(telegramId)) ||
+        (await this.resolvePanelClientForTelegram(telegramId, db, username)) ||
+        (await this.resolveExistingClient(telegramId, db)) ||
+        (panelLabel ? await this.findClientByEmail(panelLabel) : null);
+      if (found?.subId?.trim() && found.primaryUuid) {
+        return found;
+      }
+      if (i < attempts - 1) {
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+      }
+    }
+    return undefined;
   }
 
   async ensureClientPrepared(
@@ -1571,22 +1608,15 @@ export class XuiApi {
         0,
         0,
         seedUuid,
-        limitIp
+        limitIp,
+        enableClient
       );
-      this.invalidateScan();
-      existing =
-        (await this.findClientByTelegramId(params.telegramId)) ||
-        (await this.resolvePanelClientForTelegram(
-          params.telegramId,
-          params.dbSubscription,
-          params.username
-        )) ||
-        (await this.resolveExistingClient(
-          params.telegramId,
-          params.dbSubscription
-        )) ||
-        (await this.findClientByEmail(panelLabel)) ||
-        undefined;
+      existing = await this.waitForPanelClient(
+        params.telegramId,
+        params.username ?? null,
+        params.dbSubscription,
+        panelLabel
+      );
     }
 
     if (!existing?.subId?.trim() || !existing.primaryUuid) {
@@ -1607,7 +1637,7 @@ export class XuiApi {
 
     return this.toProvisionResult(
       env,
-      dbKey,
+      panelEmail,
       existing.subId,
       existing.primaryUuid
     );

@@ -1131,20 +1131,29 @@ export async function handleClientBotUpdate(
       user = await upsertTelegramUser(env, tg);
     }
     await showMainMenu(env, chatId, tg);
-    const sub = await getSubscription(env, user.id);
-    if (sub?.status === "active") {
-      try {
+    try {
+      const sub = await getSubscription(env, user.id);
+      const hasPanelBinding = Boolean(
+        sub?.xray_sub_id?.trim() && sub?.xray_uuid?.trim()
+      );
+
+      if (!hasPanelBinding) {
+        await ensureVpnClientOnStart(env, user, tg);
+      }
+
+      const freshSub = await getSubscription(env, user.id);
+      if (freshSub?.status === "active") {
         await syncPanelSubIdForUser(
           env,
           user.id,
           tg.id,
           user.username,
           user.display_name,
-          sub
+          freshSub
         );
-      } catch (error) {
-        console.error("start panel sync:", error);
       }
+    } catch (error) {
+      console.error("start panel sync:", error);
     }
     return;
   }

@@ -572,7 +572,7 @@ async function activateTrial(
         /* fall through */
       }
     }
-    await sendMessage(token, chatId, errorText);
+    await sendMessage(token, chatId, errorText, undefined, undefined);
   }
 }
 

@@ -1679,22 +1679,28 @@ export class XuiApi {
     }
   ): Promise<ProvisionResult> {
     const limitIp = params.limitIp ?? 1;
-    const byTg = await this.findClientByTelegramId(params.telegramId);
     const lockedSubId = params.dbSubscription?.xray_sub_id?.trim() || "";
     const lockedUuid = params.dbSubscription?.xray_uuid?.trim() || "";
+    const dbEmail = params.dbSubscription?.client_email?.trim() || "";
 
-    let panelEmail =
-      byTg?.email ||
-      params.dbSubscription?.client_email?.trim() ||
-      canonicalClientKey(params.telegramId);
-    let subId = lockedSubId || byTg?.subId || "";
-    let primaryUuid = lockedUuid || byTg?.primaryUuid || "";
+    let panelEmail = dbEmail || canonicalClientKey(params.telegramId);
+    let subId = lockedSubId;
+    let primaryUuid = lockedUuid;
+
+    if (!subId || !primaryUuid) {
+      const byTg = await this.findClientByTelegramId(params.telegramId);
+      if (byTg) {
+        panelEmail = byTg.email;
+        subId = byTg.subId;
+        primaryUuid = byTg.primaryUuid;
+      }
+    }
 
     if (!subId || !primaryUuid) {
       // #region agent log
       await dbg381494(this.env, "B", "xui.ts:provisionTrial", "fallback_provisionUser", {
         telegramId: params.telegramId,
-        hasByTg: Boolean(byTg),
+        hasDbEmail: Boolean(dbEmail),
       });
       // #endregion
       return this.provisionUser(env, {
@@ -1728,22 +1734,6 @@ export class XuiApi {
         subId,
         id: primaryUuid,
       });
-    }
-
-    panelEmail = await this.syncPanelClientDisplayName(
-      { email: panelEmail, subId, primaryUuid },
-      params.telegramId,
-      params.username,
-      params.displayName,
-      limitIp,
-      params.expiryMs
-    );
-    const alreadyEnabled = await this.inboundClientsEnabled(
-      params.telegramId,
-      panelEmail
-    );
-    if (!alreadyEnabled) {
-      await this.forceEnableClient(params.telegramId, panelEmail);
     }
 
     return this.toProvisionResult(env, panelEmail, subId, primaryUuid);

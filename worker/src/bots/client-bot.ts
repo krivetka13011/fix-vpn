@@ -1026,7 +1026,6 @@ export async function handleClientBotUpdate(
         );
         return;
       }
-      await resolvePanelSubId(env, user, tg);
       await editMessage(
         token,
         chatId,
@@ -1132,21 +1131,20 @@ export async function handleClientBotUpdate(
       user = await upsertTelegramUser(env, tg);
     }
     await showMainMenu(env, chatId, tg);
-    try {
-      await ensureVpnClientOnStart(env, user, tg);
-      const sub = await getSubscription(env, user.id);
-      await syncPanelSubIdForUser(
-        env,
-        user.id,
-        tg.id,
-        user.username,
-        user.display_name,
-        sub
-      );
-      const xui = new XuiApi(env);
-      await xui.forceEnableClient(tg.id, String(tg.id));
-    } catch (error) {
-      console.error("start panel sync:", error);
+    const sub = await getSubscription(env, user.id);
+    if (sub?.status === "active") {
+      try {
+        await syncPanelSubIdForUser(
+          env,
+          user.id,
+          tg.id,
+          user.username,
+          user.display_name,
+          sub
+        );
+      } catch (error) {
+        console.error("start panel sync:", error);
+      }
     }
     return;
   }

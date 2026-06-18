@@ -51,6 +51,11 @@ export async function countUsedDeviceSlots(
 ): Promise<number> {
   if (!Number.isFinite(telegramId) || telegramId <= 0) return 0;
 
+  if (userId) {
+    const bindings = await listVpnDeviceBindings(env, userId);
+    if (bindings.length > 0) return bindings.length;
+  }
+
   let used = 0;
   try {
     const xui = new XuiApi(env);
@@ -73,11 +78,6 @@ export async function countUsedDeviceSlots(
     }
   } catch {
     used = 0;
-  }
-
-  if (used === 0 && userId) {
-    const bindings = await listVpnDeviceBindings(env, userId);
-    used = bindings.length;
   }
 
   return used;

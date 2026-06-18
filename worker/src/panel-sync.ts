@@ -7,11 +7,17 @@ import {
 import { panelLimitIpForSubscription } from "./device-limit";
 import {
   kvClearSubscriptionPayloadCache,
+  kvGetSubscriptionPayloadCache,
   kvSetSubscriptionPayloadCache,
   patchSubscription,
 } from "./repository";
 import type { DbSubscription } from "./types";
 import { XuiApi } from "./xui";
+
+export type PanelSyncOptions = {
+  /** Принудительно сверить с панелью, даже если в D1 уже есть xray_sub_id */
+  force?: boolean;
+};
 
 async function syncFromDbBinding(
   env: BotEnv,
@@ -39,13 +45,21 @@ export async function syncPanelSubIdForUser(
   telegramId: number,
   username: string | null,
   displayName: string | null,
-  sub: DbSubscription | null
+  sub: DbSubscription | null,
+  options?: PanelSyncOptions
 ): Promise<string | null> {
+  const lockedSubId = sub?.xray_sub_id?.trim() || "";
+  const lockedUuid = sub?.xray_uuid?.trim() || "";
+
+  if (!options?.force && lockedSubId && lockedUuid) {
+    return lockedSubId;
+  }
+
   let panel: { email: string; subId: string; primaryUuid: string } | null = null;
+  let provisioned = false;
 
   try {
     const xui = new XuiApi(env);
-    await xui.ensureClientEnabledByTelegramId(telegramId);
     panel = await xui.resolvePanelClientForTelegram(telegramId, sub, username);
 
     if (!panel) {
@@ -62,15 +76,15 @@ export async function syncPanelSubIdForUser(
         subId: provision.subId,
         primaryUuid: provision.primaryUuid,
       };
+      provisioned = true;
     }
   } catch (error) {
     console.error("syncPanelSubId xui:", error);
     const fromDb = await syncFromDbBinding(env, userId, telegramId, sub);
     if (fromDb) return fromDb;
-    return sub?.xray_sub_id?.trim() || null;
+    return lockedSubId || null;
   }
 
-  const lockedSubId = sub?.xray_sub_id?.trim() || "";
   const subId =
     lockedSubId && lockedSubId === panel.subId.trim()
       ? lockedSubId
@@ -87,26 +101,25 @@ export async function syncPanelSubIdForUser(
     await kvClearSubscriptionPayloadCache(env, userId);
   }
 
-  try {
-    const live = await fetchPanelSubscriptionBody(env, subId);
-    if (live?.body) {
-      await kvSetSubscriptionPayloadCache(
-        env,
-        userId,
-        subscriptionBodyForClients(live.body)
-      );
+  const subIdChanged = lockedSubId !== subId;
+  if (sub?.status === "active" && (provisioned || subIdChanged)) {
+    try {
+      const cached = (await kvGetSubscriptionPayloadCache(env, userId))?.trim();
+      if (!cached || cached.length < 80) {
+        const live = await fetchPanelSubscriptionBody(env, subId);
+        if (live?.body) {
+          await kvSetSubscriptionPayloadCache(
+            env,
+            userId,
+            subscriptionBodyForClients(live.body)
+          );
+        }
+      }
+    } catch (error) {
+      console.error("syncPanelSubId cache refresh:", error);
     }
-  } catch (error) {
-    console.error("syncPanelSubId cache refresh:", error);
   }
 
   await patchSubscription(env, userId, patch);
-
-  try {
-    await new XuiApi(env).ensureClientEnabledByTelegramId(telegramId);
-  } catch (error) {
-    console.error("syncPanelSubId enable:", error);
-  }
-
   return subId;
 }

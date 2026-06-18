@@ -143,14 +143,19 @@ jobs:
           URL="${{ steps.url.outputs.url }}"
           WORKERS_URL="${{ steps.url.outputs.workers_url }}"
           EFFECTIVE_URL="$URL"
-          if curl -fsS "$URL/api/health" | tee /tmp/health.json | grep -q '"ok":true'; then
-            echo "health OK on public URL"
-          elif [ -n "$WORKERS_URL" ] && curl -fsS "$WORKERS_URL/api/health" | tee /tmp/health.json | grep -q '"ok":true'; then
+          if curl -fsS "$URL/api/health" | tee /tmp/health.json | grep -qE '"ok":(true|false)'; then
+            echo "health endpoint reachable"
+          elif [ -n "$WORKERS_URL" ] && curl -fsS "$WORKERS_URL/api/health" | tee /tmp/health.json | grep -qE '"ok":(true|false)'; then
             EFFECTIVE_URL="$WORKERS_URL"
             echo "::warning::Public URL not ready yet ($URL) — workers.dev OK. Add fixvp.xyz to Cloudflare."
           else
             cat /tmp/health.json >&2
             exit 1
+          fi
+          if grep -q '"paused":true' /tmp/health.json; then
+            echo "::warning::Worker paused (WORKER_PAUSED) — deploy OK, resume when ready"
+          else
+            grep -q '"ok":true' /tmp/health.json
           fi
           grep -q '"clientBotOk":true' /tmp/health.json
           grep -q '"d1Ok":true' /tmp/health.json

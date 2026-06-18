@@ -935,7 +935,7 @@ export class XuiApi {
       (await this.resolvePanelEmail(telegramId)) ||
       emailHint?.trim() ||
       String(telegramId);
-    const delays = [0, 400, 900, 1600, 2500];
+    const delays = [0, 600];
 
     for (const delay of delays) {
       if (delay > 0) {

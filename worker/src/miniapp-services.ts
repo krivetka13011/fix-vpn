@@ -20,6 +20,7 @@ import type { TelegramUser } from "./telegram";
 import type { UserBundle } from "./types";
 import { XuiApi } from "./xui";
 import {
+  countUsedDeviceSlots,
   fetchPanelDeviceIps,
   subscriptionDeviceLimit,
   syncPanelDeviceLimit,
@@ -92,7 +93,8 @@ async function ensureSubscriptionPeriod(env: BotEnv, userId: string): Promise<vo
 
 export async function resolvePanelSubIdForUser(
   env: BotEnv,
-  tg: TelegramUser
+  tg: TelegramUser,
+  options?: { force?: boolean }
 ): Promise<string | null> {
   const user = await upsertTelegramUser(env, tg);
   await ensureSubscriptionPeriod(env, user.id);
@@ -103,7 +105,8 @@ export async function resolvePanelSubIdForUser(
     tg.id,
     user.username,
     user.display_name,
-    sub
+    sub,
+    options
   );
 }
 
@@ -118,7 +121,8 @@ export interface MiniappDeviceRow {
 
 export async function fetchMiniappDevices(
   env: BotEnv,
-  userId: string
+  userId: string,
+  options?: { lightweight?: boolean }
 ): Promise<{
   used: number;
   limit: number;
@@ -128,6 +132,14 @@ export async function fetchMiniappDevices(
   const sub = await getSubscription(env, userId);
   const limit = subscriptionDeviceLimit(sub);
   const telegramId = telegramIdFromClientEmail(sub?.client_email);
+
+  if (options?.lightweight) {
+    const used = telegramId
+      ? await countUsedDeviceSlots(env, telegramId, userId)
+      : 0;
+    return { used, limit, panelOnline: false, devices: [] };
+  }
+
   const panelIps = telegramId
     ? await fetchPanelDeviceIps(env, telegramId)
     : [];
@@ -176,15 +188,9 @@ export async function buildMiniappConnectUrl(
     throw new Error("Сначала активируйте подписку или пробный период");
   }
 
-  const subId = await resolvePanelSubIdForUser(env, tg);
+  const subId = await resolvePanelSubIdForUser(env, tg, { force: !sub?.xray_sub_id?.trim() });
   if (!subId) {
     throw new Error("Подписка ещё синхронизируется. Повторите через минуту.");
-  }
-
-  try {
-    await new XuiApi(env).ensureClientEnabledByTelegramId(tg.id);
-  } catch (error) {
-    console.error("buildMiniappConnectUrl enable:", error);
   }
 
   const mappedClient = mapClient(client);
@@ -243,7 +249,7 @@ export function deviceTotalForPlan(sub: {
 }
 
 export async function buildMiniappUserProfile(env: BotEnv, bundle: UserBundle) {
-  const deviceInfo = await fetchMiniappDevices(env, bundle.user.id);
+  const deviceInfo = await fetchMiniappDevices(env, bundle.user.id, { lightweight: true });
   const sub = bundle.subscription;
   const base = bundleToApiUser(bundle);
   return {

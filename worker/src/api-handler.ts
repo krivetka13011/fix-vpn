@@ -20,6 +20,7 @@ import {
   getTransactionByPayloadId,
   getTransactionByPlategaId,
   kvGetSubscriptionPayloadCache,
+  kvSetSubscriptionPayloadCache,
 } from "./repository";
 import { validateInitData, type TelegramUser } from "./telegram";
 import type { BotEnv } from "./env";
@@ -31,6 +32,7 @@ import {
   workerSubscriptionFetchBase,
   xuiBaseUrl,
   happProviderId,
+  healthPingPanel,
 } from "./env";
 import { isPanelErrorBody, panelFetch } from "./panel-fetch";
 import { handleClientBotUpdate } from "./bots/client-bot";
@@ -61,7 +63,6 @@ import {
   canConnectSubscription,
   fetchMiniappDevices,
   resetMiniappDevices,
-  resolvePanelSubIdForUser,
   subscriptionPeriodText,
   type MiniappClient,
   type MiniappPlatform,
@@ -74,6 +75,7 @@ import {
   encodeStandardSubscriptionBody,
   fetchPanelSubscriptionBody,
   normalizeSubscriptionBody,
+  subscriptionBodyForClients,
   redirectHtml,
   subscriptionUserinfoHeader,
   type VpnClientId,
@@ -242,6 +244,28 @@ export async function handleApiRequest(
       return new Response("subscription revoked", { status: 404, headers: CORS });
     }
 
+    try {
+      const cached = (await kvGetSubscriptionPayloadCache(env, dbSub.user_id))?.trim();
+      if (cached && cached.length > 100) {
+        const headers: Record<string, string> = {
+          ...lockedHeaders,
+          ...buildSubscriptionResponseHeaders(env),
+        };
+        headers["hide-settings"] = "1";
+        const happPid = happProviderId(env);
+        if (happPid) headers["providerid"] = happPid;
+        headers["ping-type"] = "tcp";
+        delete headers["check-url-via-proxy"];
+        headers["Content-Disposition"] = `attachment; filename=${subId}`;
+        const userinfo = subscriptionUserinfoHeader(dbSub.ends_at ?? null);
+        if (userinfo) headers["Subscription-Userinfo"] = userinfo;
+        const body = encodeStandardSubscriptionBody(normalizeSubscriptionBody(cached), env);
+        return new Response(body, { status: 200, headers });
+      }
+    } catch (error) {
+      console.error("subscription cache:", error);
+    }
+
     const live = await fetchPanelSubscriptionBody(env, subId);
     if (live?.body) {
       const headers: Record<string, string> = {
@@ -259,28 +283,12 @@ export async function handleApiRequest(
       const userinfo = subscriptionUserinfoHeader(dbSub.ends_at ?? null);
       if (userinfo) headers["Subscription-Userinfo"] = userinfo;
       const body = encodeStandardSubscriptionBody(live.body, env);
+      ctx?.waitUntil(
+        kvSetSubscriptionPayloadCache(env, dbSub.user_id, subscriptionBodyForClients(live.body)).catch(
+          (error) => console.error("subscription cache write:", error)
+        )
+      );
       return new Response(body, { status: 200, headers });
-    }
-
-    try {
-      const cached = (await kvGetSubscriptionPayloadCache(env, dbSub.user_id))?.trim();
-      if (cached && cached.length > 100) {
-        const headers: Record<string, string> = {
-          ...lockedHeaders,
-          ...buildSubscriptionResponseHeaders(env),
-        };
-        headers["hide-settings"] = "1";
-        headers["providerid"] = happProviderId(env);
-        headers["ping-type"] = "tcp";
-        delete headers["check-url-via-proxy"];
-        headers["Content-Disposition"] = `attachment; filename=${subId}`;
-        const userinfo = subscriptionUserinfoHeader(dbSub.ends_at ?? null);
-        if (userinfo) headers["Subscription-Userinfo"] = userinfo;
-        const body = encodeStandardSubscriptionBody(normalizeSubscriptionBody(cached), env);
-        return new Response(body, { status: 200, headers });
-      }
-    } catch (error) {
-      console.error("subscription cache:", error);
     }
 
     const subPath = (env.SUBSCRIPTION_PATH || "/sub").replace(/\/$/, "");
@@ -466,11 +474,15 @@ export async function handleApiRequest(
       kvOk = false;
     }
     if (env.XUI_BASE_URL && env.XUI_API_TOKEN) {
-      try {
-        xuiBase = xuiBaseUrl(env);
-        xuiOk = await new XuiApi(env).ping();
-      } catch {
-        xuiOk = false;
+      xuiBase = xuiBaseUrl(env);
+      if (healthPingPanel(env)) {
+        try {
+          xuiOk = await new XuiApi(env).ping();
+        } catch {
+          xuiOk = false;
+        }
+      } else {
+        xuiOk = true;
       }
     }
     const base = env.WEBAPP_URL?.replace(/\/$/, "") ?? null;
@@ -683,9 +695,8 @@ export async function handleApiRequest(
   if (path === "/api/me" && request.method === "GET") {
     try {
       const bundle = await ensureUser(env, tgUser);
-      await resolvePanelSubIdForUser(env, tgUser);
       const fresh = await ensureUser(env, tgUser);
-      const deviceInfo = await fetchMiniappDevices(env, fresh.user.id);
+      const deviceInfo = await fetchMiniappDevices(env, fresh.user.id, { lightweight: true });
       const sub = fresh.subscription;
       const base = bundleToApiUser(fresh);
       return json({

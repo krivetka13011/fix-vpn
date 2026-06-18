@@ -104,3 +104,16 @@ python scripts/cleanup_for_fresh_test.py   # workflow_dispatch в Actions
 Полный reconcile всех активных клиентов (редко): в workflow добавьте env `PROVISION_FULL_SYNC=1`.
 
 Worker cron: раз в 15 минут — только истечение подписок (D1), без bulk-update панели.
+
+### Оптимизация нагрузки на панель (Worker)
+
+| Действие | Обращение к панели |
+|----------|-------------------|
+| `/start` | Только если подписка **active** и нет binding в D1 |
+| `/api/me` (профиль) | **Нет** — только D1 + KV |
+| `/api/connect` | Один sync при подключении |
+| `/sub/*` | Сначала KV-кэш, панель только при промахе |
+| `/api/health` | Панель **не пингуется** (только если `HEALTH_PING_PANEL=1`) |
+| Trial / оплата | Provision один раз по событию |
+
+`forceEnableClient`: максимум 2 попытки вместо 5.

@@ -37,6 +37,7 @@ import { isPanelErrorBody, panelFetch } from "./panel-fetch";
 import { handleClientBotUpdate } from "./bots/client-bot";
 import { handlePartnerBotUpdate } from "./bots/partner-bot";
 import { beginE2eTrace, endE2eTrace } from "./e2e-trace";
+import { readDbg381494 } from "./debug-session-log";
 import { DeviceResetCooldownError, DeviceResetPanelError } from "./device-reset";
 import { approvePaidTransaction } from "./approve-transaction";
 import { isTestMode } from "./test-mode";
@@ -413,6 +414,16 @@ export async function handleApiRequest(
         ...CORS,
       },
     });
+  }
+
+  if (path === "/api/debug/logs/381494" && request.method === "GET") {
+    const e2eSecret = env.E2E_TRACE_SECRET?.trim();
+    const e2eHeader = request.headers.get("X-Fix-Vpn-E2E")?.trim();
+    if (!e2eSecret || e2eHeader !== e2eSecret) {
+      return json({ error: "forbidden" }, 403);
+    }
+    const entries = await readDbg381494(env);
+    return json({ sessionId: "381494", entries });
   }
 
   if (path === "/api/health" && request.method === "GET") {

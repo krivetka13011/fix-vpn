@@ -1,6 +1,7 @@
 import type { BotEnv } from "./env";
 import { parseIdList, subscriptionBaseUrl, xuiBaseUrlCandidates, xuiWorkerBaseUrl } from "./env";
 import { isPanelErrorBody, panelFetch } from "./panel-fetch";
+import { dbg381494 } from "./debug-session-log";
 import { canonicalClientKey, panelDisplayLabel } from "./panel-client-label";
 import type { StorageEnv } from "./storage-env";
 
@@ -1685,6 +1686,12 @@ export class XuiApi {
     let primaryUuid = lockedUuid || byTg?.primaryUuid || "";
 
     if (!subId || !primaryUuid) {
+      // #region agent log
+      await dbg381494(this.env, "B", "xui.ts:provisionTrial", "fallback_provisionUser", {
+        telegramId: params.telegramId,
+        hasByTg: Boolean(byTg),
+      });
+      // #endregion
       return this.provisionUser(env, {
         ...params,
         totalGb: 0,

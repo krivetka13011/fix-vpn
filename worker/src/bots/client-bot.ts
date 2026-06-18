@@ -214,7 +214,7 @@ async function showConnectOsMenu(
 async function waitForSubscriptionReady(
   env: BotEnv,
   userId: string,
-  attempts = 12,
+  attempts = 24,
   delayMs = 500
 ) {
   for (let i = 0; i < attempts; i += 1) {
@@ -528,6 +528,54 @@ async function showMainMenu(
   }
 }
 
+async function provisionTrialOnPanel(
+  env: BotEnv,
+  user: Awaited<ReturnType<typeof upsertTelegramUser>>,
+  tg: TelegramUser,
+  trialPlanLabel: string,
+  trialDates: ReturnType<typeof formatSubscriptionDateFields>,
+  expiryMs: number
+): Promise<void> {
+  const token = clientBotToken(env)!;
+  const chatId = tg.id;
+  try {
+    const sub = await getSubscription(env, user.id);
+    const xui = new XuiApi(env);
+    const provision = await xui.provisionTrial(env, {
+      userId: user.id,
+      username: user.username ?? tg.username ?? null,
+      displayName: user.display_name,
+      telegramId: tg.id,
+      expiryMs,
+      limitIp: 1,
+      dbSubscription: sub,
+    });
+
+    await persistProvision(env, user.id, provision, {
+      status: "active",
+      plan_type: "basic",
+      plan_label: trialPlanLabel,
+      billing_months: 0,
+      starts_at: trialDates.starts_at,
+      ends_at: trialDates.ends_at,
+      expires_at: trialDates.expires_at,
+      purchased_at: trialDates.purchased_at,
+      expiry_warned_at: null,
+      is_trial: true,
+      extra_devices: 0,
+    });
+  } catch (error) {
+    await resetTesterTrialPlan(env, user.id);
+    const detail = error instanceof Error ? error.message : "unknown";
+    console.error("activateTrial:", detail);
+    await sendMessage(
+      token,
+      chatId,
+      "Не удалось активировать пробный период в панели. Подождите минуту и нажмите «Пробный период» снова."
+    );
+  }
+}
+
 async function activateTrial(
   env: BotEnv,
   tg: TelegramUser,
@@ -569,7 +617,6 @@ async function activateTrial(
     : "Пробный · 24 ч";
   const trialDates = formatSubscriptionDateFields(expiryMs);
 
-  let sub = await getSubscription(env, user.id);
   await patchSubscription(env, user.id, {
     status: "active",
     plan_type: "basic",
@@ -586,42 +633,7 @@ async function activateTrial(
 
   await showConnectOsMenu(token, chatId, messageId);
 
-  try {
-    sub = await getSubscription(env, user.id);
-    const xui = new XuiApi(env);
-    const provision = await xui.provisionTrial(env, {
-      userId: user.id,
-      username: user.username ?? tg.username ?? null,
-      displayName: user.display_name,
-      telegramId: tg.id,
-      expiryMs,
-      limitIp: 1,
-      dbSubscription: sub,
-    });
-
-    await persistProvision(env, user.id, provision, {
-      status: "active",
-      plan_type: "basic",
-      plan_label: trialPlanLabel,
-      billing_months: 0,
-      starts_at: trialDates.starts_at,
-      ends_at: trialDates.ends_at,
-      expires_at: trialDates.expires_at,
-      purchased_at: trialDates.purchased_at,
-      expiry_warned_at: null,
-      is_trial: true,
-      extra_devices: 0,
-    });
-  } catch (error) {
-    await resetTesterTrialPlan(env, user.id);
-    const detail = error instanceof Error ? error.message : "unknown";
-    console.error("activateTrial:", detail);
-    await sendMessage(
-      token,
-      chatId,
-      "Не удалось активировать пробный период в панели. Подождите минуту и нажмите «Пробный период» снова."
-    );
-  }
+  void provisionTrialOnPanel(env, user, tg, trialPlanLabel, trialDates, expiryMs);
 }
 
 function formatSubscriptionPeriod(
@@ -1037,22 +1049,31 @@ export async function handleClientBotUpdate(
     }
     if (data.startsWith("c:os:")) {
       const os = data.split(":")[2];
+      await safeAnswerCallback(token, cq.id);
       const user = await upsertTelegramUser(env, tg);
       let sub = await waitForSubscriptionReady(env, user.id);
       if (sub?.status !== "active") {
-        await safeAnswerCallback(token, cq.id, "Сначала активируйте подписку", { showAlert: true });
+        await editMessage(
+          token,
+          chatId,
+          messageId,
+          "Сначала активируйте подписку или пробный период.",
+          { inline_keyboard: [[{ text: "◀️ Назад", callback_data: "c:menu" }]] }
+        );
         return;
       }
 
       const gate = await canConnectNewDevice(env, user.id, tg.id);
       if (!gate.ok) {
-        await safeAnswerCallback(token, cq.id, gate.message.replace(/<[^>]+>/g, ""), {
-          showAlert: true,
-        });
+        await editMessage(
+          token,
+          chatId,
+          messageId,
+          gate.message,
+          { inline_keyboard: [[{ text: "◀️ Назад", callback_data: "c:connect" }]] }
+        );
         return;
       }
-
-      await safeAnswerCallback(token, cq.id);
 
       let subId = sub.xray_sub_id?.trim() || null;
       if (!subId) {
@@ -1137,19 +1158,15 @@ export async function handleClientBotUpdate(
         sub?.xray_sub_id?.trim() && sub?.xray_uuid?.trim()
       );
 
-      if (!hasPanelBinding) {
-        await ensureVpnClientOnStart(env, user, tg);
-      }
-
-      const freshSub = await getSubscription(env, user.id);
-      if (freshSub?.status === "active") {
+      if (sub?.status === "active" && !hasPanelBinding) {
         await syncPanelSubIdForUser(
           env,
           user.id,
           tg.id,
           user.username,
           user.display_name,
-          freshSub
+          sub,
+          { force: true }
         );
       }
     } catch (error) {

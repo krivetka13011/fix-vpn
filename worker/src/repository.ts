@@ -200,6 +200,17 @@ export async function patchSubscription(
   userId: string,
   body: Record<string, unknown>
 ): Promise<void> {
+  const existing = await getSubscription(env, userId);
+  if (!existing) {
+    await d1Run(
+      env.DB,
+      `INSERT INTO subscriptions (id, user_id, plan_type, status, extra_devices, updated_at)
+       VALUES (?, ?, 'basic', 'none', 0, ?)`,
+      newId(),
+      userId,
+      nowIso()
+    );
+  }
   const fields: Record<string, unknown> = { ...body, updated_at: nowIso() };
   if ("is_trial" in fields) fields.is_trial = toBoolInt(Boolean(fields.is_trial));
   await d1Patch(env.DB, "subscriptions", fields, "user_id = ?", userId);

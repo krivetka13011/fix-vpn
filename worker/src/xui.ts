@@ -935,6 +935,13 @@ export class XuiApi {
       (await this.resolvePanelEmail(telegramId)) ||
       emailHint?.trim() ||
       String(telegramId);
+    const record = await this.fetchClientRecord(resolved);
+    if (
+      record?.enable === true &&
+      (await this.inboundClientsEnabled(telegramId, resolved))
+    ) {
+      return;
+    }
     const delays = [0, 600];
 
     for (const delay of delays) {
@@ -1133,7 +1140,7 @@ export class XuiApi {
       ...record,
       email,
       expiryTime: past,
-      enable: false,
+      enable: true,
       tgId: telegramId,
     });
   }
@@ -1494,6 +1501,8 @@ export class XuiApi {
       displayName?: string | null;
       telegramId: number;
       limitIp?: number;
+      /** false = только создать/найти клиента, не трогать тумблер enable */
+      enableClient?: boolean;
       dbSubscription?: {
         client_email?: string | null;
         xray_sub_id?: string | null;
@@ -1501,6 +1510,7 @@ export class XuiApi {
       } | null;
     }
   ): Promise<ProvisionResult> {
+    const enableClient = params.enableClient !== false;
     const limitIp = params.limitIp ?? 1;
     const dbKey = canonicalClientKey(params.telegramId);
     const panelLabel = panelDisplayLabel(
@@ -1576,8 +1586,10 @@ export class XuiApi {
       params.displayName,
       limitIp
     );
-    await this.touchPanelClient(params.telegramId, panelEmail, { limitIp });
-    await this.forceEnableClient(params.telegramId, panelEmail);
+    if (enableClient) {
+      await this.touchPanelClient(params.telegramId, panelEmail, { limitIp });
+      await this.forceEnableClient(params.telegramId, panelEmail);
+    }
 
     return this.toProvisionResult(
       env,

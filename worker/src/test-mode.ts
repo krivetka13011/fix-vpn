@@ -26,7 +26,7 @@ export function paidSubscriptionDurationMs(
   months: BillingMonths
 ): number {
   if (isTestMode(env)) {
-    const minutes = Number(env.TEST_SUBSCRIPTION_MINUTES || "5");
+    const minutes = Number(env.TEST_SUBSCRIPTION_MINUTES || "10");
     return Math.max(1, minutes) * 60 * 1000;
   }
   return months * 30 * 24 * 60 * 60 * 1000;

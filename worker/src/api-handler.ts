@@ -570,7 +570,7 @@ export async function handleApiRequest(
       trialDurationMinutes: env.TRIAL_DURATION_MINUTES || (isTestMode(env) ? "5" : null),
       testCheckoutPriceRub: env.TEST_CHECKOUT_PRICE_RUB || (isTestMode(env) ? "1" : null),
       testSubscriptionMinutes:
-        env.TEST_SUBSCRIPTION_MINUTES || (isTestMode(env) ? "5" : null),
+        env.TEST_SUBSCRIPTION_MINUTES || (isTestMode(env) ? "10" : null),
     });
   }
 

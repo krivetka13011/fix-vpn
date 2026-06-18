@@ -181,6 +181,19 @@ def fetch_subscription_by_user_id(user_id: str) -> dict[str, Any] | None:
     return rows[0] if rows else None
 
 
+def kv_get(key: str) -> str | None:
+    response = requests.get(
+        f"https://api.cloudflare.com/client/v4/accounts/{account_id()}/storage/kv/namespaces/{kv_namespace_id()}/values/{key}",
+        headers={"Authorization": cf_headers()["Authorization"]},
+        timeout=30,
+    )
+    if response.status_code == 404:
+        return None
+    if not response.ok:
+        raise RuntimeError(f"KV get failed: {response.status_code}")
+    return response.text
+
+
 def kv_put(key: str, value: str, expiration_ttl: int = 21_600) -> None:
     response = requests.put(
         f"https://api.cloudflare.com/client/v4/accounts/{account_id()}/storage/kv/namespaces/{kv_namespace_id()}/values/{key}",
@@ -254,3 +267,8 @@ def require_d1_env(*extra: str) -> None:
     if missing:
         print(f"missing {', '.join(missing)}", file=sys.stderr)
         raise SystemExit(1)
+
+
+def panel_sync_disabled() -> bool:
+    raw = os.environ.get("PANEL_SYNC_DISABLED", "").strip().lower()
+    return raw in ("1", "true", "yes")

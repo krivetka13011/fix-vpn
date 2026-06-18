@@ -86,9 +86,21 @@ python scripts/cleanup_for_fresh_test.py   # workflow_dispatch в Actions
 
 | Workflow | Что делает |
 |----------|------------|
-| Deploy FIX VPN | push → Worker + D1 migrate + provision |
-| Provision pending VPN clients | каждые 2 мин |
-| Sync panel clients | каждую минуту |
-| Refresh subscription caches | каждые 15 мин → KV `subcache:` |
+| Deploy FIX VPN | push → Worker + D1 migrate (без авто-sync панели) |
+| Provision pending VPN clients | **только вручную** — новые пользователи без panel binding |
+| Sync panel clients | **только вручную** — добавить отсутствующих на панели |
+| Refresh subscription caches | **только вручную** — KV `subcache:` только если кэш пуст |
 | Cleanup fresh test | ручной сброс D1 + панели |
 | Health monitor | smoke + Telegram alert |
+
+### Защита панели от перегрузки
+
+По умолчанию фоновые скрипты **не бьют панель** (`PANEL_SYNC_DISABLED=1`).
+
+Чтобы разрешить ручной sync в Actions, в GitHub Secrets задайте:
+
+`PANEL_SYNC_DISABLED` = `0`
+
+Полный reconcile всех активных клиентов (редко): в workflow добавьте env `PROVISION_FULL_SYNC=1`.
+
+Worker cron: раз в 15 минут — только истечение подписок (D1), без bulk-update панели.

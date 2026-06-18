@@ -1,8 +1,6 @@
 name: Refresh subscription caches
 
 on:
-  schedule:
-    - cron: "*/15 * * * *"
   workflow_dispatch:
 
 permissions:
@@ -21,8 +19,9 @@ jobs:
       - name: Install deps
         run: pip install requests
 
-      - name: Refresh caches from panel to KV
+      - name: Refresh missing KV sub caches from panel (manual only)
         env:
+          PANEL_SYNC_DISABLED: ${{ secrets.PANEL_SYNC_DISABLED || '1' }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           D1_DATABASE_ID: ${{ secrets.D1_DATABASE_ID }}

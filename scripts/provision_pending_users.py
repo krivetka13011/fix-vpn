@@ -15,6 +15,7 @@ from d1_utils import (
     d1_execute,
     fetch_subscriptions,
     kv_set_subcache,
+    panel_sync_disabled,
     patch_subscription,
     require_d1_env,
 )
@@ -518,9 +519,43 @@ def sync_active_panel_clients(session: requests.Session, base: str, clients: lis
     return synced
 
 
+def build_client_index(clients: list) -> tuple[dict[str, dict], dict[str, dict]]:
+    by_email: dict[str, dict] = {}
+    by_tg: dict[str, dict] = {}
+    for row in clients:
+        email = str(row.get("email") or "").strip()
+        tg = str(row.get("tgId") or "").strip()
+        if email:
+            by_email[email] = row
+        if tg:
+            by_tg[tg] = row
+    return by_email, by_tg
+
+
+def needs_panel_work(row: dict, by_email: dict[str, dict], by_tg: dict[str, dict]) -> bool:
+    if row.get("pending_xray_sub_id") or row.get("panel_ip_clear_requested_at"):
+        return True
+    if row.get("panel_sub_rotate_requested_at"):
+        return True
+    user = row.get("users") or {}
+    tg_id = int(user.get("telegram_id") or 0)
+    if not tg_id:
+        return False
+    sub_id = str(row.get("xray_sub_id") or "").strip()
+    if not sub_id:
+        return True
+    email = str(row.get("client_email") or tg_id).strip()
+    return email not in by_email and str(tg_id) not in by_tg and str(tg_id) not in by_email
+
+
 def main():
+    if panel_sync_disabled():
+        print("PANEL_SYNC_DISABLED — skip panel API")
+        return
+
     require_d1_env()
     worker = os.environ.get("WEBAPP_URL", "https://app.fixvp.xyz").rstrip("/")
+    full_sync = os.environ.get("PROVISION_FULL_SYNC", "").strip() == "1"
 
     rows = fetch_subscriptions()
 
@@ -528,12 +563,21 @@ def main():
     flags_cleared = clear_stuck_swap_flags()
     ip_cleared = clear_pending_panel_ips(session, base)
     clients = dedupe_clients_index(scan_clients(session, base))
-    dupes_removed = dedupe_panel_clients(session, base, clients, rows)
-    if dupes_removed:
-        clients = dedupe_clients_index(scan_clients(session, base))
+    by_email, by_tg = build_client_index(clients)
+
+    dupes_removed = 0
+    limits_synced = 0
+    active_synced = 0
+    if full_sync:
+        dupes_removed = dedupe_panel_clients(session, base, clients, rows)
+        if dupes_removed:
+            clients = dedupe_clients_index(scan_clients(session, base))
+            by_email, by_tg = build_client_index(clients)
+
     sub_rotated = process_pending_sub_rotations(session, base, clients, worker)
-    limits_synced = sync_client_limits(session, base, clients)
-    active_synced = sync_active_panel_clients(session, base, clients)
+    if full_sync:
+        limits_synced = sync_client_limits(session, base, clients)
+        active_synced = sync_active_panel_clients(session, base, clients)
 
     if not rows:
         print(
@@ -559,6 +603,9 @@ def main():
         return links if isinstance(links, list) else []
 
     for row in rows:
+        if not needs_panel_work(row, by_email, by_tg) and not full_sync:
+            continue
+
         user = row.get("users") or {}
         tg_id = int(user.get("telegram_id") or 0)
         if not tg_id:
@@ -569,7 +616,8 @@ def main():
             session, base, clients, row, worker, sub_links, panel_live
         )
         force_enable_panel_client(session, base, tg_id, str(tg_id), row)
-        clients = dedupe_clients_index(scan_clients(session, base))
+        by_email[str(panel.get("email") or tg_id)] = panel
+        by_tg[str(tg_id)] = panel
 
         sub_id = str(panel.get("subId") or "").strip()
         client_uuid = str(panel.get("uuid") or "").strip()
@@ -595,8 +643,9 @@ def main():
         provisioned += 1
 
     print(
-        f"provisioned {provisioned}/{len(rows)}, flags {flags_cleared}, ip_clears {ip_cleared}, "
-        f"dupes {dupes_removed}, rotations {sub_rotated}, limits {limits_synced}, active {active_synced}"
+        f"provisioned {provisioned}/{len(rows)} (full_sync={full_sync}), "
+        f"flags {flags_cleared}, ip_clears {ip_cleared}, dupes {dupes_removed}, "
+        f"rotations {sub_rotated}, limits {limits_synced}, active {active_synced}"
     )
 
 

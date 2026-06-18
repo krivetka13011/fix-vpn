@@ -1,8 +1,6 @@
 name: Provision pending VPN clients
 
 on:
-  schedule:
-    - cron: "*/2 * * * *"
   workflow_dispatch:
 
 permissions:
@@ -21,8 +19,9 @@ jobs:
       - name: Install deps
         run: pip install requests
 
-      - name: Provision users without panel binding
+      - name: Provision users without panel binding (manual only)
         env:
+          PANEL_SYNC_DISABLED: ${{ secrets.PANEL_SYNC_DISABLED || '1' }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           D1_DATABASE_ID: ${{ secrets.D1_DATABASE_ID }}
@@ -32,17 +31,3 @@ jobs:
           XUI_CLIENT_LIMIT_IP: "0"
           WEBAPP_URL: ${{ secrets.WEBAPP_URL || 'https://app.fixvp.xyz' }}
         run: python scripts/provision_pending_users.py
-
-      - name: Refresh subscription caches
-        continue-on-error: true
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          D1_DATABASE_ID: ${{ secrets.D1_DATABASE_ID }}
-          KV_NAMESPACE_ID: ${{ secrets.KV_NAMESPACE_ID }}
-          XUI_BASE_URL: ${{ secrets.XUI_BASE_URL || 'https://fixvp.xyz:54596/LXZo7cOhasXWon5uQu' }}
-          XUI_API_TOKEN: ${{ secrets.XUI_API_TOKEN }}
-          SUBSCRIPTION_BASE_URL: ${{ secrets.SUBSCRIPTION_BASE_URL || 'https://fixvp.xyz:2096' }}
-          SUBSCRIPTION_CLIENT_BASE_URL: ${{ secrets.SUBSCRIPTION_CLIENT_BASE_URL || 'https://fixvp.xyz:2096' }}
-          SUBSCRIPTION_PATH: "/sub"
-        run: python scripts/refresh_subscription_caches.py

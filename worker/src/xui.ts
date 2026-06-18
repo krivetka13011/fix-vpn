@@ -112,15 +112,22 @@ export class XuiApi {
     };
   }
 
-  private async request(path: string, init?: RequestInit): Promise<Response> {
+  private async request(
+    path: string,
+    init?: RequestInit,
+    timeoutMs = 15000
+  ): Promise<Response> {
     assertAllowed(path);
     let lastError: Error | null = null;
 
     for (const baseUrl of this.baseUrls) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
       try {
         const response = await panelFetch(this.env, `${baseUrl}${path}`, {
           ...init,
           headers: { ...this.headers(), ...(init?.headers || {}) },
+          signal: controller.signal,
         });
         const preview = await response.clone().text();
         if (isPanelHtmlError(preview, response.status)) {
@@ -131,7 +138,13 @@ export class XuiApi {
         }
         return response;
       } catch (error) {
-        lastError = error instanceof Error ? error : new Error(String(error));
+        if (error instanceof Error && error.name === "AbortError") {
+          lastError = new Error(`XUI timeout (${timeoutMs}ms) via ${baseUrl}`);
+        } else {
+          lastError = error instanceof Error ? error : new Error(String(error));
+        }
+      } finally {
+        clearTimeout(timer);
       }
     }
 
@@ -1660,61 +1673,62 @@ export class XuiApi {
     }
   ): Promise<ProvisionResult> {
     const limitIp = params.limitIp ?? 1;
-    const dbKey = canonicalClientKey(params.telegramId);
+    const byTg = await this.findClientByTelegramId(params.telegramId);
     const lockedSubId = params.dbSubscription?.xray_sub_id?.trim() || "";
     const lockedUuid = params.dbSubscription?.xray_uuid?.trim() || "";
 
-    let panelEmail = params.dbSubscription?.client_email?.trim() || dbKey;
-    let subId = lockedSubId;
-    let primaryUuid = lockedUuid;
-
-    const fromApi = await this.getClientByEmailApi(panelEmail);
-    if (fromApi) {
-      panelEmail = fromApi.email;
-      subId = subId || fromApi.subId;
-      primaryUuid = primaryUuid || fromApi.primaryUuid;
-    }
+    let panelEmail =
+      byTg?.email ||
+      params.dbSubscription?.client_email?.trim() ||
+      canonicalClientKey(params.telegramId);
+    let subId = lockedSubId || byTg?.subId || "";
+    let primaryUuid = lockedUuid || byTg?.primaryUuid || "";
 
     if (!subId || !primaryUuid) {
-      const byTg = await this.findClientByTelegramId(params.telegramId);
-      if (byTg) {
-        panelEmail = byTg.email;
-        subId = subId || byTg.subId;
-        primaryUuid = primaryUuid || byTg.primaryUuid;
-      }
+      return this.provisionUser(env, {
+        ...params,
+        totalGb: 0,
+      });
     }
 
-    if (subId && primaryUuid) {
-      const record = await this.fetchClientRecord(panelEmail);
-      if (record) {
-        const client = this.buildClient(
-          panelEmail,
-          subId,
-          params.telegramId,
-          params.expiryMs,
-          0,
-          true,
-          primaryUuid,
-          limitIp
-        );
-        await this.updateClient(client);
-        await this.syncPanelClientDisplayName(
-          { email: panelEmail, subId, primaryUuid },
-          params.telegramId,
-          params.username,
-          params.displayName,
-          limitIp,
-          params.expiryMs
-        );
-        await this.forceEnableClient(params.telegramId, panelEmail);
-        return this.toProvisionResult(env, dbKey, subId, primaryUuid);
-      }
+    const client = this.buildClient(
+      panelEmail,
+      subId,
+      params.telegramId,
+      params.expiryMs,
+      0,
+      true,
+      primaryUuid,
+      limitIp
+    );
+
+    try {
+      await this.updateClient(client);
+    } catch (error) {
+      const resolved = await this.findClientByTelegramId(params.telegramId);
+      if (!resolved?.email || resolved.email === panelEmail) throw error;
+      panelEmail = resolved.email;
+      subId = subId || resolved.subId;
+      primaryUuid = primaryUuid || resolved.primaryUuid;
+      await this.updateClient({
+        ...client,
+        email: panelEmail,
+        subId,
+        id: primaryUuid,
+      });
     }
 
-    return this.provisionUser(env, {
-      ...params,
-      totalGb: 0,
-    });
+    panelEmail = await this.syncPanelClientDisplayName(
+      { email: panelEmail, subId, primaryUuid },
+      params.telegramId,
+      params.username,
+      params.displayName,
+      limitIp,
+      params.expiryMs
+    );
+    await this.forceEnableClient(params.telegramId, panelEmail);
+
+    return this.toProvisionResult(env, panelEmail, subId, primaryUuid);
   }
 
   async provisionUser(
@@ -1780,7 +1794,7 @@ export class XuiApi {
 
     return this.toProvisionResult(
       env,
-      canonicalClientKey(params.telegramId),
+      panelEmail,
       prepared.subId,
       prepared.primaryUuid
     );

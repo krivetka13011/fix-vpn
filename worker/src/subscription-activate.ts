@@ -5,6 +5,7 @@ import {
 } from "./connect-links";
 import { panelLimitIpForSubscription } from "./device-limit";
 import type { BotEnv } from "./env";
+import { withTimeout } from "./async-timeout";
 import {
   getSubscription,
   kvClearSubscriptionPayloadCache,
@@ -85,21 +86,25 @@ export type ActivateTrialParams = {
   subscriptionFields: Record<string, unknown>;
 };
 
-/** Пробный период: панель + D1 binding + KV-кэш. */
+/** Пробный период: панель + D1 binding; KV-кэш подгружается в фоне. */
 export async function activateTrialSubscription(
   env: BotEnv,
   params: ActivateTrialParams
 ): Promise<string> {
   const xui = new XuiApi(env);
-  const provision = await xui.provisionTrial(env, {
-    userId: params.userId,
-    username: params.username,
-    displayName: params.displayName,
-    telegramId: params.telegramId,
-    expiryMs: params.expiryMs,
-    limitIp: 1,
-    dbSubscription: params.dbSubscription,
-  });
+  const provision = await withTimeout(
+    xui.provisionTrial(env, {
+      userId: params.userId,
+      username: params.username,
+      displayName: params.displayName,
+      telegramId: params.telegramId,
+      expiryMs: params.expiryMs,
+      limitIp: 1,
+      dbSubscription: params.dbSubscription,
+    }),
+    25000,
+    "Панель не ответила вовремя при активации пробного периода"
+  );
 
   const subId = await persistPanelProvision(
     env,
@@ -107,7 +112,9 @@ export async function activateTrialSubscription(
     provision,
     params.subscriptionFields
   );
-  await refreshSubscriptionCache(env, params.userId, subId);
+  void refreshSubscriptionCache(env, params.userId, subId).catch((error) =>
+    console.error("refreshSubscriptionCache:", error)
+  );
   return subId;
 }
 
@@ -144,7 +151,9 @@ export async function activatePaidSubscription(
     provision,
     params.subscriptionFields
   );
-  await refreshSubscriptionCache(env, params.userId, subId);
+  void refreshSubscriptionCache(env, params.userId, subId).catch((error) =>
+    console.error("refreshSubscriptionCache:", error)
+  );
   return subId;
 }
 

@@ -206,13 +206,13 @@ async function showConnectOsMenu(
   const markup = connectOsKeyboard();
   try {
     if (messageId) {
-      await editMessage(token, chatId, messageId, text, markup);
+      await editMessage(token, chatId, messageId, text, markup, undefined);
     } else {
-      await sendMessage(token, chatId, text, markup);
+      await sendMessage(token, chatId, text, markup, undefined);
     }
   } catch (error) {
     console.error("showConnectOsMenu:", error);
-    await sendMessage(token, chatId, text, markup);
+    await sendMessage(token, chatId, text, markup, undefined);
   }
 }
 
@@ -482,11 +482,21 @@ async function activateTrial(
 
   if (messageId) {
     try {
-      await editMessage(token, chatId, messageId, "⏳ Активируем пробный период…");
+      await editMessage(
+        token,
+        chatId,
+        messageId,
+        "⏳ Активируем пробный период…",
+        undefined,
+        undefined
+      );
     } catch {
       /* ignore */
     }
   }
+
+  const failText =
+    "Не удалось активировать пробный период в панели. Подождите минуту и нажмите «Пробный период» снова.";
 
   try {
     await activateTrialSubscription(env, {
@@ -512,22 +522,35 @@ async function activateTrial(
     });
     await showConnectOsMenu(token, chatId, messageId);
   } catch (error) {
-    await resetTesterTrialPlan(env, user.id);
     const detail = error instanceof Error ? error.message : "unknown";
     console.error("activateTrial:", detail);
-    const failText =
-      "Не удалось активировать пробный период в панели. Подождите минуту и нажмите «Пробный период» снова.";
+
+    const subAfter = await getSubscription(env, user.id);
+    if (subAfter?.status === "active" && subAfter.is_trial) {
+      await showConnectOsMenu(token, chatId, messageId);
+      return;
+    }
+
+    if (isTestMode(env)) {
+      await resetTesterTrialPlan(env, user.id);
+    }
+
+    const errorText =
+      detail.includes("не ответила вовремя") || detail.includes("timeout")
+        ? `${failText}\n\nПричина: панель отвечает слишком долго.`
+        : failText;
+
     if (messageId) {
       try {
-        await editMessage(token, chatId, messageId, failText, {
+        await editMessage(token, chatId, messageId, errorText, {
           inline_keyboard: [[{ text: "◀️ Назад", callback_data: "c:menu" }]],
-        });
+        }, undefined);
         return;
       } catch {
         /* fall through */
       }
     }
-    await sendMessage(token, chatId, failText);
+    await sendMessage(token, chatId, errorText);
   }
 }
 

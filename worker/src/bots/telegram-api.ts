@@ -25,14 +25,16 @@ export async function sendMessage(
   token: string,
   chatId: number,
   text: string,
-  replyMarkup?: Record<string, unknown>
+  replyMarkup?: Record<string, unknown>,
+  parseMode: "HTML" | undefined = "HTML"
 ): Promise<void> {
-  await tgCall(token, "sendMessage", {
+  const body: Record<string, unknown> = {
     chat_id: chatId,
     text,
     reply_markup: replyMarkup,
-    parse_mode: "HTML",
-  });
+  };
+  if (parseMode) body.parse_mode = parseMode;
+  await tgCall(token, "sendMessage", body);
 }
 
 export async function editMessage(
@@ -40,15 +42,17 @@ export async function editMessage(
   chatId: number,
   messageId: number,
   text: string,
-  replyMarkup?: Record<string, unknown>
+  replyMarkup?: Record<string, unknown>,
+  parseMode: "HTML" | undefined = "HTML"
 ): Promise<void> {
-  await tgCall(token, "editMessageText", {
+  const body: Record<string, unknown> = {
     chat_id: chatId,
     message_id: messageId,
     text,
     reply_markup: replyMarkup,
-    parse_mode: "HTML",
-  });
+  };
+  if (parseMode) body.parse_mode = parseMode;
+  await tgCall(token, "editMessageText", body);
 }
 
 export async function answerCallback(

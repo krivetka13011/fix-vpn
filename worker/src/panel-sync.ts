@@ -52,7 +52,17 @@ export async function syncPanelSubIdForUser(
   const lockedUuid = sub?.xray_uuid?.trim() || "";
 
   if (!options?.force && lockedSubId && lockedUuid) {
-    return lockedSubId;
+    try {
+      const xui = new XuiApi(env);
+      const onPanel =
+        (await xui.findClientBySubId(lockedSubId)) ||
+        (await xui.resolvePanelClientForTelegram(telegramId, sub, username));
+      if (onPanel?.subId?.trim()) {
+        return lockedSubId;
+      }
+    } catch (error) {
+      console.error("syncPanelSubId panel verify:", error);
+    }
   }
 
   let panel: { email: string; subId: string; primaryUuid: string } | null = null;
@@ -69,6 +79,7 @@ export async function syncPanelSubIdForUser(
         displayName,
         telegramId,
         limitIp: panelLimitIpForSubscription(sub),
+        enableClient: sub?.status === "active",
         dbSubscription: sub,
       });
       panel = {

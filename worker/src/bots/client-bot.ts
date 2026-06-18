@@ -15,7 +15,6 @@ import {
   patchSubscription,
   patchTransaction,
   resetTesterTrialPlan,
-  saveXuiInboundClients,
   setSession,
   upsertTelegramUser,
   upsertVpnDeviceBinding,
@@ -69,6 +68,11 @@ import {
 } from "../connect-links";
 import { syncPanelSubIdForUser } from "../panel-sync";
 import { formatSubscriptionPeriodMsk } from "../datetime-msk";
+import { escapeTelegramHtml } from "../telegram-html";
+import {
+  activateTrialSubscription,
+  ensurePanelClientRecord,
+} from "../subscription-activate";
 import {
   formatSubscriptionDateFields,
   isTestMode,
@@ -115,8 +119,9 @@ async function safeAnswerCallback(
 }
 
 function mainMenuText(displayName: string): string {
+  const safeName = escapeTelegramHtml(displayName);
   return (
-    `Привет, <b>${displayName}</b>! 👋\n` +
+    `Привет, <b>${safeName}</b>! 👋\n` +
     `⚡️ VPN нового уровня\n` +
     `🌍 Свободный доступ к сайтам и сервисам\n` +
     `📞 Звонки и видео без ограничений\n` +
@@ -343,53 +348,16 @@ function buildProfileKeyboard(
   return { inline_keyboard: rows };
 }
 
-async function persistProvision(
-  env: BotEnv,
-  userId: string,
-  provision: {
-    email: string;
-    subId: string;
-    subscriptionUrl: string;
-    primaryUuid: string;
-    inbounds: Array<{ inboundId: number; clientUuid: string }>;
-  },
-  subscription: Record<string, unknown>
-): Promise<void> {
-  const current = await getSubscription(env, userId);
-  const lockedSubId = current?.xray_sub_id?.trim();
-  const subId = lockedSubId || provision.subId;
-  const subscriptionUrl = buildSubscriptionUrl(env, subId);
-
-  if (provision.inbounds.length > 0) {
-    await saveXuiInboundClients(
-      env,
-      userId,
-      provision.inbounds.map((row) => ({
-        inboundId: row.inboundId,
-        clientUuid: row.clientUuid,
-        clientEmail: provision.email,
-      }))
-    );
-  }
-  await patchSubscription(env, userId, {
-    xray_uuid: provision.primaryUuid,
-    xray_sub_id: subId,
-    subscription_url: subscriptionUrl,
-    client_email: provision.email,
-    ...subscription,
-  });
-}
-
-function buildSubscriptionUrl(env: BotEnv, subId: string): string {
-  return buildPanelSubscriptionUrlForUser(env, subId);
-}
-
 function connectOsMessage(os: string): string {
   return (
     `ОС: <b>${osLabel(os)}</b>\n` +
     `Нажмите кнопку нужного приложения ниже для автоматического импорта подписки.\n\n` +
     `⚠️ Удалите все старые подписки перед импортом.`
   );
+}
+
+function buildSubscriptionUrl(env: BotEnv, subId: string): string {
+  return buildPanelSubscriptionUrlForUser(env, subId);
 }
 
 function buildConnectRedirects(
@@ -410,15 +378,21 @@ async function syncSubscriptionFromPanel(
   userId: string,
   tg: TelegramUser
 ): Promise<string | null> {
+  const user = await getUserByTelegramId(env, tg.id);
   const sub = await getSubscription(env, userId);
   const lockedSubId = sub?.xray_sub_id?.trim();
-  const lockedUuid = sub?.xray_uuid?.trim();
 
   try {
     const xui = new XuiApi(env);
 
     const panelClient = lockedSubId
-      ? await xui.ensureLockedPanelClient(env, tg.id, sub)
+      ? await xui.ensureLockedPanelClient(
+          env,
+          tg.id,
+          sub,
+          user?.username ?? tg.username ?? null,
+          user?.display_name ?? tg.first_name
+        )
       : await xui.resolveExistingClient(tg.id, sub);
 
     if (!panelClient?.subId?.trim()) {
@@ -464,125 +438,14 @@ async function resolvePanelSubId(
   );
 }
 
-async function ensureVpnClientOnStart(
-  env: BotEnv,
-  user: Awaited<ReturnType<typeof upsertTelegramUser>>,
-  tg: TelegramUser
-): Promise<void> {
-  let sub = await getSubscription(env, user.id);
-
-  try {
-    const xui = new XuiApi(env);
-    await xui.syncPanelWithDb(env, user.id, tg.id, sub);
-    sub = (await getSubscription(env, user.id)) ?? sub;
-    const provision = await xui.ensureClientPrepared(env, {
-      userId: user.id,
-      username: user.username,
-      displayName: user.display_name,
-      telegramId: tg.id,
-      limitIp: panelLimitIpForSubscription(sub),
-      dbSubscription: sub,
-    });
-    await persistProvision(env, user.id, provision, {
-      status: sub?.status || "none",
-      plan_type: "basic",
-      plan_label: sub?.plan_label ?? null,
-      billing_months: sub?.billing_months ?? null,
-      starts_at: sub?.starts_at ?? null,
-      ends_at: sub?.ends_at ?? null,
-      is_trial: sub?.is_trial ?? false,
-    });
-    return;
-  } catch (error) {
-    console.error("ensureVpnClientOnStart panel:", error);
-  }
-
-  const syncedUrl = await syncSubscriptionFromPanel(env, user.id, tg);
-  if (syncedUrl) return;
-
-  if (sub?.client_email && sub.subscription_url && sub.xray_sub_id && sub.xray_uuid) {
-    return;
-  }
-
-  console.error(
-    "ensureVpnClientOnStart: panel client missing and panel API unavailable for",
-    tg.id
-  );
-}
-
-async function showMainMenu(
-  env: BotEnv,
-  chatId: number,
-  tg: TelegramUser,
-  messageId?: number
-): Promise<void> {
-  const token = clientBotToken(env)!;
-  const user = await upsertTelegramUser(env, tg);
-  const freshUser = (await finalizeTrialButtonGrace(env, tg.id)) ?? user;
-  const text = mainMenuText(freshUser.display_name);
-  const markup = mainMenuKeyboard(env, trialButtonHidden(freshUser));
-  if (messageId) {
-    await editMessage(token, chatId, messageId, text, markup);
-  } else {
-    await sendMessage(token, chatId, text, markup);
-  }
-}
-
-async function provisionTrialOnPanel(
-  env: BotEnv,
-  user: Awaited<ReturnType<typeof upsertTelegramUser>>,
-  tg: TelegramUser,
-  trialPlanLabel: string,
-  trialDates: ReturnType<typeof formatSubscriptionDateFields>,
-  expiryMs: number
-): Promise<void> {
-  const token = clientBotToken(env)!;
-  const chatId = tg.id;
-  try {
-    const sub = await getSubscription(env, user.id);
-    const xui = new XuiApi(env);
-    const provision = await xui.provisionTrial(env, {
-      userId: user.id,
-      username: user.username ?? tg.username ?? null,
-      displayName: user.display_name,
-      telegramId: tg.id,
-      expiryMs,
-      limitIp: 1,
-      dbSubscription: sub,
-    });
-
-    await persistProvision(env, user.id, provision, {
-      status: "active",
-      plan_type: "basic",
-      plan_label: trialPlanLabel,
-      billing_months: 0,
-      starts_at: trialDates.starts_at,
-      ends_at: trialDates.ends_at,
-      expires_at: trialDates.expires_at,
-      purchased_at: trialDates.purchased_at,
-      expiry_warned_at: null,
-      is_trial: true,
-      extra_devices: 0,
-    });
-  } catch (error) {
-    await resetTesterTrialPlan(env, user.id);
-    const detail = error instanceof Error ? error.message : "unknown";
-    console.error("activateTrial:", detail);
-    await sendMessage(
-      token,
-      chatId,
-      "Не удалось активировать пробный период в панели. Подождите минуту и нажмите «Пробный период» снова."
-    );
-  }
-}
-
 async function activateTrial(
   env: BotEnv,
   tg: TelegramUser,
   chatId: number,
   messageId?: number
 ): Promise<void> {
-  const token = clientBotToken(env)!;
+  const token = clientBotToken(env);
+  if (!token) return;
   const user = await upsertTelegramUser(env, tg);
 
   if (user.has_used_trial) {
@@ -617,23 +480,88 @@ async function activateTrial(
     : "Пробный · 24 ч";
   const trialDates = formatSubscriptionDateFields(expiryMs);
 
-  await patchSubscription(env, user.id, {
-    status: "active",
-    plan_type: "basic",
-    plan_label: trialPlanLabel,
-    billing_months: 0,
-    starts_at: trialDates.starts_at,
-    ends_at: trialDates.ends_at,
-    expires_at: trialDates.expires_at,
-    purchased_at: trialDates.purchased_at,
-    expiry_warned_at: null,
-    is_trial: true,
-    extra_devices: 0,
-  });
+  if (messageId) {
+    try {
+      await editMessage(token, chatId, messageId, "⏳ Активируем пробный период…");
+    } catch {
+      /* ignore */
+    }
+  }
 
-  await showConnectOsMenu(token, chatId, messageId);
+  try {
+    await activateTrialSubscription(env, {
+      userId: user.id,
+      telegramId: tg.id,
+      username: user.username ?? tg.username ?? null,
+      displayName: user.display_name,
+      expiryMs,
+      dbSubscription: existingSub,
+      subscriptionFields: {
+        status: "active",
+        plan_type: "basic",
+        plan_label: trialPlanLabel,
+        billing_months: 0,
+        starts_at: trialDates.starts_at,
+        ends_at: trialDates.ends_at,
+        expires_at: trialDates.expires_at,
+        purchased_at: trialDates.purchased_at,
+        expiry_warned_at: null,
+        is_trial: true,
+        extra_devices: 0,
+      },
+    });
+    await showConnectOsMenu(token, chatId, messageId);
+  } catch (error) {
+    await resetTesterTrialPlan(env, user.id);
+    const detail = error instanceof Error ? error.message : "unknown";
+    console.error("activateTrial:", detail);
+    const failText =
+      "Не удалось активировать пробный период в панели. Подождите минуту и нажмите «Пробный период» снова.";
+    if (messageId) {
+      try {
+        await editMessage(token, chatId, messageId, failText, {
+          inline_keyboard: [[{ text: "◀️ Назад", callback_data: "c:menu" }]],
+        });
+        return;
+      } catch {
+        /* fall through */
+      }
+    }
+    await sendMessage(token, chatId, failText);
+  }
+}
 
-  void provisionTrialOnPanel(env, user, tg, trialPlanLabel, trialDates, expiryMs);
+async function showMainMenu(
+  env: BotEnv,
+  chatId: number,
+  tg: TelegramUser,
+  messageId?: number
+): Promise<void> {
+  const token = clientBotToken(env);
+  if (!token) {
+    console.error("showMainMenu: missing CLIENT_BOT_TOKEN");
+    return;
+  }
+  const user = await upsertTelegramUser(env, tg);
+  const freshUser = (await finalizeTrialButtonGrace(env, tg.id)) ?? user;
+  const sub = await getSubscription(env, freshUser.id);
+  const text = mainMenuText(freshUser.display_name);
+  const markup = mainMenuKeyboard(env, trialButtonHidden(freshUser, sub));
+  try {
+    if (messageId) {
+      await editMessage(token, chatId, messageId, text, markup);
+    } else {
+      await sendMessage(token, chatId, text, markup);
+    }
+  } catch (error) {
+    console.error("showMainMenu:", error);
+    const plain = `Привет, ${freshUser.display_name}! Выберите действие:`;
+    if (messageId) {
+      await editMessage(token, chatId, messageId, plain, markup, undefined);
+    } else {
+      await sendMessage(token, chatId, plain, markup, undefined);
+    }
+  }
 }
 
 function formatSubscriptionPeriod(
@@ -763,8 +691,23 @@ export async function handleClientBotUpdate(
   update: TgUpdate
 ): Promise<void> {
   const token = clientBotToken(env);
-  if (!token) return;
+  if (!token) {
+    console.error("handleClientBotUpdate: missing CLIENT_BOT_TOKEN");
+    return;
+  }
 
+  try {
+    await handleClientBotUpdateInner(env, update, token);
+  } catch (error) {
+    console.error("handleClientBotUpdate:", error);
+  }
+}
+
+async function handleClientBotUpdateInner(
+  env: BotEnv,
+  update: TgUpdate,
+  token: string
+): Promise<void> {
   if (update.callback_query) {
     const cq = update.callback_query;
     const data = cq.data || "";
@@ -1141,36 +1084,50 @@ export async function handleClientBotUpdate(
   const text = message.text?.trim() || "";
 
   if (text.startsWith("/start")) {
-    const ref = parseStartRef(text);
-    let user;
-    if (ref) {
-      const partner = await getPartner(env, ref);
-      user = partner
-        ? await upsertTelegramUser(env, tg, ref)
-        : await upsertTelegramUser(env, tg);
-    } else {
-      user = await upsertTelegramUser(env, tg);
-    }
-    await showMainMenu(env, chatId, tg);
     try {
+      const ref = parseStartRef(text);
+      let user;
+      if (ref) {
+        const partner = await getPartner(env, ref);
+        user = partner
+          ? await upsertTelegramUser(env, tg, ref)
+          : await upsertTelegramUser(env, tg);
+      } else {
+        user = await upsertTelegramUser(env, tg);
+      }
+      await showMainMenu(env, chatId, tg);
       const sub = await getSubscription(env, user.id);
       const hasPanelBinding = Boolean(
         sub?.xray_sub_id?.trim() && sub?.xray_uuid?.trim()
       );
-
-      if (sub?.status === "active" && !hasPanelBinding) {
+      if (!hasPanelBinding) {
+        void ensurePanelClientRecord(env, {
+          userId: user.id,
+          telegramId: tg.id,
+          username: user.username,
+          displayName: user.display_name,
+          dbSubscription: sub,
+          enableClient: sub?.status === "active",
+        }).catch((error) => console.error("start panel record:", error));
+      } else if (sub?.status === "active") {
         await syncPanelSubIdForUser(
           env,
           user.id,
           tg.id,
           user.username,
           user.display_name,
-          sub,
-          { force: true }
+          sub
         );
       }
     } catch (error) {
-      console.error("start panel sync:", error);
+      console.error("/start:", error);
+      await sendMessage(
+        token,
+        chatId,
+        "Привет! Что-то пошло не так — попробуйте /start ещё раз.",
+        undefined,
+        undefined
+      );
     }
     return;
   }

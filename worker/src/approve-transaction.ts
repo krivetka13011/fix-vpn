@@ -11,7 +11,6 @@ import {
 import { formatMskDateOnly } from "./datetime-msk";
 import { panelLimitIpForSubscription, syncPanelDeviceLimit } from "./device-limit";
 import { sendMessage } from "./bots/telegram-api";
-import { XuiApi } from "./xui";
 import {
   addPartnerBalance,
   getSubscription,
@@ -19,18 +18,13 @@ import {
   patchSubscription,
   patchTransaction,
   patchUser,
-  saveXuiInboundClients,
 } from "./repository";
 import { applyReferralPaymentBonuses } from "./referral-bonus";
 import { getUserById } from "./repository";
+import { activatePaidSubscription } from "./subscription-activate";
 
 function formatDateFromMs(ms: number): string {
   return formatMskDateOnly(ms);
-}
-
-function buildSubscriptionUrl(env: BotEnv, subId: string): string {
-  const base = env.WEBAPP_URL?.replace(/\/$/, "") || "";
-  return base ? `${base}/sub/${subId}` : `/sub/${subId}`;
 }
 
 export async function approvePaidTransaction(
@@ -48,7 +42,6 @@ export async function approvePaidTransaction(
   const months = txn.billing_months as BillingMonths;
   const planType = (txn.plan_type === "personal" ? "personal" : "basic") as PlanType;
   const extraDevices = planType === "personal" ? 0 : Number(txn.extra_devices ?? 0);
-  const xui = new XuiApi(env);
   const sub = await getSubscription(env, user.id);
   const subWithDevices = {
     ...(sub ?? { plan_type: planType, extra_devices: 0 }),
@@ -60,35 +53,9 @@ export async function approvePaidTransaction(
     sub?.status === "active" && sub.expires_at
       ? new Date(sub.expires_at).getTime()
       : sub?.status === "active" && sub.ends_at
-        ? new Date(`${sub.ends_at}T23:59:59`).getTime()
+        ? new Date(`${sub.ends_at}T23:59:59+03:00`).getTime()
         : Date.now();
   const expiryMs = Math.floor(Math.max(Date.now(), baseMs) + extendMs);
-  const provision = await xui.provisionUser(env, {
-    userId: user.id,
-    username: user.username,
-    displayName: user.display_name,
-    telegramId: user.telegram_id,
-    expiryMs,
-    limitIp: panelLimitIpForSubscription(subWithDevices),
-    dbSubscription: sub,
-  });
-
-  const current = await getSubscription(env, user.id);
-  const lockedSubId = current?.xray_sub_id?.trim();
-  const subId = lockedSubId || provision.subId;
-  const subscriptionUrl = buildSubscriptionUrl(env, subId);
-
-  if (provision.inbounds.length > 0) {
-    await saveXuiInboundClients(
-      env,
-      user.id,
-      provision.inbounds.map((row) => ({
-        inboundId: row.inboundId,
-        clientUuid: row.clientUuid,
-        clientEmail: provision.email,
-      }))
-    );
-  }
 
   const now = Date.now();
   const activationStart =
@@ -104,26 +71,37 @@ export async function approvePaidTransaction(
         purchased_at: sub?.purchased_at || new Date(now).toISOString(),
       };
 
-  await patchSubscription(env, user.id, {
-    status: "active",
-    plan_type: planType,
-    plan_label: isTestMode(env)
-      ? `${TARIFFS[planType].name} · тест ${Math.round(extendMs / 60000)} мин`
-      : `${TARIFFS[planType].name} · ${periodLabel(months)}`,
-    billing_months: months,
-    extra_devices: extraDevices,
-    starts_at: dateFields.starts_at,
-    ends_at: dateFields.ends_at,
-    expires_at: dateFields.expires_at,
-    purchased_at: dateFields.purchased_at,
-    expiry_warned_at: null,
-    is_trial: false,
-    client_email: provision.email,
-    xray_sub_id: subId,
-    xray_uuid: provision.primaryUuid,
-    subscription_url: subscriptionUrl,
-    updated_at: new Date().toISOString(),
-  });
+  try {
+    await activatePaidSubscription(env, {
+      userId: user.id,
+      telegramId: user.telegram_id,
+      username: user.username,
+      displayName: user.display_name,
+      expiryMs,
+      dbSubscription: sub,
+      limitIp: panelLimitIpForSubscription(subWithDevices),
+      subscriptionFields: {
+        status: "active",
+        plan_type: planType,
+        plan_label: isTestMode(env)
+          ? `${TARIFFS[planType].name} · тест ${Math.round(extendMs / 60000)} мин`
+          : `${TARIFFS[planType].name} · ${periodLabel(months)}`,
+        billing_months: months,
+        extra_devices: extraDevices,
+        starts_at: dateFields.starts_at,
+        ends_at: dateFields.ends_at,
+        expires_at: dateFields.expires_at,
+        purchased_at: dateFields.purchased_at,
+        expiry_warned_at: null,
+        is_trial: false,
+        updated_at: new Date().toISOString(),
+      },
+    });
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : "unknown";
+    console.error("approvePaidTransaction provision:", detail);
+    return { ok: false, message: "Не удалось активировать подписку в панели" };
+  }
 
   await syncPanelDeviceLimit(env, user.id);
 

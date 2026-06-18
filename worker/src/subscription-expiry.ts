@@ -1,7 +1,7 @@
 import { clientBotToken, type BotEnv } from "./env";
 import { sendMessage } from "./bots/telegram-api";
 import { d1All } from "./d1-db";
-import { patchSubscription } from "./repository";
+import { patchSubscription, patchUser, kvClearSubscriptionPayloadCache } from "./repository";
 import { XuiApi } from "./xui";
 
 type ExpiringRow = {
@@ -85,9 +85,14 @@ export async function runSubscriptionExpiryJobs(env: BotEnv): Promise<void> {
 
   for (const row of expiredRows) {
     try {
+      const isTrial = row.is_trial === 1 || row.is_trial === true;
       await patchSubscription(env, row.user_id, {
         status: "expired",
       });
+      if (isTrial) {
+        await patchUser(env, row.user_id, { has_used_trial: true });
+      }
+      await kvClearSubscriptionPayloadCache(env, row.user_id);
       const chatId = row.telegram_id;
       if (chatId) {
         try {
@@ -98,7 +103,6 @@ export async function runSubscriptionExpiryJobs(env: BotEnv): Promise<void> {
         }
       }
       if (!chatId) continue;
-      const isTrial = row.is_trial === 1 || row.is_trial === true;
       await sendMessage(
         token,
         chatId,

@@ -420,7 +420,10 @@ export class XuiApi {
       client_email?: string | null;
       xray_sub_id?: string | null;
       xray_uuid?: string | null;
-    } | null
+      status?: string | null;
+    } | null,
+    username?: string | null,
+    displayName?: string | null
   ): Promise<{ email: string; subId: string; primaryUuid: string }> {
     const email =
       db?.client_email?.trim() || this.buildClientEmail(null, telegramId);
@@ -454,11 +457,18 @@ export class XuiApi {
         return dbFallback();
       }
 
-      await this.rebindPanelClientEmail(panel, telegramId);
-      await this.ensureClientEnabled(String(telegramId), telegramId);
+      await this.syncPanelClientDisplayName(
+        panel,
+        telegramId,
+        username ?? null,
+        displayName ?? null
+      );
+      if (db?.status === "active") {
+        await this.ensureClientEnabled(panel.email, telegramId);
+      }
 
       return {
-        email: String(telegramId),
+        email: panel.email,
         subId: panel.subId,
         primaryUuid: panel.primaryUuid,
       };
@@ -942,6 +952,10 @@ export class XuiApi {
     ) {
       return;
     }
+    const resolvedExpiry = await this.resolveClientExpiryMs(telegramId, resolved);
+    if (resolvedExpiry > 0 && resolvedExpiry <= Date.now()) {
+      return;
+    }
     const delays = [0, 600];
 
     for (const delay of delays) {
@@ -1140,7 +1154,7 @@ export class XuiApi {
       ...record,
       email,
       expiryTime: past,
-      enable: true,
+      enable: false,
       tgId: telegramId,
     });
   }

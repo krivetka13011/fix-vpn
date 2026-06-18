@@ -83,8 +83,9 @@ export function resetDevices(): Promise<{ ok: boolean; message?: string }> {
 
 export function purchaseDevices(extraDevices: number): Promise<{
   ok: boolean;
+  paymentUrl: string;
+  amount: number;
   message: string;
-  user: UserProfile;
 }> {
   return api("/api/purchase-devices", {
     method: "POST",

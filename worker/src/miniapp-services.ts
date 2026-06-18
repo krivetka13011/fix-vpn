@@ -11,21 +11,27 @@ import {
 } from "./connect-links";
 import { syncPanelSubIdForUser } from "./panel-sync";
 import {
-  getSubscription,
-  getUserByTelegramId,
-  patchSubscription,
-  upsertTelegramUser,
-} from "./repository";
-import type { TelegramUser } from "./telegram";
-import type { UserBundle } from "./types";
-import { XuiApi } from "./xui";
-import {
   countUsedDeviceSlots,
+  canConnectNewDevice,
   fetchPanelDeviceIps,
   subscriptionDeviceLimit,
   syncPanelDeviceLimit,
   telegramIdFromClientEmail,
 } from "./device-limit";
+import { deviceSlotDisplayName } from "./panel-client-label";
+import {
+  getSubscription,
+  getUserById,
+  getUserByTelegramId,
+  listVpnDeviceBindings,
+  markTrialFirstConnectAt,
+  patchSubscription,
+  upsertTelegramUser,
+  upsertVpnDeviceBinding,
+} from "./repository";
+import type { TelegramUser } from "./telegram";
+import type { UserBundle } from "./types";
+import { XuiApi } from "./xui";
 import { DeviceResetCooldownError, deviceResetNotice, resetPanelClient } from "./device-reset";
 
 export type MiniappPlatform = "android" | "ios" | "windows" | "mac";
@@ -34,6 +40,46 @@ export type MiniappClient = "happ" | "v2raytun" | "hiddify";
 function mapPlatform(platform: string): string {
   if (platform === "mac") return "macos";
   return platform;
+}
+
+function miniappClientLabel(client: MiniappClient): string {
+  if (client === "v2raytun") return "V2RayTun";
+  if (client === "hiddify") return "Hiddify";
+  return "Happ";
+}
+
+function deviceBindingLabel(platform: MiniappPlatform, client: MiniappClient): string {
+  const osNames: Record<string, string> = {
+    ios: "iPhone / iPad",
+    android: "Android",
+    windows: "Windows ПК",
+    macos: "Mac",
+  };
+  const os = mapPlatform(platform);
+  return `${osNames[os] || os} · ${miniappClientLabel(client)}`;
+}
+
+async function recordMiniappDeviceConnect(
+  env: BotEnv,
+  userId: string,
+  tg: TelegramUser,
+  platform: MiniappPlatform,
+  client: MiniappClient
+): Promise<void> {
+  const os = mapPlatform(platform);
+  const vpnClient = mapClient(client);
+  await upsertVpnDeviceBinding(
+    env,
+    userId,
+    os,
+    vpnClient,
+    deviceBindingLabel(platform, client)
+  );
+  await syncPanelDeviceLimit(env, userId);
+  const sub = await getSubscription(env, userId);
+  if (sub?.is_trial) {
+    await markTrialFirstConnectAt(env, tg.id);
+  }
 }
 
 function mapClient(client: string): VpnClientId {
@@ -121,31 +167,52 @@ export interface MiniappDeviceRow {
 
 export async function fetchMiniappDevices(
   env: BotEnv,
-  userId: string,
-  options?: { lightweight?: boolean }
+  userId: string
 ): Promise<{
   used: number;
   limit: number;
+  limitDisplay: number | null;
   panelOnline: boolean;
   devices: MiniappDeviceRow[];
+  hasClient: boolean;
+  canAddDevices: boolean;
 }> {
   const sub = await getSubscription(env, userId);
+  const user = await getUserById(env, userId);
   const limit = subscriptionDeviceLimit(sub);
-  const telegramId = telegramIdFromClientEmail(sub?.client_email);
-
-  if (options?.lightweight) {
-    const used = telegramId
+  const telegramId =
+    telegramIdFromClientEmail(sub?.client_email) ?? user?.telegram_id ?? 0;
+  const rawUsed =
+    Number.isFinite(telegramId) && telegramId > 0
       ? await countUsedDeviceSlots(env, telegramId, userId)
       : 0;
-    return { used, limit, panelOnline: false, devices: [] };
+  const used =
+    limit === 0 ? rawUsed : Math.min(rawUsed, limit > 0 ? limit : rawUsed);
+
+  const bindings = await listVpnDeviceBindings(env, userId);
+  let devices: MiniappDeviceRow[] = bindings.map((row) => ({
+    id: row.id,
+    label: row.label,
+    os: row.os,
+    client: row.vpn_client,
+    lastSeenAt: row.last_seen_at,
+    online: true,
+  }));
+
+  if (devices.length === 0 && telegramId > 0) {
+    const panelIps = await fetchPanelDeviceIps(env, telegramId);
+    devices = panelIps.map((row, index) => ({
+      id: row.ip,
+      label: deviceSlotDisplayName(user?.username, telegramId, index + 1),
+      os: "",
+      client: "",
+      lastSeenAt: row.seenAt || new Date().toISOString(),
+      online: true,
+    }));
   }
 
-  const panelIps = telegramId
-    ? await fetchPanelDeviceIps(env, telegramId)
-    : [];
   let panelOnline = false;
-
-  if (telegramId) {
+  if (telegramId > 0) {
     try {
       const xui = new XuiApi(env);
       const panelEmail = await xui.resolvePanelEmail(telegramId);
@@ -154,26 +221,25 @@ export async function fetchMiniappDevices(
         panelOnline = onlineEmails.includes(panelEmail);
       }
     } catch {
-      // panel unreachable from worker
+      // panel unreachable
     }
   }
 
-  const devices: MiniappDeviceRow[] = panelIps.map((row) => ({
-    id: row.ip,
-    label: row.seenAt ? `IP ${row.ip} (${row.seenAt})` : `IP ${row.ip}`,
-    os: "",
-    client: "",
-    lastSeenAt: row.seenAt || new Date().toISOString(),
-    online: panelOnline,
-  }));
-
-  const used = limit === 0 ? panelIps.length : Math.min(limit, panelIps.length);
+  const canAddDevices = Boolean(
+    sub?.status === "active" &&
+      sub.plan_type === "basic" &&
+      !sub.is_trial &&
+      sub.extra_devices < 10
+  );
 
   return {
     used,
     limit,
+    limitDisplay: limit === 0 ? null : limit,
     panelOnline,
     devices,
+    hasClient: Boolean(sub?.client_email?.trim()),
+    canAddDevices,
   };
 }
 
@@ -183,9 +249,15 @@ export async function buildMiniappConnectUrl(
   platform: MiniappPlatform,
   client: MiniappClient
 ): Promise<{ connectUrl: string; subUrl: string; subId: string; redirectUrl: string }> {
-  const sub = await getSubscription(env, (await upsertTelegramUser(env, tg)).id);
+  const user = await upsertTelegramUser(env, tg);
+  const sub = await getSubscription(env, user.id);
   if (sub?.status !== "active") {
     throw new Error("Сначала активируйте подписку или пробный период");
+  }
+
+  const gate = await canConnectNewDevice(env, user.id, tg.id);
+  if (!gate.ok) {
+    throw new Error(gate.message.replace(/<[^>]+>/g, ""));
   }
 
   const subId = await resolvePanelSubIdForUser(env, tg, { force: !sub?.xray_sub_id?.trim() });
@@ -194,10 +266,8 @@ export async function buildMiniappConnectUrl(
   }
 
   const mappedClient = mapClient(client);
-  const user = await getUserByTelegramId(env, tg.id);
-  if (user) {
-    await syncPanelDeviceLimit(env, user.id);
-  }
+  await syncPanelDeviceLimit(env, user.id);
+  await recordMiniappDeviceConnect(env, user.id, tg, platform, client);
 
   const subUrl = buildPublicSubscriptionUrl(env, subId);
   const connectUrl = buildClientConnectUrl(env, mappedClient, subId);
@@ -249,7 +319,7 @@ export function deviceTotalForPlan(sub: {
 }
 
 export async function buildMiniappUserProfile(env: BotEnv, bundle: UserBundle) {
-  const deviceInfo = await fetchMiniappDevices(env, bundle.user.id, { lightweight: true });
+  const deviceInfo = await fetchMiniappDevices(env, bundle.user.id);
   const sub = bundle.subscription;
   const base = bundleToApiUser(bundle);
   return {
@@ -260,9 +330,11 @@ export async function buildMiniappUserProfile(env: BotEnv, bundle: UserBundle) {
       canConnect: canConnectSubscription(sub),
       periodText: subscriptionPeriodText(sub),
       devicesUsed: deviceInfo.used,
-      devicesMax: deviceInfo.limit,
+      devicesMax: deviceInfo.limitDisplay,
       panelOnline: deviceInfo.panelOnline,
       devices: deviceInfo.devices,
+      canAddDevices: deviceInfo.canAddDevices,
+      hasClient: deviceInfo.hasClient,
     },
   };
 }

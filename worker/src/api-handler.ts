@@ -10,12 +10,10 @@ import {
   type PlanType,
 } from "./catalog";
 import {
-  bundleToApiUser,
   ensureUser,
   getBundle,
-  purchaseExtraDevices,
 } from "./db";
-import { startMiniappPlategaCheckout } from "./miniapp-checkout";
+import { startMiniappAddonDevicesCheckout, startMiniappPlategaCheckout } from "./miniapp-checkout";
 import { activateMiniappTrial } from "./miniapp-trial";
 import { runUserPendingPlategaReconcile } from "./platega-reconcile";
 import { trialButtonHidden } from "./trial-button";
@@ -67,10 +65,8 @@ import { XuiApi } from "./xui";
 import {
   buildMiniappConnectUrl,
   buildMiniappUserProfile,
-  canConnectSubscription,
   fetchMiniappDevices,
   resetMiniappDevices,
-  subscriptionPeriodText,
   type MiniappClient,
   type MiniappPlatform,
 } from "./miniapp-services";
@@ -741,25 +737,11 @@ export async function handleApiRequest(
         console.error("miniapp platega reconcile:", error)
       );
       const fresh = (await getBundle(env, tgUser.id)) ?? userRow;
-      const deviceInfo = await fetchMiniappDevices(env, fresh.user.id, {
-        lightweight: true,
-      });
-      const sub = fresh.subscription;
-      const base = bundleToApiUser(fresh);
+      const profile = await buildMiniappUserProfile(env, fresh);
       return json({
         user: {
-          ...base,
-          trialAvailable: !trialButtonHidden(fresh.user, sub),
-          subscription: {
-            ...base.subscription,
-            isTrial: Boolean(sub.is_trial),
-            canConnect: canConnectSubscription(sub),
-            periodText: subscriptionPeriodText(sub),
-            devicesUsed: deviceInfo.used,
-            devicesMax: deviceInfo.limit,
-            panelOnline: deviceInfo.panelOnline,
-            devices: deviceInfo.devices,
-          },
+          ...profile,
+          trialAvailable: !trialButtonHidden(fresh.user, fresh.subscription),
         },
       });
     } catch (e) {
@@ -880,16 +862,22 @@ export async function handleApiRequest(
 
   if (path === "/api/purchase-devices" && request.method === "POST") {
     try {
-      const body = (await request.json()) as { extraDevices?: number };
-      const add = body.extraDevices ?? 0;
+      const body = (await request.json()) as {
+        extraDevices?: number;
+        paymentMethod?: string;
+      };
+      const add = body.extraDevices ?? 1;
       if (add < 1) return json({ error: "Invalid device count" }, 400);
-      const bundle = await purchaseExtraDevices(env, tgUser, add);
-      const sub = bundle.subscription;
-      const limit = (TARIFFS.basic.includedDevices ?? 1) + sub.extra_devices;
+      const method = body.paymentMethod?.trim() || "sbp";
+      const checkout = await startMiniappAddonDevicesCheckout(env, tgUser, {
+        addDevices: add,
+        method,
+      });
       return json({
         ok: true,
-        message: `Добавлено +${add} устройств. Доступно ${limit} слотов одновременно.`,
-        user: await buildMiniappUserProfile(env, bundle),
+        paymentUrl: checkout.paymentUrl,
+        amount: checkout.amount,
+        message: checkout.message,
       });
     } catch (e) {
       return json(

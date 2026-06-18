@@ -30,6 +30,8 @@ export interface Subscription {
   devicesMax?: number;
   panelOnline?: boolean;
   devices?: DeviceBinding[];
+  canAddDevices?: boolean;
+  hasClient?: boolean;
 }
 
 export interface UserAddon {

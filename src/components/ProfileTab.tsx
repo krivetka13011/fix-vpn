@@ -10,23 +10,22 @@ interface Props {
   onRefresh: () => void;
 }
 
-const MAX_EXTRA_DEVICES = 10;
-
 function deviceHint(
   planType: UserProfile["subscription"]["planType"],
-  devicesMax: number,
+  devicesMax: number | null,
   devicesUsed: number
 ): string {
-  if (planType === "personal") {
+  if (planType === "personal" || devicesMax == null) {
     return "Тариф Про — без лимита устройств.";
   }
   if (devicesMax <= 1) {
-    return "1 устройство одновременно. Смена телефона: «Сбросить подключение» (раз в 24 ч) или докупите слоты.";
+    return "1 устройство одновременно. Смена телефона: «Сбросить подключение» (раз в 24 ч) или докупите устройство.";
   }
   if (devicesUsed >= devicesMax) {
-    return `Все ${devicesMax} слотов заняты. Докупите слоты или сбросьте подключение (раз в 24 ч).`;
+    return `Все ${devicesMax} устройств заняты. Докупите ещё одно или сбросьте подключение (раз в 24 ч).`;
   }
-  return `До ${devicesMax} устройств одновременно. Свободно слотов: ${devicesMax - devicesUsed}.`;
+  const free = devicesMax - devicesUsed;
+  return `До ${devicesMax} устройств одновременно. Свободно: ${free}.`;
 }
 
 export function ProfileTab({ user, catalog, fallbackPhoto, onRefresh }: Props) {
@@ -65,16 +64,18 @@ export function ProfileTab({ user, catalog, fallbackPhoto, onRefresh }: Props) {
         : null);
 
   const devicesUsed = sub.devicesUsed ?? 0;
-  const devicesMax = sub.deviceTotal ?? sub.devicesMax ?? 1;
+  const devicesMax =
+    sub.planType === "personal"
+      ? null
+      : (sub.devicesMax ?? sub.deviceTotal ?? 1);
   const devices = sub.devices ?? [];
-  const canBuyMore =
-    isActive &&
-    sub.planType === "basic" &&
-    (sub.extraDevices ?? 0) < MAX_EXTRA_DEVICES;
+  const canBuyMore = Boolean(sub.canAddDevices);
   const addonPrice =
     catalog.extraDevicePricePerMonth * (sub.billingMonths ?? 1);
   const showReset =
-    isActive && (devices.length > 0 || devicesUsed > 0 || sub.panelOnline);
+    isActive &&
+    Boolean(sub.hasClient) &&
+    (devices.length > 0 || devicesUsed > 0 || sub.panelOnline);
 
   async function handleResetDevices() {
     setResetting(true);
@@ -98,14 +99,22 @@ export function ProfileTab({ user, catalog, fallbackPhoto, onRefresh }: Props) {
     setHint(null);
     try {
       const result = await purchaseDevices(1);
-      setHint(result.message || "Дополнительный слот добавлен.");
-      onRefresh();
+      setHint(result.message);
+      const tg = window.Telegram?.WebApp;
+      if (tg?.openLink) {
+        tg.openLink(result.paymentUrl);
+      } else {
+        window.open(result.paymentUrl, "_blank", "noopener,noreferrer");
+      }
     } catch (error) {
       setHint(error instanceof Error ? error.message : "Не удалось докупить");
     } finally {
       setBuyingDevices(false);
     }
   }
+
+  const limitLabel =
+    devicesMax == null ? "∞" : String(devicesMax);
 
   return (
     <>
@@ -182,14 +191,14 @@ export function ProfileTab({ user, catalog, fallbackPhoto, onRefresh }: Props) {
             <div style={{ flex: 1 }}>
               <p className="profile-card-label">Устройства</p>
               <p className="profile-card-value">
-                {devicesUsed}{" "}
+                Подключено {devicesUsed}{" "}
                 <span style={{ color: "var(--slate)", fontWeight: 400 }}>
-                  / {sub.planType === "personal" ? "∞" : devicesMax} слотов
+                  / {limitLabel}
                 </span>
               </p>
               {sub.panelOnline && (
                 <p className="profile-card-sub online-hint">
-                  В панели есть активное подключение (по IP)
+                  Есть активное подключение в панели
                 </p>
               )}
               <p className="profile-card-sub">
@@ -207,7 +216,7 @@ export function ProfileTab({ user, catalog, fallbackPhoto, onRefresh }: Props) {
                 </ul>
               ) : (
                 <p className="profile-card-sub">
-                  Подключитесь во вкладке «Помощь» — активные IP появятся здесь.
+                  Подключитесь во вкладке «Помощь» — устройства появятся здесь.
                 </p>
               )}
               {canBuyMore && (
@@ -220,7 +229,9 @@ export function ProfileTab({ user, catalog, fallbackPhoto, onRefresh }: Props) {
                 >
                   {buyingDevices
                     ? "Оформление…"
-                    : `+1 устройство · ${addonPrice} ₽`}
+                    : catalog.testMode
+                      ? `+1 устройство · ${catalog.testCheckoutPriceRub ?? 1} ₽`
+                      : `+1 устройство · от ${addonPrice} ₽`}
                 </button>
               )}
               {showReset && (

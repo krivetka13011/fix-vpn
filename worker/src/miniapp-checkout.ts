@@ -2,7 +2,7 @@ import { type BillingMonths, type PlanType, TARIFFS } from "./catalog";
 import { calcCheckoutPrice, periodLabel } from "./bots/pricing";
 import type { BotEnv } from "./env";
 import { isPlategaConfigured, createPlategaPayment } from "./platega";
-import { createTransaction, patchTransaction, upsertTelegramUser } from "./repository";
+import { createTransaction, getSubscription, patchTransaction, upsertTelegramUser } from "./repository";
 import type { TelegramUser } from "./telegram";
 
 export async function startMiniappPlategaCheckout(
@@ -67,5 +67,37 @@ export async function startMiniappPlategaCheckout(
     amount: price,
     message:
       "Откроется форма оплаты. После оплаты подписка активируется автоматически — обновите профиль через минуту.",
+  };
+}
+
+export async function startMiniappAddonDevicesCheckout(
+  env: BotEnv,
+  tg: TelegramUser,
+  input: { addDevices?: number; method: string }
+): Promise<{ paymentUrl: string; amount: number; message: string }> {
+  const user = await upsertTelegramUser(env, tg);
+  const sub = await getSubscription(env, user.id);
+  if (sub?.status !== "active" || sub.plan_type !== "basic" || sub.is_trial) {
+    throw new Error("Докупка доступна при активном базовом тарифе");
+  }
+
+  const add = Math.max(1, Math.min(10, input.addDevices ?? 1));
+  const newExtra = sub.extra_devices + add;
+  if (newExtra > 10) {
+    throw new Error("Максимум 10 дополнительных устройств (11 одновременно)");
+  }
+
+  const months = (sub.billing_months ?? 1) as BillingMonths;
+  const checkout = await startMiniappPlategaCheckout(env, tg, {
+    planType: "basic",
+    months,
+    extraDevices: newExtra,
+    method: input.method,
+  });
+
+  return {
+    ...checkout,
+    message:
+      "Откроется форма оплаты. После оплаты лимит устройств обновится автоматически — обновите профиль через минуту.",
   };
 }

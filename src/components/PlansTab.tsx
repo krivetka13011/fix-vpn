@@ -112,8 +112,8 @@ export function PlansTab({ catalog, user, onPurchased }: Props) {
             {trialLoading
               ? "Активация…"
               : catalog.trialDurationMinutes
-                ? `🧪 Пробный период · ${catalog.trialDurationMinutes} мин`
-                : "🧪 Пробный период"}
+                ? `Пробный период · ${catalog.trialDurationMinutes} мин`
+                : "Пробный период"}
           </button>
         )}
 

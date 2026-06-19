@@ -1684,10 +1684,7 @@ export class XuiApi {
     );
     const emailKey = canonicalClientKey(params.telegramId);
 
-    const existing =
-      (await this.findClientByTelegramId(params.telegramId)) ??
-      (await this.findClientByEmail(emailKey)) ??
-      (await this.findClientByEmail(panelLabel));
+    const existing = await this.findClientByTelegramId(params.telegramId);
 
     if (existing?.subId && existing.primaryUuid) {
       const client = this.buildClient(
@@ -1723,7 +1720,14 @@ export class XuiApi {
     const resolved = await this.findClientByTelegramId(params.telegramId);
     const email = resolved?.email || panelLabel;
     const subId = resolved?.subId || seedSubId;
-    return this.toProvisionResult(env, email, subId, primaryUuid);
+    const result = this.toProvisionResult(env, email, subId, primaryUuid);
+    const firstInbound = this.inboundIds[0];
+    return firstInbound
+      ? {
+          ...result,
+          inbounds: [{ inboundId: firstInbound, clientUuid: primaryUuid }],
+        }
+      : result;
   }
 
   async provisionTrial(
@@ -1757,34 +1761,6 @@ export class XuiApi {
         panelEmail = byTg.email;
         subId = byTg.subId;
         primaryUuid = byTg.primaryUuid;
-      }
-    }
-
-    if (subId && !primaryUuid) {
-      const bySub = await this.findClientBySubId(subId);
-      if (bySub?.primaryUuid) {
-        panelEmail = bySub.email;
-        primaryUuid = bySub.primaryUuid;
-      }
-    }
-
-    if (subId && !primaryUuid) {
-      await this.addClientIfMissing(
-        panelEmail,
-        subId,
-        params.telegramId,
-        params.expiryMs,
-        0,
-        undefined,
-        limitIp,
-        true
-      );
-      this.invalidateScan();
-      const resolved = await this.findClientByTelegramId(params.telegramId);
-      if (resolved?.subId && resolved.primaryUuid) {
-        panelEmail = resolved.email;
-        subId = resolved.subId;
-        primaryUuid = resolved.primaryUuid;
       }
     }
 

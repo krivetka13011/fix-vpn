@@ -7,7 +7,8 @@ interface Props {
   user: UserProfile;
   catalog: Catalog;
   fallbackPhoto?: string;
-  onRefresh: () => void;
+  onRefresh: () => void | Promise<void>;
+  onUserUpdate?: (user: UserProfile) => void;
 }
 
 function deviceHint(
@@ -28,7 +29,13 @@ function deviceHint(
   return `До ${devicesMax} устройств одновременно. Свободно: ${free}.`;
 }
 
-export function ProfileTab({ user, catalog, fallbackPhoto, onRefresh }: Props) {
+export function ProfileTab({
+  user,
+  catalog,
+  fallbackPhoto,
+  onRefresh,
+  onUserUpdate,
+}: Props) {
   const sub = user.subscription;
   const photo = user.photoUrl ?? fallbackPhoto;
   const isActive = sub.status === "active";
@@ -84,8 +91,9 @@ export function ProfileTab({ user, catalog, fallbackPhoto, onRefresh }: Props) {
     catalog.extraDevicePricePerMonth * (sub.billingMonths ?? 1);
   const showReset =
     isActive &&
-    Boolean(sub.hasClient) &&
-    (devices.length > 0 || devicesUsed > 0 || sub.panelOnline);
+    (atDeviceLimit ||
+      (Boolean(sub.hasClient) &&
+        (devices.length > 0 || devicesUsed > 0 || sub.panelOnline)));
 
   async function handleResetDevices() {
     setResetting(true);
@@ -96,7 +104,11 @@ export function ProfileTab({ user, catalog, fallbackPhoto, onRefresh }: Props) {
         result.message ||
           "Подключение сброшено. Подключите VPN заново во вкладке «Помощь». Следующий сброс — через 24 часа."
       );
-      onRefresh();
+      if (result.user) {
+        onUserUpdate?.(result.user);
+      } else {
+        await onRefresh();
+      }
     } catch (error) {
       setHint(error instanceof Error ? error.message : "Не удалось сбросить");
     } finally {

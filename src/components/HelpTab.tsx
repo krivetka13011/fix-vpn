@@ -7,7 +7,8 @@ import { openSupportChat, openTelegramLink } from "../utils/copy";
 interface Props {
   catalog: Catalog;
   user: UserProfile;
-  onRefresh?: () => void;
+  onRefresh?: () => void | Promise<void>;
+  onGoToProfile?: () => void;
 }
 
 const FAQ = [
@@ -42,7 +43,7 @@ const CLIENT_ICONS: Record<VpnClientId, string> = {
   hiddify: "shield",
 };
 
-export function HelpTab({ catalog, user, onRefresh }: Props) {
+export function HelpTab({ catalog, user, onRefresh, onGoToProfile }: Props) {
   const [platform, setPlatform] = useState<DevicePlatform | null>(null);
   const [client, setClient] = useState<VpnClientId | null>(null);
   const [hint, setHint] = useState<string | null>(null);
@@ -110,7 +111,7 @@ export function HelpTab({ catalog, user, onRefresh }: Props) {
         setHint("Открываем импорт подписки в клиент…");
       }
       tg?.HapticFeedback?.impactOccurred("medium");
-      void onRefresh?.();
+      await onRefresh?.();
     } catch (error) {
       setHint(error instanceof Error ? error.message : "Не удалось подключиться");
     } finally {
@@ -130,10 +131,22 @@ export function HelpTab({ catalog, user, onRefresh }: Props) {
 
       <div className="stack">
         {!canConnect && isActive && atDeviceLimit && (
-          <p className="toast">
-            {connectBlockReason ??
-              `Подключено ${devicesUsed}/${devicesMax}. Сбросьте подключение в профиле или докупите устройство.`}
-          </p>
+          <>
+            <p className="toast">
+              {connectBlockReason ??
+                `Подключено ${devicesUsed}/${devicesMax}. Сбросьте подключение в профиле или докупите устройство.`}
+            </p>
+            {onGoToProfile && (
+              <button
+                type="button"
+                className="btn btn-ghost"
+                onClick={onGoToProfile}
+              >
+                <span className="material-symbols-outlined">devices</span>
+                Перейти в профиль → сбросить подключение
+              </button>
+            )}
+          </>
         )}
         {!canConnect && isActive && !atDeviceLimit && (
           <p className="toast">

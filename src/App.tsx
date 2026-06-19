@@ -6,6 +6,7 @@ import { HelpTab } from "./components/HelpTab";
 import { PlansTab } from "./components/PlansTab";
 import { ProfileTab } from "./components/ProfileTab";
 import type { Catalog, TabId, UserProfile } from "./types";
+import { debugClientLog } from "./utils/debugLog";
 
 const DEFAULT_CATALOG: Catalog = {
   tariffs: [
@@ -86,8 +87,6 @@ export default function App() {
   const load = useCallback(async () => {
     setSyncing(true);
     setApiError(null);
-    const fallback = devFallbackUser();
-    if (fallback) setUser(fallback);
 
     const [catalogResult, meResult] = await Promise.allSettled([
       fetchCatalog(),
@@ -99,14 +98,44 @@ export default function App() {
     }
 
     if (meResult.status === "fulfilled") {
-      setUser(meResult.value.user);
-    } else if (!fallback) {
-      const reason = meResult.reason;
-      setApiError(
-        reason instanceof Error
-          ? reason.message
-          : "Откройте приложение через Telegram"
+      const nextUser = meResult.value.user;
+      // #region agent log
+      debugClientLog(
+        "App.tsx:load",
+        "profile loaded without reset-to-empty",
+        {
+          status: nextUser.subscription.status,
+          canConnect: nextUser.subscription.canConnect,
+          devicesUsed: nextUser.subscription.devicesUsed,
+        },
+        "K"
       );
+      // #endregion
+      setUser(nextUser);
+    } else {
+      setUser((prev) => {
+        const fallback = prev ?? devFallbackUser();
+        if (!fallback) {
+          const reason = meResult.reason;
+          setApiError(
+            reason instanceof Error
+              ? reason.message
+              : "Откройте приложение через Telegram"
+          );
+        }
+        // #region agent log
+        debugClientLog(
+          "App.tsx:load",
+          "kept cached profile after /api/me failure",
+          {
+            hadCachedProfile: Boolean(prev),
+            cachedStatus: prev?.subscription.status ?? null,
+          },
+          "K"
+        );
+        // #endregion
+        return fallback;
+      });
     }
 
     setSyncing(false);
@@ -151,7 +180,14 @@ export default function App() {
       <AppHeader />
       <main className="content">
         {syncing && <div className="sync-line" aria-hidden />}
-        {tab === "help" && <HelpTab catalog={catalog} user={user} onRefresh={load} />}
+        {tab === "help" && (
+          <HelpTab
+            catalog={catalog}
+            user={user}
+            onRefresh={load}
+            onGoToProfile={() => setTab("profile")}
+          />
+        )}
         {tab === "plans" && (
           <PlansTab
             catalog={catalog}
@@ -167,6 +203,7 @@ export default function App() {
             catalog={catalog}
             fallbackPhoto={tgPhoto}
             onRefresh={load}
+            onUserUpdate={setUser}
           />
         )}
       </main>

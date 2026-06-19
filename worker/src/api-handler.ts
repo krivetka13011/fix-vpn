@@ -817,11 +817,11 @@ export async function handleApiRequest(
     try {
       const message = await resetMiniappDevices(env, tgUser);
       const bundle = await ensureUser(env, tgUser);
-      const deviceInfo = await fetchMiniappDevices(env, bundle.user.id);
+      const profile = await buildMiniappUserProfile(env, bundle);
       return json({
         ok: true,
         message,
-        devices: deviceInfo,
+        user: profile,
       });
     } catch (e) {
       if (e instanceof DeviceResetCooldownError) {

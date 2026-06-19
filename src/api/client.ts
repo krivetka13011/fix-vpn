@@ -85,7 +85,11 @@ export function fetchConnect(
   return api(`/api/connect?${params.toString()}`);
 }
 
-export function resetDevices(): Promise<{ ok: boolean; message?: string }> {
+export function resetDevices(): Promise<{
+  ok: boolean;
+  message?: string;
+  user?: UserProfile;
+}> {
   return api("/api/devices/reset", { method: "POST", body: "{}" });
 }
 

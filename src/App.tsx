@@ -151,12 +151,13 @@ export default function App() {
       <AppHeader />
       <main className="content">
         {syncing && <div className="sync-line" aria-hidden />}
-        {tab === "help" && <HelpTab catalog={catalog} user={user} />}
+        {tab === "help" && <HelpTab catalog={catalog} user={user} onRefresh={load} />}
         {tab === "plans" && (
           <PlansTab
             catalog={catalog}
             user={user}
             onPurchased={load}
+            onUserUpdate={setUser}
             onTrialActivated={() => setTab("help")}
           />
         )}

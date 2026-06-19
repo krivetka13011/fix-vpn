@@ -7,6 +7,7 @@ import { openSupportChat, openTelegramLink } from "../utils/copy";
 interface Props {
   catalog: Catalog;
   user: UserProfile;
+  onRefresh?: () => void;
 }
 
 const FAQ = [
@@ -41,14 +42,14 @@ const CLIENT_ICONS: Record<VpnClientId, string> = {
   hiddify: "shield",
 };
 
-export function HelpTab({ catalog, user }: Props) {
+export function HelpTab({ catalog, user, onRefresh }: Props) {
   const [platform, setPlatform] = useState<DevicePlatform | null>(null);
   const [client, setClient] = useState<VpnClientId | null>(null);
   const [hint, setHint] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
   const [openFaq, setOpenFaq] = useState<number | null>(null);
 
-  const canConnect = user.subscription.canConnect ?? user.subscription.status === "active";
+  const canConnect = user.subscription.canConnect === true;
 
   function handleInstall() {
     if (!platform || !client) {
@@ -98,6 +99,7 @@ export function HelpTab({ catalog, user }: Props) {
         setHint("Открываем импорт подписки в клиент…");
       }
       tg?.HapticFeedback?.impactOccurred("medium");
+      void onRefresh?.();
     } catch (error) {
       setHint(error instanceof Error ? error.message : "Не удалось подключиться");
     } finally {

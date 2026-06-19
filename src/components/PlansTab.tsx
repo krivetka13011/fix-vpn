@@ -6,7 +6,8 @@ import { useTelegramMainButton } from "../hooks/useTelegramMainButton";
 interface Props {
   catalog: Catalog;
   user: UserProfile;
-  onPurchased: () => void;
+  onPurchased: () => void | Promise<void>;
+  onUserUpdate?: (user: UserProfile) => void;
   onTrialActivated?: () => void;
 }
 
@@ -20,7 +21,7 @@ const PERIOD_LABELS: Record<BillingMonths, string> = {
   12: "1 год",
 };
 
-export function PlansTab({ catalog, user, onPurchased, onTrialActivated }: Props) {
+export function PlansTab({ catalog, user, onPurchased, onUserUpdate, onTrialActivated }: Props) {
   const [planType, setPlanType] = useState<PlanType | null>(null);
   const [months, setMonths] = useState<BillingMonths | null>(null);
   const [extraDevices, setExtraDevices] = useState(0);
@@ -35,6 +36,9 @@ export function PlansTab({ catalog, user, onPurchased, onTrialActivated }: Props
 
   const total = useMemo(() => {
     if (!planType || !months) return null;
+    if (catalog.testMode) {
+      return catalog.testCheckoutPriceRub ?? 1;
+    }
     const tariff = catalog.tariffs.find((t) => t.id === planType);
     if (!tariff) return null;
     const base = tariff.periods[months];
@@ -49,14 +53,18 @@ export function PlansTab({ catalog, user, onPurchased, onTrialActivated }: Props
       const res = await activateTrial();
       setMessage(res.message);
       window.Telegram?.WebApp?.HapticFeedback?.impactOccurred("medium");
-      onPurchased();
+      if (res.user) {
+        onUserUpdate?.(res.user);
+      } else {
+        await onPurchased();
+      }
       onTrialActivated?.();
     } catch (e) {
       setMessage(e instanceof Error ? e.message : "Не удалось активировать пробный период");
     } finally {
       setTrialLoading(false);
     }
-  }, [onPurchased, onTrialActivated]);
+  }, [onPurchased, onUserUpdate, onTrialActivated]);
 
   const handleBuy = useCallback(async () => {
     if (!planType || !months) return;

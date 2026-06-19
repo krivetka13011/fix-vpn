@@ -27,3 +27,17 @@ export function openTelegramLink(url: string) {
     window.open(url, "_blank");
   }
 }
+
+export function openExternalLink(url: string) {
+  const tg = window.Telegram?.WebApp;
+  if (tg?.openLink) {
+    try {
+      tg.openLink(url, { try_browser: true });
+      return;
+    } catch {
+      tg.openLink(url);
+      return;
+    }
+  }
+  window.open(url, "_blank");
+}

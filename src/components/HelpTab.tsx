@@ -2,7 +2,7 @@ import { useState } from "react";
 import type { Catalog, DevicePlatform, UserProfile, VpnClientId } from "../types";
 import { fetchConnect, activateTrial } from "../api/client";
 import { CLIENTS, installUrl, PLATFORMS } from "../data/helpLinks";
-import { openSupportChat, openTelegramLink } from "../utils/copy";
+import { openSupportChat, openTelegramLink, openExternalLink } from "../utils/copy";
 import { debugClientLog } from "../utils/debugLog";
 
 interface Props {
@@ -95,7 +95,7 @@ export function HelpTab({ catalog, user, onRefresh, onGoToProfile, onUserUpdate 
         );
         // #endregion
         if (res.user.subscription.canConnect) {
-          await runConnect("android", "happ");
+          await runConnect(platform ?? "android", client ?? "happ");
         }
       } else {
         await onRefresh?.();
@@ -118,47 +118,40 @@ export function HelpTab({ catalog, user, onRefresh, onGoToProfile, onUserUpdate 
     if (client === "happ" && platform === "android") {
       const subUrl =
         result.subUrl || result.connectUrl.replace(/^happ:\/\/add\//i, "");
+      let copied = false;
+      try {
+        if (navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(subUrl);
+          copied = true;
+        }
+      } catch {
+        // clipboard blocked in webview
+      }
+
       const redirectHttps = result.redirectUrl?.startsWith("https://")
         ? result.redirectUrl
         : openUrl.startsWith("https://")
           ? openUrl
           : null;
-      if (tg?.openLink && redirectHttps) {
-        tg.openLink(redirectHttps);
-        setHint("Открываем Happ для импорта подписки…");
-        // #region agent log
-        debugClientLog(
-          "HelpTab.tsx:openConnectImport",
-          "happ android tg.openLink redirect",
-          { redirectUrl: redirectHttps.slice(0, 80) },
-          "S"
+      if (redirectHttps) {
+        openExternalLink(redirectHttps);
+      }
+
+      if (copied) {
+        setHint(
+          "Ссылка скопирована. Откройте Happ → «+» → «Импорт по ссылке» → вставьте. Если открылся браузер — нажмите «Открыть Happ»."
         );
-        // #endregion
-        return;
+      } else {
+        setHint(`Скопируйте ссылку и вставьте в Happ:\n${subUrl}`);
       }
-      if (result.connectUrl.startsWith("happ://")) {
-        window.location.assign(result.connectUrl);
-        setHint("Открываем Happ…");
-        // #region agent log
-        debugClientLog(
-          "HelpTab.tsx:openConnectImport",
-          "happ android deeplink assign fallback",
-          { connectUrl: result.connectUrl.slice(0, 80) },
-          "S"
-        );
-        // #endregion
-        return;
-      }
-      try {
-        if (navigator.clipboard?.writeText) {
-          await navigator.clipboard.writeText(subUrl);
-        } else {
-          window.prompt("Скопируйте ссылку подписки:", subUrl);
-        }
-        setHint("Ссылка скопирована. В Happ: Добавить → вставьте ссылку.");
-      } catch {
-        setHint(`Скопируйте: ${subUrl}`);
-      }
+      // #region agent log
+      debugClientLog(
+        "HelpTab.tsx:openConnectImport",
+        "happ android copy-first",
+        { copied, redirectUrl: redirectHttps?.slice(0, 80) ?? null },
+        "S"
+      );
+      // #endregion
       return;
     }
     if (tg?.openLink) {
@@ -199,6 +192,10 @@ export function HelpTab({ catalog, user, onRefresh, onGoToProfile, onUserUpdate 
       setHint("Выберите устройство и клиент");
       return;
     }
+    if (canRetrial) {
+      await handleRetrial();
+      return;
+    }
     if (!canConnect) {
       setHint(
         connectBlockReason ??
@@ -213,6 +210,19 @@ export function HelpTab({ catalog, user, onRefresh, onGoToProfile, onUserUpdate 
 
     await runConnect(platform, client);
   }
+
+  const connectEnabled = canConnect || canRetrial;
+  const connectLabel = connecting
+    ? "Подключение…"
+    : trialLoading
+      ? "Активация…"
+      : canRetrial
+        ? catalog.trialDurationMinutes
+          ? `Активировать · ${catalog.trialDurationMinutes} мин`
+          : "Активировать пробный период"
+        : canConnect
+          ? "Подключиться"
+          : "Подключение недоступно";
 
   return (
     <>
@@ -250,27 +260,10 @@ export function HelpTab({ catalog, user, onRefresh, onGoToProfile, onUserUpdate 
           </p>
         )}
         {!isActive && user.subscription.status === "expired" && canRetrial && (
-          <>
-            <p className="toast">
-              Пробный период завершён. Нажмите кнопку ниже — активируем пробный период и
-              откроем Happ.
-            </p>
-            <button
-              type="button"
-              className="btn btn-fill btn-pill"
-              disabled={trialLoading || connecting}
-              onClick={handleRetrial}
-            >
-              <span className="material-symbols-outlined">bolt</span>
-              {trialLoading || connecting
-                ? trialLoading
-                  ? "Активация…"
-                  : "Подключение…"
-                : catalog.trialDurationMinutes
-                  ? `Активировать · ${catalog.trialDurationMinutes} мин`
-                  : "Активировать пробный период"}
-            </button>
-          </>
+          <p className="toast">
+            Пробный период завершён. Нажмите «Активировать» ниже — ссылка скопируется и
+            откроется Happ.
+          </p>
         )}
         {!isActive && user.subscription.status === "expired" && !canRetrial && (
           <p className="toast">
@@ -339,15 +332,11 @@ export function HelpTab({ catalog, user, onRefresh, onGoToProfile, onUserUpdate 
         <button
           type="button"
           className="btn btn-fill"
-          disabled={connecting || !canConnect}
+          disabled={connecting || trialLoading || !connectEnabled}
           onClick={handleConnect}
         >
           <span className="material-symbols-outlined">bolt</span>
-          {connecting
-            ? "Подключение…"
-            : canConnect
-              ? "Подключиться"
-              : "Подключение недоступно"}
+          {connectLabel}
         </button>
 
         {hint && <p className="toast">{hint}</p>}

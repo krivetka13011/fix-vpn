@@ -825,10 +825,14 @@ export function redirectHtml(client: VpnClientId, importTarget: string): string 
     (function () {
       var deepLink = ${JSON.stringify(deepLink)};
       var subUrl = ${JSON.stringify(importTarget)};
-      try {
-        window.location.replace(deepLink);
-      } catch (e) {
-        /* fallback to manual button */
+      var ua = navigator.userAgent || "";
+      var skipAutoOpen = /Android/i.test(ua) && /Telegram/i.test(ua);
+      if (!skipAutoOpen) {
+        try {
+          window.location.replace(deepLink);
+        } catch (e) {
+          /* fallback to manual button */
+        }
       }
       var copyBtn = document.getElementById("copy-sub");
       if (copyBtn) {

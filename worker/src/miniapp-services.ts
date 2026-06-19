@@ -8,6 +8,7 @@ import {
   buildHappDeepLink,
   buildPublicSubscriptionUrl,
   buildProtectedSubscriptionUrl,
+  buildRedirectUrl,
   type VpnClientId,
 } from "./connect-links";
 import { syncPanelSubIdForUser } from "./panel-sync";
@@ -273,12 +274,13 @@ export async function buildMiniappConnectUrl(
 
   const subUrl = buildPublicSubscriptionUrl(env, subId);
   const connectUrl = buildClientConnectUrl(env, mappedClient, subId);
+  const redirectUrl = buildRedirectUrl(env, mappedClient, subId);
 
   return {
     subId,
     subUrl,
     connectUrl,
-    redirectUrl: connectUrl,
+    redirectUrl,
   };
 }
 

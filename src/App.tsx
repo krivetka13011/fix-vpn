@@ -186,6 +186,7 @@ export default function App() {
             user={user}
             onRefresh={load}
             onGoToProfile={() => setTab("profile")}
+            onGoToPlans={() => setTab("plans")}
           />
         )}
         {tab === "plans" && (

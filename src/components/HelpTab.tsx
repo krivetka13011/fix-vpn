@@ -10,6 +10,7 @@ interface Props {
   user: UserProfile;
   onRefresh?: () => void | Promise<void>;
   onGoToProfile?: () => void;
+  onGoToPlans?: () => void;
 }
 
 const FAQ = [
@@ -44,7 +45,7 @@ const CLIENT_ICONS: Record<VpnClientId, string> = {
   hiddify: "shield",
 };
 
-export function HelpTab({ catalog, user, onRefresh, onGoToProfile }: Props) {
+export function HelpTab({ catalog, user, onRefresh, onGoToProfile, onGoToPlans }: Props) {
   const [platform, setPlatform] = useState<DevicePlatform | null>(null);
   const [client, setClient] = useState<VpnClientId | null>(null);
   const [hint, setHint] = useState<string | null>(null);
@@ -58,8 +59,10 @@ export function HelpTab({ catalog, user, onRefresh, onGoToProfile }: Props) {
     isActive &&
     devicesMax != null &&
     devicesUsed >= devicesMax;
-  const canConnect = user.subscription.canConnect === true;
+  const canRetrial =
+    user.trialAvailable === true && user.subscription.status === "expired";
   const connectBlockReason = user.subscription.connectBlockReason;
+  const canConnect = user.subscription.canConnect === true;
 
   function handleInstall() {
     if (!platform || !client) {
@@ -92,18 +95,19 @@ export function HelpTab({ catalog, user, onRefresh, onGoToProfile }: Props) {
     try {
       const result = await fetchConnect(platform, client);
       const tg = window.Telegram?.WebApp;
+      const openUrl = result.redirectUrl || result.connectUrl;
       if (client === "happ" && platform === "android") {
         const subUrl =
           result.subUrl || result.connectUrl.replace(/^happ:\/\/add\//i, "");
-        if (tg?.openLink && result.connectUrl.startsWith("happ://")) {
-          tg.openLink(result.connectUrl);
+        if (tg?.openLink && openUrl.startsWith("https://")) {
+          tg.openLink(openUrl);
           setHint("Открываем Happ для импорта подписки…");
           // #region agent log
           debugClientLog(
             "HelpTab.tsx:handleConnect",
-            "happ android openLink",
-            { hasConnectUrl: Boolean(result.connectUrl) },
-            "L"
+            "happ android https redirect",
+            { openUrl: openUrl.slice(0, 80) },
+            "O"
           );
           // #endregion
         } else {
@@ -119,7 +123,7 @@ export function HelpTab({ catalog, user, onRefresh, onGoToProfile }: Props) {
           }
         }
       } else if (tg?.openLink) {
-        tg.openLink(result.connectUrl);
+        tg.openLink(openUrl);
         setHint("Открываем импорт подписки в клиент…");
       } else {
         window.location.href = result.connectUrl;
@@ -178,7 +182,22 @@ export function HelpTab({ catalog, user, onRefresh, onGoToProfile }: Props) {
               "Подписка активна — идёт подготовка ссылки для подключения."}
           </p>
         )}
-        {!isActive && user.subscription.status === "expired" && (
+        {!isActive && user.subscription.status === "expired" && canRetrial && (
+          <>
+            <p className="toast">
+              Пробный период завершён. Активируйте его снова во вкладке «Тарифы».
+            </p>
+            {onGoToPlans && (
+              <button type="button" className="btn btn-fill btn-pill" onClick={onGoToPlans}>
+                <span className="material-symbols-outlined">bolt</span>
+                {catalog.trialDurationMinutes
+                  ? `Пробный период · ${catalog.trialDurationMinutes} мин`
+                  : "Пробный период"}
+              </button>
+            )}
+          </>
+        )}
+        {!isActive && user.subscription.status === "expired" && !canRetrial && (
           <p className="toast">
             {user.subscription.isTrial
               ? "Пробный период завершён. Оформите подписку во вкладке «Тарифы»."

@@ -342,108 +342,22 @@ export async function handleApiRequest(
       console.error("subscription cache:", error);
     }
 
-    const subPath = (env.SUBSCRIPTION_PATH || "/sub").replace(/\/$/, "");
-    const encodedSubId = encodeURIComponent(subId);
-    const upstreamBases = [
-      workerSubscriptionFetchBase(env),
-      subscriptionClientBaseUrl(env),
-      subscriptionBaseUrl(env),
-    ].filter((base, index, list) => base && list.indexOf(base) === index);
-    if (upstreamBases.length === 0) {
-      return new Response("subscription cache missing", { status: 503, headers: CORS });
-    }
-    try {
-      let upstreamRes: Response | null = null;
-      for (const upstreamBase of upstreamBases) {
-        const upstream = `${upstreamBase}${subPath}/${encodedSubId}`;
-        const attempt = await panelFetch(env, upstream);
-        const preview = await attempt.clone().text();
-        if (
-          attempt.ok &&
-          preview.trim().length > 20 &&
-          !isPanelErrorBody(preview, attempt.status)
-        ) {
-          upstreamRes = attempt;
-          break;
-        }
-      }
-      if (!upstreamRes) {
-        await ensureActiveSubscriptionPanel(env, dbSub);
-        for (const upstreamBase of upstreamBases) {
-          const upstream = `${upstreamBase}${subPath}/${encodedSubId}`;
-          const attempt = await panelFetch(env, upstream);
-          const preview = await attempt.clone().text();
-          if (
-            attempt.ok &&
-            preview.trim().length > 20 &&
-            !isPanelErrorBody(preview, attempt.status)
-          ) {
-            upstreamRes = attempt;
-            break;
-          }
-        }
-      }
-      if (!upstreamRes) {
-        // #region agent log
-        debugSessionLog(
-          "api-handler.ts:/sub",
-          "subscription unavailable after ensure",
-          {
-            subIdPrefix: subId.slice(0, 8),
-            hadCache: false,
-            panelLive: Boolean(live?.body),
-          },
-          "B"
-        );
-        // #endregion
-        return new Response("subscription unavailable", {
-          status: 503,
-          headers: { ...CORS, "Retry-After": "3" },
-        });
-      }
-      const rawBody = await upstreamRes.text();
-      if (isPanelErrorBody(rawBody, upstreamRes.status)) {
-        return new Response("subscription unavailable", {
-          status: 503,
-          headers: { ...CORS, "Retry-After": "3" },
-        });
-      }
-      const body = encodeStandardSubscriptionBody(normalizeSubscriptionBody(rawBody), env);
-      const headers = mergeHappSubscriptionHeaders(
-        {
-          ...lockedHeaders,
-          "Content-Type": "application/json",
-        },
-        env
-      );
-      const userinfo = subscriptionUserinfoHeader(dbSub.ends_at ?? null);
-      if (userinfo) headers["Subscription-Userinfo"] = userinfo;
-      for (const name of [
-        "Profile-Title",
-        "Profile-Web-Page-Url",
-        "Support-Url",
-        "Announce",
-      ]) {
-        const value = upstreamRes.headers.get(name);
-        if (value && !headers[name]) headers[name] = value;
-      }
-      headers["Content-Disposition"] = `attachment; filename=${subId}`;
-      return new Response(body, { status: 200, headers });
-    } catch (error) {
-      console.error("subscription proxy:", error);
-      // #region agent log
-      debugSessionLog(
-        "api-handler.ts:/sub",
-        "subscription proxy exception",
-        { subIdPrefix: subId.slice(0, 8) },
-        "F"
-      );
-      // #endregion
-      return new Response("subscription unavailable", {
-        status: 503,
-        headers: { ...CORS, "Retry-After": "3" },
-      });
-    }
+    // #region agent log
+    debugSessionLog(
+      "api-handler.ts:/sub",
+      "subscription unavailable after ensure",
+      {
+        subIdPrefix: subId.slice(0, 8),
+        hadCache: false,
+        panelLive: Boolean(live?.body),
+      },
+      "B"
+    );
+    // #endregion
+    return new Response("subscription unavailable", {
+      status: 503,
+      headers: { ...CORS, "Retry-After": "3" },
+    });
   }
 
   if (path.startsWith("/json/") && request.method === "GET") {

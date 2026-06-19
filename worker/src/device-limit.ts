@@ -60,18 +60,10 @@ export async function countUsedDeviceSlots(
     if (panelEmail) {
       panelChecked = true;
       try {
-        const ips = await xui.getClientIps(panelEmail);
-        panelUsed = ips.length;
+        const onlines = await xui.getOnlineClientEmails();
+        panelUsed = onlines.some((entry) => entry === panelEmail) ? 1 : 0;
       } catch {
         panelUsed = 0;
-      }
-      if (panelUsed === 0) {
-        try {
-          const onlines = await xui.getOnlineClientEmails();
-          if (onlines.some((entry) => entry === panelEmail)) panelUsed = 1;
-        } catch {
-          // ignore
-        }
       }
     }
   } catch {

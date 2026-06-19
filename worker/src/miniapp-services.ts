@@ -328,17 +328,18 @@ export async function buildMiniappUserProfile(
   const base = bundleToApiUser(bundle);
   const limit = subscriptionDeviceLimit(sub);
 
-  const deviceInfo = options?.skipPanel
-    ? {
-        used: 0,
-        limit,
-        limitDisplay: limit === 0 ? null : limit,
-        panelOnline: false,
-        devices: [] as MiniappDeviceRow[],
-        hasClient: Boolean(sub.client_email?.trim()),
-        canAddDevices: false,
-      }
-    : await fetchMiniappDevices(env, bundle.user.id);
+  const deviceInfo =
+    sub.status !== "active" || options?.skipPanel
+      ? {
+          used: 0,
+          limit,
+          limitDisplay: limit === 0 ? null : limit,
+          panelOnline: false,
+          devices: [] as MiniappDeviceRow[],
+          hasClient: Boolean(sub.client_email?.trim()),
+          canAddDevices: false,
+        }
+      : await fetchMiniappDevices(env, bundle.user.id);
 
   let canConnect = false;
   let connectBlockReason: string | null = null;

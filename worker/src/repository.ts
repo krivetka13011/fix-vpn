@@ -97,8 +97,12 @@ function mapTransactionRow(row: Record<string, unknown>): TransactionRow {
 }
 
 async function invalidateSubCaches(env: StorageEnv, userId: string): Promise<void> {
-  await kvClearSubscriptionPayloadCache(env, userId);
-  await kvClearSubscriptionStatusCache(env, userId);
+  try {
+    await kvClearSubscriptionPayloadCache(env, userId);
+    await kvClearSubscriptionStatusCache(env, userId);
+  } catch (error) {
+    console.error("invalidateSubCaches:", error);
+  }
 }
 
 export async function getUserByTelegramId(
@@ -217,11 +221,15 @@ export async function patchSubscription(
   await invalidateSubCaches(env, userId);
   const sub = await getSubscription(env, userId);
   if (sub) {
-    await kvSetSubscriptionStatusCache(env, userId, {
-      status: sub.status,
-      is_trial: Boolean(sub.is_trial),
-      expires_at: sub.expires_at ?? null,
-    });
+    try {
+      await kvSetSubscriptionStatusCache(env, userId, {
+        status: sub.status,
+        is_trial: Boolean(sub.is_trial),
+        expires_at: sub.expires_at ?? null,
+      });
+    } catch (error) {
+      console.error("kvSetSubscriptionStatusCache:", error);
+    }
   }
 }
 

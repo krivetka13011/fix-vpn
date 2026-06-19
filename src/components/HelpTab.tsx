@@ -208,11 +208,15 @@ export function HelpTab({ catalog, user, onRefresh }: Props) {
         <button
           type="button"
           className="btn btn-fill"
-          disabled={connecting}
+          disabled={connecting || !canConnect}
           onClick={handleConnect}
         >
           <span className="material-symbols-outlined">bolt</span>
-          {connecting ? "Подключение…" : "Подключиться"}
+          {connecting
+            ? "Подключение…"
+            : canConnect
+              ? "Подключиться"
+              : "Подключение недоступно"}
         </button>
 
         {hint && <p className="toast">{hint}</p>}

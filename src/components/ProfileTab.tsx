@@ -68,6 +68,16 @@ export function ProfileTab({ user, catalog, fallbackPhoto, onRefresh }: Props) {
     sub.planType === "personal"
       ? null
       : (sub.devicesMax ?? sub.deviceTotal ?? 1);
+  const atDeviceLimit =
+    isActive &&
+    devicesMax != null &&
+    devicesUsed >= devicesMax;
+  const connectStatusLine = sub.canConnect
+    ? "Можно подключаться"
+    : atDeviceLimit
+      ? `Лимит ${devicesUsed}/${devicesMax} — сбросьте подключение`
+      : sub.connectBlockReason?.split("\n")[0] ??
+        "Синхронизация подписки…";
   const devices = sub.devices ?? [];
   const canBuyMore = Boolean(sub.canAddDevices);
   const addonPrice =
@@ -142,7 +152,7 @@ export function ProfileTab({ user, catalog, fallbackPhoto, onRefresh }: Props) {
         {isActive && (
           <div className="profile-status-line">
             <span className="status-dot" aria-hidden />
-            {sub.canConnect ? "Можно подключаться" : "Синхронизация подписки…"}
+            {connectStatusLine}
           </div>
         )}
       </section>

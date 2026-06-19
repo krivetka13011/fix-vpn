@@ -4,7 +4,11 @@ import {
   isTestMode,
   trialDurationMs,
 } from "./test-mode";
-import { getSubscription, upsertTelegramUser } from "./repository";
+import {
+  clearVpnDeviceBindings,
+  getSubscription,
+  upsertTelegramUser,
+} from "./repository";
 import { activateTrialSubscription } from "./subscription-activate";
 import type { TelegramUser } from "./telegram";
 import { trialButtonHidden } from "./trial-button";
@@ -25,6 +29,10 @@ export async function activateMiniappTrial(
 
   if (existingSub?.is_trial && existingSub.status === "active") {
     return { message: "Пробный период уже активен. Перейдите во вкладку «Помощь»." };
+  }
+
+  if (existingSub?.status !== "active") {
+    await clearVpnDeviceBindings(env, user.id);
   }
 
   const trialMs = trialDurationMs(env);

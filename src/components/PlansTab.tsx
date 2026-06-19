@@ -55,10 +55,15 @@ export function PlansTab({ catalog, user, onPurchased, onUserUpdate, onTrialActi
       window.Telegram?.WebApp?.HapticFeedback?.impactOccurred("medium");
       if (res.user) {
         onUserUpdate?.(res.user);
+        if (res.user.subscription.canConnect) {
+          onTrialActivated?.();
+        } else if (res.user.subscription.connectBlockReason) {
+          setMessage(res.user.subscription.connectBlockReason);
+        }
       } else {
         await onPurchased();
+        onTrialActivated?.();
       }
-      onTrialActivated?.();
     } catch (e) {
       setMessage(e instanceof Error ? e.message : "Не удалось активировать пробный период");
     } finally {

@@ -2,6 +2,7 @@ import type { BotEnv } from "../env";
 import { clientBotToken } from "../env";
 import {
   clearSession,
+  clearVpnDeviceBindings,
   createTransaction,
   checkCallbackRateLimit,
   finalizeTrialButtonGrace,
@@ -500,6 +501,9 @@ async function activateTrial(
     "Не удалось активировать пробный период в панели. Подождите минуту и нажмите «Пробный период» снова.";
 
   try {
+    if (existingSub?.status !== "active") {
+      await clearVpnDeviceBindings(env, user.id);
+    }
     await activateTrialSubscription(env, {
       userId: user.id,
       telegramId: tg.id,

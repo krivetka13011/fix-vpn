@@ -424,11 +424,9 @@ export async function handleApiRequest(
 
     let live = await fetchPanelJsonSubscription(env, subId);
     if (!live?.body) {
-      await fetchPanelSubscriptionBody(env, subId);
-      await ensureActiveSubscriptionPanel(env, dbSub);
-      live = await fetchPanelJsonSubscription(env, subId);
-      if (!live?.body) {
+      for (let attempt = 0; attempt < 4 && !live?.body; attempt += 1) {
         await fetchPanelSubscriptionBody(env, subId);
+        await ensureActiveSubscriptionPanel(env, dbSub);
         live = await fetchPanelJsonSubscription(env, subId);
       }
     }

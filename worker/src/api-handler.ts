@@ -278,6 +278,7 @@ export async function handleApiRequest(
     let live = await fetchPanelSubscriptionBody(env, subId);
     if (!live?.body) {
       for (let attempt = 0; attempt < 4 && !live?.body; attempt += 1) {
+        await fetchPanelSubscriptionBody(env, subId);
         await ensureActiveSubscriptionPanel(env, dbSub);
         live = await fetchPanelSubscriptionBody(env, subId);
       }
@@ -395,11 +396,17 @@ export async function handleApiRequest(
           "B"
         );
         // #endregion
-        return new Response("subscription unavailable", { status: 503, headers: CORS });
+        return new Response("subscription unavailable", {
+          status: 503,
+          headers: { ...CORS, "Retry-After": "3" },
+        });
       }
       const rawBody = await upstreamRes.text();
       if (isPanelErrorBody(rawBody, upstreamRes.status)) {
-        return new Response("subscription unavailable", { status: 503, headers: CORS });
+        return new Response("subscription unavailable", {
+          status: 503,
+          headers: { ...CORS, "Retry-After": "3" },
+        });
       }
       const body = encodeStandardSubscriptionBody(normalizeSubscriptionBody(rawBody), env);
       const headers = mergeHappSubscriptionHeaders(
@@ -432,7 +439,10 @@ export async function handleApiRequest(
         "F"
       );
       // #endregion
-      return new Response("subscription unavailable", { status: 503, headers: CORS });
+      return new Response("subscription unavailable", {
+        status: 503,
+        headers: { ...CORS, "Retry-After": "3" },
+      });
     }
   }
 

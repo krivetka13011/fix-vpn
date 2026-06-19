@@ -9,6 +9,7 @@ import {
   patchSubscription,
 } from "./repository";
 import { clearStuckRotationFlags } from "./subscription-rotate";
+import { ensureActiveSubscriptionPanel } from "./subscription-activate";
 import { debugSessionLog } from "./debug-session-log";
 import { XuiApi } from "./xui";
 
@@ -152,6 +153,16 @@ export async function resetPanelClient(
     last_device_reset: now,
   });
   await clearStuckRotationFlags(env, userId);
+
+  const refreshedSub = await getSubscription(env, userId);
+  if (refreshedSub?.status === "active") {
+    try {
+      await ensureActiveSubscriptionPanel(env, refreshedSub);
+    } catch (error) {
+      console.error("resetPanelClient prewarm:", error);
+    }
+  }
+
   // #region agent log
   debugSessionLog(
     "device-reset.ts:resetPanelClient",

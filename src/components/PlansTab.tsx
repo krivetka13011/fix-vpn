@@ -100,6 +100,8 @@ export function PlansTab({ catalog, user, onPurchased, onUserUpdate, onTrialActi
   );
 
   const showTrial = user.trialAvailable === true;
+  const trialEnded =
+    user.subscription.status === "expired" && Boolean(user.subscription.isTrial);
 
   return (
     <>
@@ -112,6 +114,11 @@ export function PlansTab({ catalog, user, onPurchased, onUserUpdate, onTrialActi
       </section>
 
       <div className="stack">
+        {trialEnded && (
+          <p className="toast">
+            Пробный период завершён. Выберите тариф ниже и оплатите подписку.
+          </p>
+        )}
         {showTrial && (
           <button
             type="button"

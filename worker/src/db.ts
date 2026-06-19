@@ -12,6 +12,7 @@ import {
   getSubscription,
   getUserByTelegramId,
   patchSubscription,
+  patchUser,
   upsertTelegramUser,
 } from "./repository";
 import type { StorageEnv } from "./storage-env";
@@ -82,12 +83,17 @@ export async function getBundle(
   const subscription = applyExpiry(
     subRow ? mapSubscriptionRow(subRow) : emptySubscription(user.id)
   );
+  let currentUser = user;
   if (subscription.status === "expired" && subRow) {
     await patchSubscription(env, user.id, { status: "expired" });
+    if (subscription.is_trial && !user.has_used_trial) {
+      await patchUser(env, user.id, { has_used_trial: true });
+      currentUser = { ...user, has_used_trial: true };
+    }
   }
 
   return {
-    user,
+    user: currentUser,
     subscription,
     addons: addons.map((row) => ({
       id: String(row.id),

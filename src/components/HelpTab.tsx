@@ -141,7 +141,14 @@ export function HelpTab({ catalog, user, onRefresh }: Props) {
               "Подписка активна — идёт подготовка ссылки для подключения."}
           </p>
         )}
-        {!isActive && (
+        {!isActive && user.subscription.status === "expired" && (
+          <p className="toast">
+            {user.subscription.isTrial
+              ? "Пробный период завершён. Оформите подписку во вкладке «Тарифы»."
+              : "Подписка истекла. Продлите её во вкладке «Тарифы»."}
+          </p>
+        )}
+        {!isActive && user.subscription.status !== "expired" && (
           <p className="toast">
             Для подключения активируйте пробный период во вкладке «Тарифы» или оформите подписку.
           </p>

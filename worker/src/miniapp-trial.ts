@@ -10,12 +10,13 @@ import {
   getSubscription,
   getUserByTelegramId,
   resetTesterTrial,
-  resetTesterTrialPlan,
+  resetTesterSubscriptionState,
   upsertTelegramUser,
 } from "./repository";
 import { activateTrialSubscription } from "./subscription-activate";
 import type { TelegramUser } from "./telegram";
 import { trialButtonHidden } from "./trial-button";
+import { debugSessionLog } from "./debug-session-log";
 
 export async function activateMiniappTrial(
   env: BotEnv,
@@ -32,10 +33,23 @@ export async function activateMiniappTrial(
 
   if (testerRetrial) {
     await resetTesterTrial(env, tg.id);
-    await resetTesterTrialPlan(env, user.id);
+    await resetTesterSubscriptionState(env, user.id);
     await clearVpnDeviceBindings(env, user.id);
     user = (await getUserByTelegramId(env, tg.id)) ?? user;
     existingSub = await getSubscription(env, user.id);
+    // #region agent log
+    debugSessionLog(
+      "miniapp-trial.ts:testerRetrial",
+      "tester trial reset",
+      {
+        hasUsedTrial: user.has_used_trial,
+        subStatus: existingSub?.status ?? null,
+        hasXraySubId: Boolean(existingSub?.xray_sub_id?.trim()),
+        hasXrayUuid: Boolean(existingSub?.xray_uuid?.trim()),
+      },
+      "C"
+    );
+    // #endregion
   }
 
   if (trialButtonHidden(user, existingSub)) {

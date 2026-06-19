@@ -261,6 +261,19 @@ export async function markTrialFirstConnectAt(
   );
 }
 
+/** Пробный период потрачен — один раз на Telegram-аккаунт (бот и Mini App). */
+export async function markTrialConsumed(
+  env: StorageEnv,
+  telegramId: number
+): Promise<void> {
+  await d1Run(
+    env.DB,
+    `UPDATE users SET has_used_trial = 1, updated_at = ? WHERE telegram_id = ?`,
+    nowIso(),
+    telegramId
+  );
+}
+
 export async function finalizeTrialButtonGrace(
   env: StorageEnv,
   telegramId: number

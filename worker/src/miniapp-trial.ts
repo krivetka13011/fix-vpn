@@ -1,5 +1,4 @@
 import type { BotEnv } from "./env";
-import { isTesterAccount } from "./env";
 import {
   formatSubscriptionDateFields,
   isTestMode,
@@ -8,9 +7,6 @@ import {
 import {
   clearVpnDeviceBindings,
   getSubscription,
-  getUserByTelegramId,
-  resetTesterTrial,
-  resetTesterSubscriptionState,
   upsertTelegramUser,
 } from "./repository";
 import { activateTrialSubscription } from "./subscription-activate";
@@ -22,42 +18,22 @@ export async function activateMiniappTrial(
   env: BotEnv,
   tg: TelegramUser
 ): Promise<{ message: string }> {
-  let user = await upsertTelegramUser(env, tg);
-  let existingSub = await getSubscription(env, user.id);
+  const user = await upsertTelegramUser(env, tg);
+  const existingSub = await getSubscription(env, user.id);
 
-  const stalePanelRefs =
-    Boolean(existingSub?.xray_sub_id?.trim()) ||
-    Boolean(existingSub?.xray_uuid?.trim()) ||
-    Boolean(existingSub?.client_email?.trim());
-
-  const testerRetrial =
-    isTesterAccount(env, tg.id, user.is_tester) &&
-    isTestMode(env) &&
-    existingSub?.status !== "active" &&
-    (user.has_used_trial || existingSub?.is_trial || stalePanelRefs);
-
-  if (testerRetrial) {
-    await resetTesterTrial(env, tg.id);
-    await resetTesterSubscriptionState(env, user.id);
-    await clearVpnDeviceBindings(env, user.id);
-    user = (await getUserByTelegramId(env, tg.id)) ?? user;
-    existingSub = await getSubscription(env, user.id);
+  if (trialButtonHidden(user, existingSub)) {
     // #region agent log
     debugSessionLog(
-      "miniapp-trial.ts:testerRetrial",
-      "tester trial reset",
+      "miniapp-trial.ts:activateMiniappTrial",
+      "trial blocked",
       {
         hasUsedTrial: user.has_used_trial,
         subStatus: existingSub?.status ?? null,
-        hasXraySubId: Boolean(existingSub?.xray_sub_id?.trim()),
-        hasXrayUuid: Boolean(existingSub?.xray_uuid?.trim()),
+        isTrial: Boolean(existingSub?.is_trial),
       },
-      "C"
+      "T"
     );
     // #endregion
-  }
-
-  if (trialButtonHidden(user, existingSub)) {
     throw new Error(
       env.MSG_TRIAL_ALREADY_USED ||
         "Пробный период уже использован на этом аккаунте Telegram."
@@ -101,6 +77,15 @@ export async function activateMiniappTrial(
       updated_at: new Date().toISOString(),
     },
   });
+
+  // #region agent log
+  debugSessionLog(
+    "miniapp-trial.ts:activateMiniappTrial",
+    "trial activated",
+    { telegramId: tg.id, trialMinutes: Math.round(trialMs / 60000) },
+    "T"
+  );
+  // #endregion
 
   return {
     message: isTestMode(env)

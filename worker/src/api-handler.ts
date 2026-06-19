@@ -28,7 +28,6 @@ import { validateInitData, type TelegramUser } from "./telegram";
 import type { BotEnv } from "./env";
 import {
   clientBotToken,
-  isTesterAccount,
   partnerBotToken,
   subscriptionBaseUrl,
   subscriptionClientBaseUrl,
@@ -111,10 +110,9 @@ function miniappTrialAvailable(
   user: Parameters<typeof trialButtonHidden>[0],
   sub: Parameters<typeof trialButtonHidden>[1]
 ): boolean {
+  void env;
+  void telegramId;
   if (sub?.status === "active") return false;
-  if (isTesterAccount(env, telegramId, user.is_tester) && isTestMode(env)) {
-    return true;
-  }
   return !trialButtonHidden(user, sub);
 }
 

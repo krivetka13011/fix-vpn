@@ -636,6 +636,14 @@ body {
   flex-shrink: 0;
 }
 
+.tariff-card.compact .tariff-inner {
+  padding: 14px 20px;
+}
+
+.tariff-card.compact .tariff-sub {
+  font-size: 0.78rem;
+}
+
 .tariff-expand {
   padding: 0 20px 20px;
 }

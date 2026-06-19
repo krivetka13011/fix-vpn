@@ -2,6 +2,7 @@ import { useCallback, useMemo, useState } from "react";
 import type { BillingMonths, Catalog, PlanType, UserProfile } from "../types";
 import { activateTrial, purchasePlan } from "../api/client";
 import { useTelegramMainButton } from "../hooks/useTelegramMainButton";
+import { debugClientLog } from "../utils/debugLog";
 
 interface Props {
   catalog: Catalog;
@@ -105,6 +106,24 @@ export function PlansTab({ catalog, user, onPurchased, onUserUpdate, onTrialActi
     loading
   );
 
+  const selectPlan = useCallback((id: PlanType) => {
+    setPlanType((prev) => {
+      if (prev !== id) {
+        setMonths(null);
+        if (id === "personal") setExtraDevices(0);
+      }
+      // #region agent log
+      debugClientLog(
+        "PlansTab.tsx:selectPlan",
+        "tariff selected",
+        { from: prev, to: id },
+        "U"
+      );
+      // #endregion
+      return id;
+    });
+  }, []);
+
   const showTrial = user.trialAvailable === true;
   const trialEnded =
     user.subscription.status === "expired" && Boolean(user.subscription.isTrial);
@@ -174,20 +193,19 @@ export function PlansTab({ catalog, user, onPurchased, onUserUpdate, onTrialActi
 
         {catalog.tariffs.map((tariff) => {
           const selected = planType === tariff.id;
+          const compact = planType != null && !selected;
           const monthly = tariff.periods[1];
           return (
             <article
               key={tariff.id}
-              className={`glass-panel tariff-card ${selected ? "selected" : ""} ${tariff.id === "personal" ? "popular" : ""}`}
+              className={`glass-panel tariff-card ${selected ? "selected" : ""} ${compact ? "compact" : ""} ${tariff.id === "personal" ? "popular" : ""}`}
               onClick={() => {
-                setPlanType(tariff.id);
-                if (tariff.id === "personal") setExtraDevices(0);
+                selectPlan(tariff.id);
               }}
               onKeyDown={(e) => {
                 if (e.key === "Enter" || e.key === " ") {
                   e.preventDefault();
-                  setPlanType(tariff.id);
-                  if (tariff.id === "personal") setExtraDevices(0);
+                  selectPlan(tariff.id);
                 }
               }}
               role="button"
@@ -207,17 +225,21 @@ export function PlansTab({ catalog, user, onPurchased, onUserUpdate, onTrialActi
                     <div className="tariff-price-period">/ мес</div>
                   </div>
                 </div>
-                <div className="tariff-divider" />
-                <ul className="feature-list">
-                  {tariff.features.map((f) => (
-                    <li key={f}>
-                      <span className="material-symbols-outlined filled">
-                        check_circle
-                      </span>
-                      {f}
-                    </li>
-                  ))}
-                </ul>
+                {!compact && (
+                  <>
+                    <div className="tariff-divider" />
+                    <ul className="feature-list">
+                      {tariff.features.map((f) => (
+                        <li key={f}>
+                          <span className="material-symbols-outlined filled">
+                            check_circle
+                          </span>
+                          {f}
+                        </li>
+                      ))}
+                    </ul>
+                  </>
+                )}
               </div>
 
               {selected && (

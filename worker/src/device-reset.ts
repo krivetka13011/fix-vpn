@@ -8,6 +8,7 @@ import {
   patchSubscription,
 } from "./repository";
 import { clearStuckRotationFlags } from "./subscription-rotate";
+import { debugSessionLog } from "./debug-session-log";
 import { XuiApi } from "./xui";
 
 export const DEVICE_RESET_COOLDOWN_MS = 24 * 60 * 60 * 1000;
@@ -68,6 +69,8 @@ async function clearPanelClientDbState(
   await patchSubscription(env, userId, {
     client_email: String(telegramId),
     xray_uuid: null,
+    xray_sub_id: null,
+    subscription_url: null,
     panel_ip_clear_requested_at: null,
   });
 }
@@ -118,4 +121,12 @@ export async function resetPanelClient(
     last_device_reset: now,
   });
   await clearStuckRotationFlags(env, userId);
+  // #region agent log
+  debugSessionLog(
+    "device-reset.ts:resetPanelClient",
+    "panel client reset complete",
+    { telegramId, userId, panelDeleted: deleted },
+    "R"
+  );
+  // #endregion
 }

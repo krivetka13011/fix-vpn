@@ -12,6 +12,7 @@ import {
   kvClearSubscriptionPayloadCache,
   kvGetSubscriptionPayloadCache,
   kvSetSubscriptionPayloadCache,
+  markTrialConsumed,
   patchSubscription,
   saveXuiInboundClients,
 } from "./repository";
@@ -112,6 +113,7 @@ export async function activateTrialSubscription(
     provision,
     params.subscriptionFields
   );
+  await markTrialConsumed(env, params.telegramId);
   return subId;
 }
 

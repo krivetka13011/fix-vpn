@@ -449,8 +449,9 @@ async function activateTrial(
   const token = clientBotToken(env);
   if (!token) return;
   const user = await upsertTelegramUser(env, tg);
+  const existingSub = await getSubscription(env, user.id);
 
-  if (user.has_used_trial) {
+  if (trialButtonHidden(user, existingSub)) {
     await sendMessage(
       token,
       chatId,
@@ -460,18 +461,8 @@ async function activateTrial(
     return;
   }
 
-  const existingSub = await getSubscription(env, user.id);
-  if (existingSub?.is_trial) {
-    if (existingSub.status === "active") {
-      await showConnectOsMenu(token, chatId, messageId);
-      return;
-    }
-    await sendMessage(
-      token,
-      chatId,
-      env.MSG_TRIAL_ALREADY_USED ||
-        "Пробный период уже использован на этом аккаунте Telegram."
-    );
+  if (existingSub?.is_trial && existingSub.status === "active") {
+    await showConnectOsMenu(token, chatId, messageId);
     return;
   }
 

@@ -1,5 +1,6 @@
 import type { Catalog, UserProfile } from "../types";
 import { formatRuDate } from "../utils/copy";
+import { debugClientLog } from "../utils/debugLog";
 import { purchaseDevices, resetDevices } from "../api/client";
 import { useState } from "react";
 
@@ -108,6 +109,18 @@ export function ProfileTab({
       );
       if (result.user) {
         onUserUpdate?.(result.user);
+        // #region agent log
+        debugClientLog(
+          "ProfileTab.tsx:handleResetDevices",
+          "reset profile updated",
+          {
+            canConnect: result.user.subscription.canConnect,
+            devicesUsed: result.user.subscription.devicesUsed,
+            panelOnline: result.user.subscription.panelOnline,
+          },
+          "R"
+        );
+        // #endregion
         if (result.user.subscription.canConnect) {
           onGoToHelp?.();
         }

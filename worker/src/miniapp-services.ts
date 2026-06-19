@@ -319,22 +319,36 @@ export function deviceTotalForPlan(sub: {
   return (TARIFFS.basic.includedDevices ?? 1) + sub.extra_devices;
 }
 
-export async function buildMiniappUserProfile(env: BotEnv, bundle: UserBundle) {
-  const deviceInfo = await fetchMiniappDevices(env, bundle.user.id);
+export async function buildMiniappUserProfile(
+  env: BotEnv,
+  bundle: UserBundle,
+  options?: { skipPanel?: boolean }
+) {
   const sub = bundle.subscription;
   const base = bundleToApiUser(bundle);
+  const limit = subscriptionDeviceLimit(sub);
+
+  const deviceInfo = options?.skipPanel
+    ? {
+        used: 0,
+        limit,
+        limitDisplay: limit === 0 ? null : limit,
+        panelOnline: false,
+        devices: [] as MiniappDeviceRow[],
+        hasClient: Boolean(sub.client_email?.trim()),
+        canAddDevices: false,
+      }
+    : await fetchMiniappDevices(env, bundle.user.id);
 
   let canConnect = false;
   let connectBlockReason: string | null = null;
   if (canConnectSubscription(sub)) {
-    const gate = await canConnectNewDevice(
-      env,
-      bundle.user.id,
-      bundle.user.telegram_id
-    );
-    canConnect = gate.ok;
-    if (!gate.ok) {
-      connectBlockReason = gate.message.replace(/<[^>]+>/g, "");
+    if (limit === 0 || deviceInfo.used < limit) {
+      canConnect = true;
+    } else {
+      connectBlockReason =
+        `Все ${deviceInfo.used} устройств заняты (${deviceInfo.used}/${limit}).\n\n` +
+        `Сбросьте подключение в профиле (раз в 24 ч) или докупите устройства.`;
     }
   } else if (sub.status !== "active") {
     connectBlockReason =

@@ -86,7 +86,7 @@ export type ActivateTrialParams = {
   subscriptionFields: Record<string, unknown>;
 };
 
-/** Пробный период: панель + D1 binding; KV-кэш подгружается в фоне. */
+/** Пробный период: панель + D1 binding; KV-кэш подгружается при подключении. */
 export async function activateTrialSubscription(
   env: BotEnv,
   params: ActivateTrialParams
@@ -111,9 +111,6 @@ export async function activateTrialSubscription(
     params.userId,
     provision,
     params.subscriptionFields
-  );
-  void refreshSubscriptionCache(env, params.userId, subId).catch((error) =>
-    console.error("refreshSubscriptionCache:", error)
   );
   return subId;
 }

@@ -841,7 +841,9 @@ export async function handleApiRequest(
     try {
       const result = await activateMiniappTrial(env, tgUser);
       const bundle = (await getBundle(env, tgUser.id))!;
-      const profile = await buildMiniappUserProfile(env, bundle);
+      const profile = await buildMiniappUserProfile(env, bundle, {
+        skipPanel: true,
+      });
       // #region agent log
       debugSessionLog(
         "api-handler.ts:/api/trial",

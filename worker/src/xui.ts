@@ -1619,7 +1619,7 @@ export class XuiApi {
       const seedSubId =
         params.dbSubscription?.xray_sub_id?.trim() || randomSubId();
       const seedUuid = params.dbSubscription?.xray_uuid?.trim();
-      await this.addClientIfMissing(
+      const primaryUuid = await this.addClientIfMissing(
         panelLabel,
         seedSubId,
         params.telegramId,
@@ -1629,12 +1629,18 @@ export class XuiApi {
         limitIp,
         enableClient
       );
-      existing = await this.waitForPanelClient(
-        params.telegramId,
-        params.username ?? null,
-        params.dbSubscription,
-        panelLabel
-      );
+      const resolved =
+        (await this.waitForPanelClient(
+          params.telegramId,
+          params.username ?? null,
+          params.dbSubscription,
+          panelLabel
+        )) || (await this.findClientByTelegramId(params.telegramId));
+      existing = {
+        email: resolved?.email || panelLabel,
+        subId: resolved?.subId?.trim() || seedSubId,
+        primaryUuid: resolved?.primaryUuid || primaryUuid,
+      };
     }
 
     if (!existing?.subId?.trim() || !existing.primaryUuid) {

@@ -4,6 +4,7 @@ import {
   fetchPanelSubscriptionBody,
   subscriptionBodyForClients,
 } from "./connect-links";
+import { debugSessionLog } from "./debug-session-log";
 import { panelLimitIpForSubscription } from "./device-limit";
 import {
   kvClearSubscriptionPayloadCache,
@@ -91,6 +92,18 @@ export async function syncPanelSubIdForUser(
     }
   } catch (error) {
     console.error("syncPanelSubId xui:", error);
+    // #region agent log
+    debugSessionLog(
+      "panel-sync.ts:syncPanelSubIdForUser",
+      "panel sync failed",
+      {
+        telegramId,
+        force: Boolean(options?.force),
+        error: error instanceof Error ? error.message : "unknown",
+      },
+      "R"
+    );
+    // #endregion
     const fromDb = await syncFromDbBinding(env, userId, telegramId, sub);
     if (fromDb) return fromDb;
     return lockedSubId || null;

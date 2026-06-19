@@ -1666,6 +1666,66 @@ export class XuiApi {
     );
   }
 
+  private async provisionTrialNewClient(
+    env: BotEnv,
+    params: {
+      username: string | null;
+      displayName?: string | null;
+      telegramId: number;
+      expiryMs: number;
+    },
+    limitIp: number
+  ): Promise<ProvisionResult> {
+    const panelLabel = panelDisplayLabel(
+      params.username,
+      params.displayName ?? null,
+      params.telegramId,
+      { slot: 1 }
+    );
+    const emailKey = canonicalClientKey(params.telegramId);
+
+    const existing =
+      (await this.findClientByTelegramId(params.telegramId)) ??
+      (await this.findClientByEmail(emailKey)) ??
+      (await this.findClientByEmail(panelLabel));
+
+    if (existing?.subId && existing.primaryUuid) {
+      const client = this.buildClient(
+        existing.email,
+        existing.subId,
+        params.telegramId,
+        params.expiryMs,
+        0,
+        true,
+        existing.primaryUuid,
+        limitIp
+      );
+      await this.updateClient(client);
+      return this.toProvisionResult(
+        env,
+        existing.email,
+        existing.subId,
+        existing.primaryUuid
+      );
+    }
+
+    const seedSubId = randomSubId();
+    const primaryUuid = await this.addClientIfMissing(
+      panelLabel,
+      seedSubId,
+      params.telegramId,
+      params.expiryMs,
+      0,
+      undefined,
+      limitIp,
+      true
+    );
+    const resolved = await this.findClientByTelegramId(params.telegramId);
+    const email = resolved?.email || panelLabel;
+    const subId = resolved?.subId || seedSubId;
+    return this.toProvisionResult(env, email, subId, primaryUuid);
+  }
+
   async provisionTrial(
     env: BotEnv,
     params: {
@@ -1729,10 +1789,7 @@ export class XuiApi {
     }
 
     if (!subId || !primaryUuid) {
-      return this.provisionUser(env, {
-        ...params,
-        totalGb: 0,
-      });
+      return this.provisionTrialNewClient(env, params, limitIp);
     }
 
     const client = this.buildClient(

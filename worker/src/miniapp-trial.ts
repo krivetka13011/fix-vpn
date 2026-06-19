@@ -1,4 +1,5 @@
 import type { BotEnv } from "./env";
+import { getBundle } from "./db";
 import {
   formatSubscriptionDateFields,
   isTestMode,
@@ -6,7 +7,6 @@ import {
 } from "./test-mode";
 import {
   clearVpnDeviceBindings,
-  getSubscription,
   upsertTelegramUser,
 } from "./repository";
 import { activateTrialSubscription } from "./subscription-activate";
@@ -18,8 +18,11 @@ export async function activateMiniappTrial(
   env: BotEnv,
   tg: TelegramUser
 ): Promise<{ message: string }> {
-  const user = await upsertTelegramUser(env, tg);
-  const existingSub = await getSubscription(env, user.id);
+  await upsertTelegramUser(env, tg);
+  const bundle = await getBundle(env, tg.id);
+  if (!bundle) throw new Error("Пользователь не найден");
+  const user = bundle.user;
+  const existingSub = bundle.subscription;
 
   if (trialButtonHidden(user, existingSub)) {
     // #region agent log

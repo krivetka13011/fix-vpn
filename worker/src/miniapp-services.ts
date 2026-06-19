@@ -21,6 +21,7 @@ import {
   telegramIdFromClientEmail,
 } from "./device-limit";
 import { deviceSlotDisplayName } from "./panel-client-label";
+import { debugSessionLog } from "./debug-session-log";
 import {
   getSubscription,
   getUserById,
@@ -310,8 +311,11 @@ export function subscriptionPeriodText(sub: {
 export function canConnectSubscription(sub: {
   status: string;
   xray_sub_id?: string | null;
+  client_email?: string | null;
 }): boolean {
-  return sub.status === "active" && Boolean(sub.xray_sub_id?.trim());
+  if (sub.status !== "active") return false;
+  // После сброса устройств xray_sub_id очищается — подключение пересоздаёт клиента в панели.
+  return Boolean(sub.xray_sub_id?.trim() || sub.client_email?.trim());
 }
 
 export function deviceTotalForPlan(sub: {
@@ -365,11 +369,27 @@ export async function buildMiniappUserProfile(
         connectBlockReason = gate.message.replace(/<[^>]+>/g, "");
       }
     }
+    // #region agent log
+    debugSessionLog(
+      "miniapp-services.ts:buildMiniappUserProfile",
+      "canConnect resolved",
+      {
+        canConnect,
+        subStatus: sub.status,
+        hasSubId: Boolean(sub.xray_sub_id?.trim()),
+        hasClientEmail: Boolean(sub.client_email?.trim()),
+        devicesUsed: deviceInfo.used,
+        connectBlockReason,
+      },
+      "R"
+    );
+    // #endregion
   } else if (sub.status !== "active") {
     connectBlockReason =
       "Сначала активируйте пробный период или оформите подписку.";
   } else {
-    connectBlockReason = "Подписка синхронизируется. Подождите минуту и повторите.";
+    connectBlockReason =
+      "Подписка ещё синхронизируется. Подождите минуту и повторите подключение.";
   }
 
   return {

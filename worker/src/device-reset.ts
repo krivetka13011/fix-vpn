@@ -1,11 +1,18 @@
+import {
+  fetchPanelSubscriptionBody,
+  subscriptionBodyForClients,
+} from "./connect-links";
+import { telegramIdFromClientEmail } from "./device-limit";
 import type { BotEnv } from "./env";
 import { isTesterAccount } from "./env";
 import {
   clearVpnDeviceBindings,
   clearXuiInboundClients,
   getSubscription,
+  getUserById,
   getUserByTelegramId,
   kvClearSubscriptionPayloadCache,
+  kvSetSubscriptionPayloadCache,
   patchSubscription,
 } from "./repository";
 import { clearStuckRotationFlags } from "./subscription-rotate";
@@ -19,7 +26,10 @@ export function deviceResetCooldownRemaining(
   lastReset: string | null | undefined
 ): number {
   if (!lastReset) return 0;
-  const elapsed = Date.now() - new Date(lastReset).getTime();
+  const resetAt = new Date(lastReset).getTime();
+  if (!Number.isFinite(resetAt)) return 0;
+  const elapsed = Date.now() - resetAt;
+  if (elapsed < 0) return 0;
   return Math.max(0, DEVICE_RESET_COOLDOWN_MS - elapsed);
 }
 
@@ -54,7 +64,7 @@ export class DeviceResetPanelError extends Error {
 }
 
 export const DEVICE_RESET_SUCCESS_NOTICE =
-  "Подключение сброшено. Клиент удалён из панели — подключите VPN заново. Следующий сброс — через 24 часа.";
+  "Подключение сброшено. В Happ обновите подписку (потяните вниз), затем подключитесь заново во вкладке «Помощь». Следующий сброс — через 24 часа.";
 
 export function deviceResetNotice(): string {
   return DEVICE_RESET_SUCCESS_NOTICE;
@@ -112,8 +122,12 @@ export async function resetPanelClient(
     throw new Error("Подписка неактивна. Оформите или продлите доступ перед сбросом.");
   }
 
+  const dbUser = await getUserById(env, userId);
   const telegramId =
-    options?.telegramId ?? Number(sub.client_email?.trim()) ?? 0;
+    options?.telegramId ??
+    telegramIdFromClientEmail(sub.client_email) ??
+    dbUser?.telegram_id ??
+    0;
   if (!Number.isFinite(telegramId) || telegramId <= 0) {
     throw new Error("Не удалось определить Telegram ID");
   }
@@ -155,11 +169,24 @@ export async function resetPanelClient(
   await clearStuckRotationFlags(env, userId);
 
   const refreshedSub = await getSubscription(env, userId);
-  if (refreshedSub?.status === "active") {
-    try {
-      await ensureActiveSubscriptionPanel(env, refreshedSub);
-    } catch (error) {
-      console.error("resetPanelClient prewarm:", error);
+  let prewarmed = false;
+  const subId = refreshedSub?.xray_sub_id?.trim() ?? "";
+  if (refreshedSub?.status === "active" && subId) {
+    for (let attempt = 0; attempt < 4 && !prewarmed; attempt += 1) {
+      try {
+        await ensureActiveSubscriptionPanel(env, refreshedSub);
+        const live = await fetchPanelSubscriptionBody(env, subId);
+        if (live?.body) {
+          await kvSetSubscriptionPayloadCache(
+            env,
+            userId,
+            subscriptionBodyForClients(live.body)
+          );
+          prewarmed = true;
+        }
+      } catch (error) {
+        console.error("resetPanelClient prewarm attempt:", error);
+      }
     }
   }
 
@@ -167,8 +194,8 @@ export async function resetPanelClient(
   debugSessionLog(
     "device-reset.ts:resetPanelClient",
     "panel client reset complete",
-    { telegramId, userId, panelDeleted: deleted },
-    "R"
+    { telegramId, userId, panelDeleted: deleted, prewarmed, subId: subId || null },
+    "J"
   );
   // #endregion
 }

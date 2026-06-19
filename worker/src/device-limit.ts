@@ -2,7 +2,7 @@ import type { BotEnv } from "./env";
 import type { DbSubscription } from "./types";
 import { debugSessionLog } from "./debug-session-log";
 import { deviceSlotDisplayName } from "./panel-client-label";
-import { getSubscription } from "./repository";
+import { getSubscription, getUserById } from "./repository";
 import type { PanelDeviceIp } from "./xui";
 import { XuiApi } from "./xui";
 
@@ -147,7 +147,9 @@ export async function syncPanelDeviceLimit(
   userId: string
 ): Promise<void> {
   const sub = await getSubscription(env, userId);
-  const telegramId = Number(sub?.client_email);
+  const user = await getUserById(env, userId);
+  const telegramId =
+    telegramIdFromClientEmail(sub?.client_email) ?? user?.telegram_id ?? 0;
   if (!Number.isFinite(telegramId) || telegramId <= 0) return;
 
   const limitIp = panelLimitIpForSubscription(sub);

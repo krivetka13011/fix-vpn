@@ -2,7 +2,8 @@ import type { Catalog, UserProfile } from "../types";
 import type { BillingMonths, PlanType } from "../types";
 import { debugClientLog } from "../utils/debugLog";
 
-const API_TIMEOUT_MS = 8000;
+const API_TIMEOUT_MS = 12000;
+const SLOW_API_TIMEOUT_MS = 45000;
 
 function initDataHeader(): HeadersInit {
   const initData = window.Telegram?.WebApp?.initData ?? "";
@@ -12,9 +13,13 @@ function initDataHeader(): HeadersInit {
   };
 }
 
-async function api<T>(path: string, options?: RequestInit): Promise<T> {
+async function api<T>(
+  path: string,
+  options?: RequestInit,
+  timeoutMs = API_TIMEOUT_MS
+): Promise<T> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const res = await fetch(path, {
       ...options,
@@ -68,7 +73,7 @@ export function activateTrial(): Promise<{
   message: string;
   user: UserProfile;
 }> {
-  return api("/api/trial", { method: "POST", body: "{}" });
+  return api("/api/trial", { method: "POST", body: "{}" }, SLOW_API_TIMEOUT_MS);
 }
 
 export function fetchConnect(
@@ -82,7 +87,7 @@ export function fetchConnect(
   redirectUrl: string;
 }> {
   const params = new URLSearchParams({ platform, client });
-  return api(`/api/connect?${params.toString()}`);
+  return api(`/api/connect?${params.toString()}`, undefined, SLOW_API_TIMEOUT_MS);
 }
 
 export function resetDevices(): Promise<{
@@ -90,7 +95,7 @@ export function resetDevices(): Promise<{
   message?: string;
   user?: UserProfile;
 }> {
-  return api("/api/devices/reset", { method: "POST", body: "{}" });
+  return api("/api/devices/reset", { method: "POST", body: "{}" }, SLOW_API_TIMEOUT_MS);
 }
 
 export function purchaseDevices(extraDevices: number): Promise<{

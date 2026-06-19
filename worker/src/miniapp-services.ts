@@ -191,26 +191,6 @@ export async function fetchMiniappDevices(
     limit === 0 ? rawUsed : Math.min(rawUsed, limit > 0 ? limit : rawUsed);
 
   const bindings = await listVpnDeviceBindings(env, userId);
-  let devices: MiniappDeviceRow[] = bindings.map((row) => ({
-    id: row.id,
-    label: row.label,
-    os: row.os,
-    client: row.vpn_client,
-    lastSeenAt: row.last_seen_at,
-    online: true,
-  }));
-
-  if (devices.length === 0 && telegramId > 0) {
-    const panelIps = await fetchPanelDeviceIps(env, telegramId);
-    devices = panelIps.map((row, index) => ({
-      id: row.ip,
-      label: deviceSlotDisplayName(user?.username, telegramId, index + 1),
-      os: "",
-      client: "",
-      lastSeenAt: row.seenAt || new Date().toISOString(),
-      online: true,
-    }));
-  }
 
   let panelOnline = false;
   if (telegramId > 0) {
@@ -224,6 +204,27 @@ export async function fetchMiniappDevices(
     } catch {
       // panel unreachable
     }
+  }
+
+  let devices: MiniappDeviceRow[] = bindings.map((row) => ({
+    id: row.id,
+    label: row.label,
+    os: row.os,
+    client: row.vpn_client,
+    lastSeenAt: row.last_seen_at,
+    online: panelOnline,
+  }));
+
+  if (devices.length === 0 && telegramId > 0) {
+    const panelIps = await fetchPanelDeviceIps(env, telegramId);
+    devices = panelIps.map((row, index) => ({
+      id: row.ip,
+      label: deviceSlotDisplayName(user?.username, telegramId, index + 1),
+      os: "",
+      client: "",
+      lastSeenAt: row.seenAt || new Date().toISOString(),
+      online: true,
+    }));
   }
 
   const canAddDevices = Boolean(

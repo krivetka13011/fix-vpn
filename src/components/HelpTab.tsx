@@ -3,6 +3,7 @@ import type { Catalog, DevicePlatform, UserProfile, VpnClientId } from "../types
 import { fetchConnect } from "../api/client";
 import { CLIENTS, installUrl, PLATFORMS } from "../data/helpLinks";
 import { openSupportChat, openTelegramLink } from "../utils/copy";
+import { debugClientLog } from "../utils/debugLog";
 
 interface Props {
   catalog: Catalog;
@@ -92,16 +93,30 @@ export function HelpTab({ catalog, user, onRefresh, onGoToProfile }: Props) {
       const result = await fetchConnect(platform, client);
       const tg = window.Telegram?.WebApp;
       if (client === "happ" && platform === "android") {
-        const subUrl = result.subUrl || result.connectUrl.replace(/^happ:\/\/add\//i, "");
-        try {
-          if (navigator.clipboard?.writeText) {
-            await navigator.clipboard.writeText(subUrl);
-          } else {
-            window.prompt("Скопируйте ссылку подписки:", subUrl);
+        const subUrl =
+          result.subUrl || result.connectUrl.replace(/^happ:\/\/add\//i, "");
+        if (tg?.openLink && result.connectUrl.startsWith("happ://")) {
+          tg.openLink(result.connectUrl);
+          setHint("Открываем Happ для импорта подписки…");
+          // #region agent log
+          debugClientLog(
+            "HelpTab.tsx:handleConnect",
+            "happ android openLink",
+            { hasConnectUrl: Boolean(result.connectUrl) },
+            "L"
+          );
+          // #endregion
+        } else {
+          try {
+            if (navigator.clipboard?.writeText) {
+              await navigator.clipboard.writeText(subUrl);
+            } else {
+              window.prompt("Скопируйте ссылку подписки:", subUrl);
+            }
+            setHint("Ссылка скопирована. В Happ: Добавить → вставьте ссылку.");
+          } catch {
+            setHint(`Скопируйте: ${subUrl}`);
           }
-          setHint("Ссылка скопирована. В Happ: Добавить → вставьте ссылку.");
-        } catch {
-          setHint(`Скопируйте: ${subUrl}`);
         }
       } else if (tg?.openLink) {
         tg.openLink(result.connectUrl);
@@ -113,7 +128,16 @@ export function HelpTab({ catalog, user, onRefresh, onGoToProfile }: Props) {
       tg?.HapticFeedback?.impactOccurred("medium");
       await onRefresh?.();
     } catch (error) {
-      setHint(error instanceof Error ? error.message : "Не удалось подключиться");
+      const message = error instanceof Error ? error.message : "Не удалось подключиться";
+      // #region agent log
+      debugClientLog(
+        "HelpTab.tsx:handleConnect",
+        "connect failed",
+        { message, platform, client },
+        "L"
+      );
+      // #endregion
+      setHint(message);
     } finally {
       setConnecting(false);
     }

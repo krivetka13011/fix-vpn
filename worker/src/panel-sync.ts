@@ -91,6 +91,11 @@ export async function syncPanelSubIdForUser(
       };
       provisioned = true;
     }
+
+    const onInboundAfter = await xui.findClientByTelegramId(telegramId);
+    if (onInboundAfter?.subId?.trim() && onInboundAfter.primaryUuid) {
+      panel = onInboundAfter;
+    }
   } catch (error) {
     console.error("syncPanelSubId xui:", error);
     // #region agent log

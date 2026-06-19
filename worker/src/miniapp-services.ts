@@ -264,8 +264,14 @@ export async function buildMiniappConnectUrl(
     throw new Error(gate.message.replace(/<[^>]+>/g, ""));
   }
 
+  const resetRecently =
+    Boolean(sub?.last_device_reset) &&
+    Date.now() - new Date(sub.last_device_reset!).getTime() < 30 * 60 * 1000;
   const subId = await resolvePanelSubIdForUser(env, tg, {
-    force: !sub?.xray_sub_id?.trim() || !sub?.xray_uuid?.trim(),
+    force:
+      !sub?.xray_sub_id?.trim() ||
+      !sub?.xray_uuid?.trim() ||
+      resetRecently,
   });
   if (!subId) {
     throw new Error("Подписка ещё синхронизируется. Повторите через минуту.");

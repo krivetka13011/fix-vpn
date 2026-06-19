@@ -277,22 +277,9 @@ export async function handleApiRequest(
 
     let live = await fetchPanelSubscriptionBody(env, subId);
     if (!live?.body) {
-      await ensureActiveSubscriptionPanel(env, dbSub);
-      live = await fetchPanelSubscriptionBody(env, subId);
-    }
-    if (!live?.body) {
-      try {
-        const xui = new XuiApi(env);
-        const user = await getUserById(env, dbSub.user_id);
-        if (user) {
-          const onInbound = await xui.findClientByTelegramId(user.telegram_id);
-          if (!onInbound) {
-            await ensureActiveSubscriptionPanel(env, dbSub);
-            live = await fetchPanelSubscriptionBody(env, subId);
-          }
-        }
-      } catch (error) {
-        console.error("subscription inbound ensure:", error);
+      for (let attempt = 0; attempt < 4 && !live?.body; attempt += 1) {
+        await ensureActiveSubscriptionPanel(env, dbSub);
+        live = await fetchPanelSubscriptionBody(env, subId);
       }
     }
     if (live?.body) {
@@ -437,7 +424,15 @@ export async function handleApiRequest(
       return new Response(body, { status: 200, headers });
     } catch (error) {
       console.error("subscription proxy:", error);
-      return new Response("subscription proxy failed", { status: 502, headers: CORS });
+      // #region agent log
+      debugSessionLog(
+        "api-handler.ts:/sub",
+        "subscription proxy exception",
+        { subIdPrefix: subId.slice(0, 8) },
+        "F"
+      );
+      // #endregion
+      return new Response("subscription unavailable", { status: 503, headers: CORS });
     }
   }
 

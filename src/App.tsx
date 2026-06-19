@@ -119,6 +119,11 @@ export default function App() {
     tg?.setHeaderColor?.("#0a0a0a");
     tg?.setBackgroundColor?.("#0a0a0a");
     load();
+    const onVisible = () => {
+      if (document.visibilityState === "visible") load();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
   }, [load]);
 
   const tgPhoto = window.Telegram?.WebApp?.initDataUnsafe?.user?.photo_url;
@@ -148,7 +153,12 @@ export default function App() {
         {syncing && <div className="sync-line" aria-hidden />}
         {tab === "help" && <HelpTab catalog={catalog} user={user} />}
         {tab === "plans" && (
-          <PlansTab catalog={catalog} user={user} onPurchased={load} />
+          <PlansTab
+            catalog={catalog}
+            user={user}
+            onPurchased={load}
+            onTrialActivated={() => setTab("help")}
+          />
         )}
         {tab === "profile" && (
           <ProfileTab

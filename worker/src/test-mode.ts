@@ -9,7 +9,7 @@ export function isTestMode(env: BotEnv): boolean {
 
 export function trialDurationMs(env: BotEnv): number {
   if (isTestMode(env)) {
-    const minutes = Number(env.TRIAL_DURATION_MINUTES || "2");
+    const minutes = Number(env.TRIAL_DURATION_MINUTES || "5");
     return Math.max(1, minutes) * 60 * 1000;
   }
   const days = Number(env.TRIAL_DAYS || env.XUI_TRIAL_DAYS || "1");

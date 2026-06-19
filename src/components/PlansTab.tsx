@@ -7,6 +7,7 @@ interface Props {
   catalog: Catalog;
   user: UserProfile;
   onPurchased: () => void;
+  onTrialActivated?: () => void;
 }
 
 type PaymentMethod = "sbp" | "crypto_usdt";
@@ -19,7 +20,7 @@ const PERIOD_LABELS: Record<BillingMonths, string> = {
   12: "1 год",
 };
 
-export function PlansTab({ catalog, user, onPurchased }: Props) {
+export function PlansTab({ catalog, user, onPurchased, onTrialActivated }: Props) {
   const [planType, setPlanType] = useState<PlanType | null>(null);
   const [months, setMonths] = useState<BillingMonths | null>(null);
   const [extraDevices, setExtraDevices] = useState(0);
@@ -49,12 +50,13 @@ export function PlansTab({ catalog, user, onPurchased }: Props) {
       setMessage(res.message);
       window.Telegram?.WebApp?.HapticFeedback?.impactOccurred("medium");
       onPurchased();
+      onTrialActivated?.();
     } catch (e) {
       setMessage(e instanceof Error ? e.message : "Не удалось активировать пробный период");
     } finally {
       setTrialLoading(false);
     }
-  }, [onPurchased]);
+  }, [onPurchased, onTrialActivated]);
 
   const handleBuy = useCallback(async () => {
     if (!planType || !months) return;
@@ -89,7 +91,7 @@ export function PlansTab({ catalog, user, onPurchased }: Props) {
     loading
   );
 
-  const showTrial = user.trialAvailable !== false;
+  const showTrial = user.trialAvailable === true;
 
   return (
     <>
@@ -185,7 +187,7 @@ export function PlansTab({ catalog, user, onPurchased }: Props) {
                     ))}
                   </div>
 
-                  {tariff.id === "basic" && !catalog.testMode && (
+                  {tariff.id === "basic" && (
                     <>
                       <div className="tariff-divider" />
                       <p className="section-label">Доп. устройства</p>

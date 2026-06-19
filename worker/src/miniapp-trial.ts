@@ -52,6 +52,7 @@ export async function activateMiniappTrial(
       purchased_at: trialDates.purchased_at,
       expiry_warned_at: null,
       is_trial: true,
+      extra_devices: 0,
       updated_at: new Date().toISOString(),
     },
   });

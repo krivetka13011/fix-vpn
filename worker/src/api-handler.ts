@@ -41,7 +41,8 @@ import { handlePartnerBotUpdate } from "./bots/partner-bot";
 import { beginE2eTrace, endE2eTrace } from "./e2e-trace";
 import { DeviceResetCooldownError, DeviceResetPanelError } from "./device-reset";
 import { approvePaidTransaction } from "./approve-transaction";
-import { isTestMode } from "./test-mode";
+import { isTestMode, trialDurationMs } from "./test-mode";
+import { debugSessionLog } from "./debug-session-log";
 import {
   reconcilePlategaFromReturnUrl,
 } from "./platega-reconcile";
@@ -738,6 +739,20 @@ export async function handleApiRequest(
       );
       const fresh = (await getBundle(env, tgUser.id)) ?? userRow;
       const profile = await buildMiniappUserProfile(env, fresh);
+      // #region agent log
+      debugSessionLog(
+        "api-handler.ts:/api/me",
+        "profile loaded",
+        {
+          status: fresh.subscription.status,
+          canConnect: profile.subscription.canConnect,
+          devicesUsed: profile.subscription.devicesUsed,
+          devicesMax: profile.subscription.devicesMax,
+          trialAvailable: !trialButtonHidden(fresh.user, fresh.subscription),
+        },
+        "B"
+      );
+      // #endregion
       return json({
         user: {
           ...profile,
@@ -766,8 +781,24 @@ export async function handleApiRequest(
         return json({ error: "Invalid client" }, 400);
       }
       const result = await buildMiniappConnectUrl(env, tgUser, platform, client);
+      // #region agent log
+      debugSessionLog(
+        "api-handler.ts:/api/connect",
+        "connect ok",
+        { platform, client, hasSubId: Boolean(result.subId) },
+        "C"
+      );
+      // #endregion
       return json({ ok: true, ...result });
     } catch (e) {
+      // #region agent log
+      debugSessionLog(
+        "api-handler.ts:/api/connect",
+        "connect failed",
+        { error: e instanceof Error ? e.message : "unknown" },
+        "C"
+      );
+      // #endregion
       return json(
         { error: e instanceof Error ? e.message : "Connect failed" },
         400
@@ -804,6 +835,18 @@ export async function handleApiRequest(
       const result = await activateMiniappTrial(env, tgUser);
       const bundle = (await getBundle(env, tgUser.id))!;
       const profile = await buildMiniappUserProfile(env, bundle);
+      // #region agent log
+      debugSessionLog(
+        "api-handler.ts:/api/trial",
+        "trial activated",
+        {
+          canConnect: profile.subscription.canConnect,
+          isTrial: profile.subscription.isTrial,
+          trialMinutes: Math.round(trialDurationMs(env) / 60000),
+        },
+        "A"
+      );
+      // #endregion
       return json({
         ok: true,
         message: result.message,

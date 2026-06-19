@@ -31,3 +31,6 @@ id = "1d9c845eb4c54a2d9db139b05104aaf3"
 [triggers]
 # Только истечение подписок (D1 + редкий panel disable). Без bulk-sync панели.
 crons = ["*/15 * * * *"]
+
+[limits]
+subrequests = 1000

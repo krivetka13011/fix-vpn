@@ -1542,11 +1542,11 @@ export class XuiApi {
       xray_uuid?: string | null;
     } | null,
     panelLabel?: string,
-    attempts = 5,
-    delayMs = 400
+    attempts = 2,
+    delayMs = 300
   ): Promise<{ email: string; subId: string; primaryUuid: string } | undefined> {
     for (let i = 0; i < attempts; i += 1) {
-      this.invalidateScan();
+      if (i > 0) this.invalidateScan();
       const found =
         (await this.findClientByTelegramId(telegramId)) ||
         (await this.resolvePanelClientForTelegram(telegramId, db, username)) ||

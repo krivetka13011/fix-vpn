@@ -25,11 +25,16 @@ export async function activateMiniappTrial(
   let user = await upsertTelegramUser(env, tg);
   let existingSub = await getSubscription(env, user.id);
 
+  const stalePanelRefs =
+    Boolean(existingSub?.xray_sub_id?.trim()) ||
+    Boolean(existingSub?.xray_uuid?.trim()) ||
+    Boolean(existingSub?.client_email?.trim());
+
   const testerRetrial =
     isTesterAccount(env, tg.id, user.is_tester) &&
     isTestMode(env) &&
     existingSub?.status !== "active" &&
-    (user.has_used_trial || existingSub?.is_trial);
+    (user.has_used_trial || existingSub?.is_trial || stalePanelRefs);
 
   if (testerRetrial) {
     await resetTesterTrial(env, tg.id);

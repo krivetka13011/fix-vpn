@@ -1782,6 +1782,9 @@ export class XuiApi {
     try {
       await this.updateClient(client);
     } catch (error) {
+      if (this.isMissingClientError(error)) {
+        return this.provisionTrialNewClient(env, params, limitIp);
+      }
       const resolved = await this.findClientByTelegramId(params.telegramId);
       if (!resolved?.email || resolved.email === panelEmail) throw error;
       panelEmail = resolved.email;

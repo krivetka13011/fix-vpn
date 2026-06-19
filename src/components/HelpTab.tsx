@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { Catalog, DevicePlatform, UserProfile, VpnClientId } from "../types";
-import { fetchConnect } from "../api/client";
+import { fetchConnect, activateTrial } from "../api/client";
 import { CLIENTS, installUrl, PLATFORMS } from "../data/helpLinks";
 import { openSupportChat, openTelegramLink } from "../utils/copy";
 import { debugClientLog } from "../utils/debugLog";
@@ -10,7 +10,7 @@ interface Props {
   user: UserProfile;
   onRefresh?: () => void | Promise<void>;
   onGoToProfile?: () => void;
-  onGoToPlans?: () => void;
+  onUserUpdate?: (user: UserProfile) => void;
 }
 
 const FAQ = [
@@ -45,11 +45,12 @@ const CLIENT_ICONS: Record<VpnClientId, string> = {
   hiddify: "shield",
 };
 
-export function HelpTab({ catalog, user, onRefresh, onGoToProfile, onGoToPlans }: Props) {
-  const [platform, setPlatform] = useState<DevicePlatform | null>(null);
-  const [client, setClient] = useState<VpnClientId | null>(null);
+export function HelpTab({ catalog, user, onRefresh, onGoToProfile, onUserUpdate }: Props) {
+  const [platform, setPlatform] = useState<DevicePlatform | null>("android");
+  const [client, setClient] = useState<VpnClientId | null>("happ");
   const [hint, setHint] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
+  const [trialLoading, setTrialLoading] = useState(false);
   const [openFaq, setOpenFaq] = useState<number | null>(null);
 
   const isActive = user.subscription.status === "active";
@@ -71,6 +72,37 @@ export function HelpTab({ catalog, user, onRefresh, onGoToProfile, onGoToPlans }
     }
     openTelegramLink(installUrl(client, platform));
     setHint(null);
+  }
+
+  async function handleRetrial() {
+    setTrialLoading(true);
+    setHint(null);
+    try {
+      const res = await activateTrial();
+      window.Telegram?.WebApp?.HapticFeedback?.impactOccurred("medium");
+      if (res.user) {
+        onUserUpdate?.(res.user);
+        setHint(res.message);
+        // #region agent log
+        debugClientLog(
+          "HelpTab.tsx:handleRetrial",
+          "trial activated from help",
+          {
+            canConnect: res.user.subscription.canConnect,
+            status: res.user.subscription.status,
+          },
+          "P"
+        );
+        // #endregion
+      } else {
+        await onRefresh?.();
+        setHint(res.message);
+      }
+    } catch (error) {
+      setHint(error instanceof Error ? error.message : "Не удалось активировать пробный период");
+    } finally {
+      setTrialLoading(false);
+    }
   }
 
   async function handleConnect() {
@@ -185,16 +217,21 @@ export function HelpTab({ catalog, user, onRefresh, onGoToProfile, onGoToPlans }
         {!isActive && user.subscription.status === "expired" && canRetrial && (
           <>
             <p className="toast">
-              Пробный период завершён. Активируйте его снова во вкладке «Тарифы».
+              Пробный период завершён. Нажмите кнопку ниже, затем «Подключиться».
             </p>
-            {onGoToPlans && (
-              <button type="button" className="btn btn-fill btn-pill" onClick={onGoToPlans}>
-                <span className="material-symbols-outlined">bolt</span>
-                {catalog.trialDurationMinutes
+            <button
+              type="button"
+              className="btn btn-fill btn-pill"
+              disabled={trialLoading}
+              onClick={handleRetrial}
+            >
+              <span className="material-symbols-outlined">bolt</span>
+              {trialLoading
+                ? "Активация…"
+                : catalog.trialDurationMinutes
                   ? `Пробный период · ${catalog.trialDurationMinutes} мин`
                   : "Пробный период"}
-              </button>
-            )}
+            </button>
           </>
         )}
         {!isActive && user.subscription.status === "expired" && !canRetrial && (

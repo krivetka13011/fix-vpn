@@ -104,6 +104,13 @@ function json(data: unknown, status = 200): Response {
   });
 }
 
+function miniappTrialAvailable(
+  user: Parameters<typeof trialButtonHidden>[0],
+  sub: Parameters<typeof trialButtonHidden>[1]
+): boolean {
+  return !trialButtonHidden(user, sub) && sub?.status !== "active";
+}
+
 async function getAuthUser(
   request: Request,
   env: ApiEnv
@@ -748,7 +755,7 @@ export async function handleApiRequest(
           canConnect: profile.subscription.canConnect,
           devicesUsed: profile.subscription.devicesUsed,
           devicesMax: profile.subscription.devicesMax,
-          trialAvailable: !trialButtonHidden(fresh.user, fresh.subscription),
+          trialAvailable: miniappTrialAvailable(fresh.user, fresh.subscription),
         },
         "B"
       );
@@ -756,7 +763,7 @@ export async function handleApiRequest(
       return json({
         user: {
           ...profile,
-          trialAvailable: !trialButtonHidden(fresh.user, fresh.subscription),
+          trialAvailable: miniappTrialAvailable(fresh.user, fresh.subscription),
         },
       });
     } catch (e) {
@@ -852,7 +859,7 @@ export async function handleApiRequest(
         message: result.message,
         user: {
           ...profile,
-          trialAvailable: !trialButtonHidden(bundle.user, bundle.subscription),
+          trialAvailable: miniappTrialAvailable(bundle.user, bundle.subscription),
         },
       });
     } catch (e) {

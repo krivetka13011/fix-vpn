@@ -99,7 +99,7 @@ export async function canConnectNewDevice(
     return {
       ok: false,
       message:
-        `Все слоты заняты (<b>${used}/${limit}</b>).\n\n` +
+        `Все ${used} устройств заняты (<b>${used}/${limit}</b>).\n\n` +
         `Сбросьте подключение в профиле (раз в 24 ч) или докупите устройства.`,
     };
   }

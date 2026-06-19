@@ -25,6 +25,7 @@ export interface Subscription {
   deviceTotal: number | null;
   isTrial?: boolean;
   canConnect?: boolean;
+  connectBlockReason?: string | null;
   periodText?: string | null;
   devicesUsed?: number;
   devicesMax?: number;

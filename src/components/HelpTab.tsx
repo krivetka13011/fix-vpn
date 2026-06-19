@@ -49,7 +49,15 @@ export function HelpTab({ catalog, user, onRefresh }: Props) {
   const [connecting, setConnecting] = useState(false);
   const [openFaq, setOpenFaq] = useState<number | null>(null);
 
+  const isActive = user.subscription.status === "active";
+  const devicesUsed = user.subscription.devicesUsed ?? 0;
+  const devicesMax = user.subscription.devicesMax;
+  const atDeviceLimit =
+    isActive &&
+    devicesMax != null &&
+    devicesUsed >= devicesMax;
   const canConnect = user.subscription.canConnect === true;
+  const connectBlockReason = user.subscription.connectBlockReason;
 
   function handleInstall() {
     if (!platform || !client) {
@@ -67,9 +75,12 @@ export function HelpTab({ catalog, user, onRefresh }: Props) {
     }
     if (!canConnect) {
       setHint(
-        user.subscription.status === "active"
-          ? "Подписка синхронизируется. Подождите минуту и повторите."
-          : "Сначала активируйте пробный период во вкладке «Тарифы» или оформите подписку."
+        connectBlockReason ??
+          (atDeviceLimit
+            ? `Подключено ${devicesUsed}/${devicesMax}. Сбросьте подключение в профиле или докупите устройство.`
+            : isActive
+              ? "Подписка синхронизируется. Подождите минуту и повторите."
+              : "Сначала активируйте пробный период во вкладке «Тарифы» или оформите подписку.")
       );
       return;
     }
@@ -118,10 +129,19 @@ export function HelpTab({ catalog, user, onRefresh }: Props) {
       </section>
 
       <div className="stack">
-        {!canConnect && user.subscription.status === "active" && (
-          <p className="toast">Подписка активна — идёт подготовка ссылки для подключения.</p>
+        {!canConnect && isActive && atDeviceLimit && (
+          <p className="toast">
+            {connectBlockReason ??
+              `Подключено ${devicesUsed}/${devicesMax}. Сбросьте подключение в профиле или докупите устройство.`}
+          </p>
         )}
-        {user.subscription.status !== "active" && (
+        {!canConnect && isActive && !atDeviceLimit && (
+          <p className="toast">
+            {connectBlockReason ??
+              "Подписка активна — идёт подготовка ссылки для подключения."}
+          </p>
+        )}
+        {!isActive && (
           <p className="toast">
             Для подключения активируйте пробный период во вкладке «Тарифы» или оформите подписку.
           </p>

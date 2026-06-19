@@ -322,12 +322,33 @@ export async function buildMiniappUserProfile(env: BotEnv, bundle: UserBundle) {
   const deviceInfo = await fetchMiniappDevices(env, bundle.user.id);
   const sub = bundle.subscription;
   const base = bundleToApiUser(bundle);
+
+  let canConnect = false;
+  let connectBlockReason: string | null = null;
+  if (canConnectSubscription(sub)) {
+    const gate = await canConnectNewDevice(
+      env,
+      bundle.user.id,
+      bundle.user.telegram_id
+    );
+    canConnect = gate.ok;
+    if (!gate.ok) {
+      connectBlockReason = gate.message.replace(/<[^>]+>/g, "");
+    }
+  } else if (sub.status !== "active") {
+    connectBlockReason =
+      "Сначала активируйте пробный период или оформите подписку.";
+  } else {
+    connectBlockReason = "Подписка синхронизируется. Подождите минуту и повторите.";
+  }
+
   return {
     ...base,
     subscription: {
       ...base.subscription,
       isTrial: Boolean(sub.is_trial),
-      canConnect: canConnectSubscription(sub),
+      canConnect,
+      connectBlockReason,
       periodText: subscriptionPeriodText(sub),
       devicesUsed: deviceInfo.used,
       devicesMax: deviceInfo.limitDisplay,

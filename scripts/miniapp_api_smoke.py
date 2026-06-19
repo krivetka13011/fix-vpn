@@ -74,12 +74,18 @@ def main() -> int:
         "status": sub.get("status"),
         "trialAvailable": me.get("user", {}).get("trialAvailable"),
         "canConnect": sub.get("canConnect"),
+        "connectBlockReason": sub.get("connectBlockReason"),
         "planLabel": sub.get("planLabel"),
         "devicesUsed": sub.get("devicesUsed"),
         "devicesMax": sub.get("devicesMax"),
     })
     if code != 200:
         failures.append(f"/api/me HTTP {code}: {me.get('error')}")
+    elif sub.get("status") == "active":
+        used = sub.get("devicesUsed") or 0
+        max_dev = sub.get("devicesMax") or 1
+        if used >= max_dev and sub.get("canConnect"):
+            failures.append("canConnect true while device limit reached")
 
     code, conn = api("GET", "/api/connect?platform=android&client=happ", init_data)
     print("connect", code, {"ok": conn.get("ok"), "error": conn.get("error"), "hasSubId": bool(conn.get("subId"))})

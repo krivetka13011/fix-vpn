@@ -347,12 +347,23 @@ export async function buildMiniappUserProfile(
   let canConnect = false;
   let connectBlockReason: string | null = null;
   if (canConnectSubscription(sub)) {
-    if (limit === 0 || deviceInfo.used < limit) {
-      canConnect = true;
+    if (options?.skipPanel) {
+      canConnect = limit === 0 || deviceInfo.used < limit;
+      if (!canConnect) {
+        connectBlockReason =
+          `Все ${deviceInfo.used} устройств заняты (${deviceInfo.used}/${limit}).\n\n` +
+          `Сбросьте подключение в профиле (раз в 24 ч) или докупите устройства.`;
+      }
     } else {
-      connectBlockReason =
-        `Все ${deviceInfo.used} устройств заняты (${deviceInfo.used}/${limit}).\n\n` +
-        `Сбросьте подключение в профиле (раз в 24 ч) или докупите устройства.`;
+      const gate = await canConnectNewDevice(
+        env,
+        bundle.user.id,
+        bundle.user.telegram_id
+      );
+      canConnect = gate.ok;
+      if (!gate.ok) {
+        connectBlockReason = gate.message.replace(/<[^>]+>/g, "");
+      }
     }
   } else if (sub.status !== "active") {
     connectBlockReason =

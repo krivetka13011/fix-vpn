@@ -94,6 +94,9 @@ export function HelpTab({ catalog, user, onRefresh, onGoToProfile, onUserUpdate 
           "P"
         );
         // #endregion
+        if (res.user.subscription.canConnect) {
+          await runConnect("android", "happ");
+        }
       } else {
         await onRefresh?.();
         setHint(res.message);
@@ -102,6 +105,79 @@ export function HelpTab({ catalog, user, onRefresh, onGoToProfile, onUserUpdate 
       setHint(error instanceof Error ? error.message : "Не удалось активировать пробный период");
     } finally {
       setTrialLoading(false);
+    }
+  }
+
+  async function openConnectImport(
+    platform: DevicePlatform,
+    client: VpnClientId,
+    result: Awaited<ReturnType<typeof fetchConnect>>
+  ): Promise<void> {
+    const tg = window.Telegram?.WebApp;
+    const openUrl = result.redirectUrl || result.connectUrl;
+    if (client === "happ" && platform === "android") {
+      const subUrl =
+        result.subUrl || result.connectUrl.replace(/^happ:\/\/add\//i, "");
+      if (result.connectUrl.startsWith("happ://")) {
+        window.location.assign(result.connectUrl);
+        setHint("Открываем Happ…");
+        // #region agent log
+        debugClientLog(
+          "HelpTab.tsx:openConnectImport",
+          "happ android deeplink assign",
+          { connectUrl: result.connectUrl.slice(0, 80) },
+          "S"
+        );
+        // #endregion
+        return;
+      }
+      if (tg?.openLink && openUrl.startsWith("https://")) {
+        tg.openLink(openUrl);
+        setHint("Открываем Happ для импорта подписки…");
+        return;
+      }
+      try {
+        if (navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(subUrl);
+        } else {
+          window.prompt("Скопируйте ссылку подписки:", subUrl);
+        }
+        setHint("Ссылка скопирована. В Happ: Добавить → вставьте ссылку.");
+      } catch {
+        setHint(`Скопируйте: ${subUrl}`);
+      }
+      return;
+    }
+    if (tg?.openLink) {
+      tg.openLink(openUrl);
+      setHint("Открываем импорт подписки в клиент…");
+    } else {
+      window.location.href = result.connectUrl;
+      setHint("Открываем импорт подписки в клиент…");
+    }
+  }
+
+  async function runConnect(platform: DevicePlatform, client: VpnClientId) {
+    setConnecting(true);
+    setHint(null);
+    try {
+      const result = await fetchConnect(platform, client);
+      await openConnectImport(platform, client, result);
+      window.Telegram?.WebApp?.HapticFeedback?.impactOccurred("medium");
+      await onRefresh?.();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Не удалось подключиться";
+      // #region agent log
+      debugClientLog(
+        "HelpTab.tsx:runConnect",
+        "connect failed",
+        { message, platform, client },
+        "L"
+      );
+      // #endregion
+      setHint(message);
+    } finally {
+      setConnecting(false);
     }
   }
 
@@ -122,61 +198,7 @@ export function HelpTab({ catalog, user, onRefresh, onGoToProfile, onUserUpdate 
       return;
     }
 
-    setConnecting(true);
-    setHint(null);
-    try {
-      const result = await fetchConnect(platform, client);
-      const tg = window.Telegram?.WebApp;
-      const openUrl = result.redirectUrl || result.connectUrl;
-      if (client === "happ" && platform === "android") {
-        const subUrl =
-          result.subUrl || result.connectUrl.replace(/^happ:\/\/add\//i, "");
-        if (tg?.openLink && openUrl.startsWith("https://")) {
-          tg.openLink(openUrl);
-          setHint("Открываем Happ для импорта подписки…");
-          // #region agent log
-          debugClientLog(
-            "HelpTab.tsx:handleConnect",
-            "happ android https redirect",
-            { openUrl: openUrl.slice(0, 80) },
-            "O"
-          );
-          // #endregion
-        } else {
-          try {
-            if (navigator.clipboard?.writeText) {
-              await navigator.clipboard.writeText(subUrl);
-            } else {
-              window.prompt("Скопируйте ссылку подписки:", subUrl);
-            }
-            setHint("Ссылка скопирована. В Happ: Добавить → вставьте ссылку.");
-          } catch {
-            setHint(`Скопируйте: ${subUrl}`);
-          }
-        }
-      } else if (tg?.openLink) {
-        tg.openLink(openUrl);
-        setHint("Открываем импорт подписки в клиент…");
-      } else {
-        window.location.href = result.connectUrl;
-        setHint("Открываем импорт подписки в клиент…");
-      }
-      tg?.HapticFeedback?.impactOccurred("medium");
-      await onRefresh?.();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Не удалось подключиться";
-      // #region agent log
-      debugClientLog(
-        "HelpTab.tsx:handleConnect",
-        "connect failed",
-        { message, platform, client },
-        "L"
-      );
-      // #endregion
-      setHint(message);
-    } finally {
-      setConnecting(false);
-    }
+    await runConnect(platform, client);
   }
 
   return (

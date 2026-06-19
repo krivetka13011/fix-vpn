@@ -28,6 +28,7 @@ import { validateInitData, type TelegramUser } from "./telegram";
 import type { BotEnv } from "./env";
 import {
   clientBotToken,
+  isTesterAccount,
   partnerBotToken,
   subscriptionBaseUrl,
   subscriptionClientBaseUrl,
@@ -105,10 +106,16 @@ function json(data: unknown, status = 200): Response {
 }
 
 function miniappTrialAvailable(
+  env: BotEnv,
+  telegramId: number,
   user: Parameters<typeof trialButtonHidden>[0],
   sub: Parameters<typeof trialButtonHidden>[1]
 ): boolean {
-  return !trialButtonHidden(user, sub) && sub?.status !== "active";
+  if (sub?.status === "active") return false;
+  if (isTesterAccount(env, telegramId, user.is_tester) && isTestMode(env)) {
+    return true;
+  }
+  return !trialButtonHidden(user, sub);
 }
 
 async function getAuthUser(
@@ -755,7 +762,7 @@ export async function handleApiRequest(
           canConnect: profile.subscription.canConnect,
           devicesUsed: profile.subscription.devicesUsed,
           devicesMax: profile.subscription.devicesMax,
-          trialAvailable: miniappTrialAvailable(fresh.user, fresh.subscription),
+          trialAvailable: miniappTrialAvailable(env, tgUser.id, fresh.user, fresh.subscription),
         },
         "B"
       );
@@ -763,7 +770,7 @@ export async function handleApiRequest(
       return json({
         user: {
           ...profile,
-          trialAvailable: miniappTrialAvailable(fresh.user, fresh.subscription),
+          trialAvailable: miniappTrialAvailable(env, tgUser.id, fresh.user, fresh.subscription),
         },
       });
     } catch (e) {
@@ -861,7 +868,7 @@ export async function handleApiRequest(
         message: result.message,
         user: {
           ...profile,
-          trialAvailable: miniappTrialAvailable(bundle.user, bundle.subscription),
+          trialAvailable: miniappTrialAvailable(env, tgUser.id, bundle.user, bundle.subscription),
         },
       });
     } catch (e) {

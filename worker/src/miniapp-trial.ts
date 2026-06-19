@@ -1,4 +1,5 @@
 import type { BotEnv } from "./env";
+import { isTesterAccount } from "./env";
 import {
   formatSubscriptionDateFields,
   isTestMode,
@@ -7,6 +8,9 @@ import {
 import {
   clearVpnDeviceBindings,
   getSubscription,
+  getUserByTelegramId,
+  resetTesterTrial,
+  resetTesterTrialPlan,
   upsertTelegramUser,
 } from "./repository";
 import { activateTrialSubscription } from "./subscription-activate";
@@ -17,8 +21,22 @@ export async function activateMiniappTrial(
   env: BotEnv,
   tg: TelegramUser
 ): Promise<{ message: string }> {
-  const user = await upsertTelegramUser(env, tg);
-  const existingSub = await getSubscription(env, user.id);
+  let user = await upsertTelegramUser(env, tg);
+  let existingSub = await getSubscription(env, user.id);
+
+  const testerRetrial =
+    isTesterAccount(env, tg.id, user.is_tester) &&
+    isTestMode(env) &&
+    existingSub?.status !== "active" &&
+    (user.has_used_trial || existingSub?.is_trial);
+
+  if (testerRetrial) {
+    await resetTesterTrial(env, tg.id);
+    await resetTesterTrialPlan(env, user.id);
+    await clearVpnDeviceBindings(env, user.id);
+    user = (await getUserByTelegramId(env, tg.id)) ?? user;
+    existingSub = await getSubscription(env, user.id);
+  }
 
   if (trialButtonHidden(user, existingSub)) {
     throw new Error(

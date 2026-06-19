@@ -128,7 +128,7 @@ export function PlansTab({ catalog, user, onPurchased, onUserUpdate, onTrialActi
       </section>
 
       <div className="stack">
-        {trialEnded && (
+        {trialEnded && !showTrial && (
           <p className="toast">
             Пробный период завершён. Выберите тариф ниже и оплатите подписку.
           </p>

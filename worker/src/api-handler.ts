@@ -21,6 +21,7 @@ import {
   getSubscriptionBySubId,
   getTransactionByPayloadId,
   getTransactionByPlategaId,
+  getUserById,
   kvGetSubscriptionPayloadCache,
   kvSetSubscriptionPayloadCache,
 } from "./repository";
@@ -62,6 +63,7 @@ import {
   verifyPlategaCallback,
 } from "./platega";
 import { ensureActiveSubscriptionPanel } from "./subscription-activate";
+import { syncPanelSubIdForUser } from "./panel-sync";
 import { XuiApi } from "./xui";
 import {
   buildMiniappConnectUrl,
@@ -273,6 +275,66 @@ export async function handleApiRequest(
       return new Response("subscription revoked", { status: 404, headers: CORS });
     }
 
+    let live = await fetchPanelSubscriptionBody(env, subId);
+    if (!live?.body) {
+      await ensureActiveSubscriptionPanel(env, dbSub);
+      live = await fetchPanelSubscriptionBody(env, subId);
+    }
+    if (!live?.body) {
+      try {
+        const xui = new XuiApi(env);
+        const user = await getUserById(env, dbSub.user_id);
+        if (user) {
+          const onInbound = await xui.findClientByTelegramId(user.telegram_id);
+          if (!onInbound) {
+            await ensureActiveSubscriptionPanel(env, dbSub);
+            live = await fetchPanelSubscriptionBody(env, subId);
+          }
+        }
+      } catch (error) {
+        console.error("subscription inbound ensure:", error);
+      }
+    }
+    if (live?.body) {
+      const headers = mergeHappSubscriptionHeaders(
+        {
+          ...lockedHeaders,
+          ...live.headers,
+          "Content-Disposition": `attachment; filename=${subId}`,
+        },
+        env
+      );
+      const userinfo = subscriptionUserinfoHeader(dbSub.ends_at ?? null);
+      if (userinfo) headers["Subscription-Userinfo"] = userinfo;
+      const body = encodeStandardSubscriptionBody(live.body, env);
+      ctx?.waitUntil(
+        (async () => {
+          try {
+            const user = await getUserById(env, dbSub.user_id);
+            if (user) {
+              await syncPanelSubIdForUser(
+                env,
+                user.id,
+                user.telegram_id,
+                user.username,
+                user.display_name,
+                dbSub,
+                { force: true }
+              );
+            }
+          } catch (error) {
+            console.error("subscription panel sync:", error);
+          }
+          await kvSetSubscriptionPayloadCache(
+            env,
+            dbSub.user_id,
+            subscriptionBodyForClients(live.body)
+          );
+        })().catch((error) => console.error("subscription cache write:", error))
+      );
+      return new Response(body, { status: 200, headers });
+    }
+
     try {
       const cached = (await kvGetSubscriptionPayloadCache(env, dbSub.user_id))?.trim();
       if (cached && cached.length > 100) {
@@ -290,31 +352,6 @@ export async function handleApiRequest(
       }
     } catch (error) {
       console.error("subscription cache:", error);
-    }
-
-    let live = await fetchPanelSubscriptionBody(env, subId);
-    if (!live?.body) {
-      await ensureActiveSubscriptionPanel(env, dbSub);
-      live = await fetchPanelSubscriptionBody(env, subId);
-    }
-    if (live?.body) {
-      const headers = mergeHappSubscriptionHeaders(
-        {
-          ...lockedHeaders,
-          ...live.headers,
-          "Content-Disposition": `attachment; filename=${subId}`,
-        },
-        env
-      );
-      const userinfo = subscriptionUserinfoHeader(dbSub.ends_at ?? null);
-      if (userinfo) headers["Subscription-Userinfo"] = userinfo;
-      const body = encodeStandardSubscriptionBody(live.body, env);
-      ctx?.waitUntil(
-        kvSetSubscriptionPayloadCache(env, dbSub.user_id, subscriptionBodyForClients(live.body)).catch(
-          (error) => console.error("subscription cache write:", error)
-        )
-      );
-      return new Response(body, { status: 200, headers });
     }
 
     const subPath = (env.SUBSCRIPTION_PATH || "/sub").replace(/\/$/, "");
@@ -422,40 +459,45 @@ export async function handleApiRequest(
       return new Response("subscription revoked", { status: 404, headers: CORS });
     }
 
-    let live = await fetchPanelJsonSubscription(env, subId);
-    if (!live?.body) {
-      for (let attempt = 0; attempt < 4 && !live?.body; attempt += 1) {
-        await fetchPanelSubscriptionBody(env, subId);
-        await ensureActiveSubscriptionPanel(env, dbSub);
-        live = await fetchPanelJsonSubscription(env, subId);
+    try {
+      let live = await fetchPanelJsonSubscription(env, subId);
+      if (!live?.body) {
+        for (let attempt = 0; attempt < 4 && !live?.body; attempt += 1) {
+          await fetchPanelSubscriptionBody(env, subId);
+          await ensureActiveSubscriptionPanel(env, dbSub);
+          live = await fetchPanelJsonSubscription(env, subId);
+        }
       }
-    }
-    if (!live?.body) {
-      // #region agent log
-      debugSessionLog(
-        "api-handler.ts:/json",
-        "json subscription unavailable",
-        { subIdPrefix: subId.slice(0, 8) },
-        "C"
+      if (!live?.body) {
+        // #region agent log
+        debugSessionLog(
+          "api-handler.ts:/json",
+          "json subscription unavailable",
+          { subIdPrefix: subId.slice(0, 8) },
+          "C"
+        );
+        // #endregion
+        return new Response("json subscription unavailable", { status: 503, headers: CORS });
+      }
+
+      const headers = mergeHappSubscriptionHeaders(
+        {
+          "Content-Type": "text/plain; charset=utf-8",
+          "Cache-Control": "no-store",
+          ...live.headers,
+          ...CORS,
+          "Content-Disposition": `attachment; filename=${subId}`,
+        },
+        env
       );
-      // #endregion
+      const userinfo = subscriptionUserinfoHeader(dbSub.ends_at ?? null);
+      if (userinfo) headers["Subscription-Userinfo"] = userinfo;
+      const wireBody = encodeJsonSubscriptionBodyForHapp(live.body);
+      return new Response(wireBody, { status: 200, headers });
+    } catch (error) {
+      console.error("json subscription:", error);
       return new Response("json subscription unavailable", { status: 503, headers: CORS });
     }
-
-    const headers = mergeHappSubscriptionHeaders(
-      {
-        "Content-Type": "text/plain; charset=utf-8",
-        "Cache-Control": "no-store",
-        ...live.headers,
-        ...CORS,
-        "Content-Disposition": `attachment; filename=${subId}`,
-      },
-      env
-    );
-    const userinfo = subscriptionUserinfoHeader(dbSub.ends_at ?? null);
-    if (userinfo) headers["Subscription-Userinfo"] = userinfo;
-    const wireBody = encodeJsonSubscriptionBodyForHapp(live.body);
-    return new Response(wireBody, { status: 200, headers });
   }
 
   if (path.startsWith("/api/redirect/") && request.method === "GET") {

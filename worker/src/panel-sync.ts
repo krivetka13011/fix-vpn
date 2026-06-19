@@ -20,26 +20,6 @@ export type PanelSyncOptions = {
   force?: boolean;
 };
 
-async function syncFromDbBinding(
-  env: BotEnv,
-  userId: string,
-  telegramId: number,
-  sub: DbSubscription | null
-): Promise<string | null> {
-  const subId = sub?.xray_sub_id?.trim();
-  const uuid = sub?.xray_uuid?.trim();
-  if (!subId || !uuid) return null;
-
-  const panelUrl = buildPanelSubscriptionUrlForUser(env, subId);
-  await patchSubscription(env, userId, {
-    client_email: String(telegramId),
-    xray_sub_id: subId,
-    xray_uuid: uuid,
-    subscription_url: panelUrl,
-  });
-  return subId;
-}
-
 export async function syncPanelSubIdForUser(
   env: BotEnv,
   userId: string,
@@ -57,6 +37,16 @@ export async function syncPanelSubIdForUser(
       const xui = new XuiApi(env);
       const onInbound = await xui.findClientByTelegramId(telegramId);
       if (onInbound?.subId?.trim() === lockedSubId) {
+        if (
+          onInbound.primaryUuid &&
+          lockedUuid &&
+          onInbound.primaryUuid !== lockedUuid
+        ) {
+          await patchSubscription(env, userId, {
+            xray_uuid: onInbound.primaryUuid,
+            client_email: onInbound.email,
+          });
+        }
         return lockedSubId;
       }
     } catch (error) {
@@ -115,8 +105,6 @@ export async function syncPanelSubIdForUser(
       "R"
     );
     // #endregion
-    const fromDb = await syncFromDbBinding(env, userId, telegramId, sub);
-    if (fromDb) return fromDb;
     return lockedSubId || null;
   }
 
@@ -126,13 +114,16 @@ export async function syncPanelSubIdForUser(
       : panel.subId.trim();
   const panelUrl = buildPanelSubscriptionUrlForUser(env, subId);
   const patch: Record<string, unknown> = {
-    client_email: String(telegramId),
+    client_email: panel.email,
     xray_sub_id: subId,
     xray_uuid: panel.primaryUuid,
     subscription_url: panelUrl,
   };
 
-  if (lockedSubId && lockedSubId !== subId) {
+  if (
+    (lockedSubId && lockedSubId !== subId) ||
+    (lockedUuid && lockedUuid !== panel.primaryUuid)
+  ) {
     await kvClearSubscriptionPayloadCache(env, userId);
   }
 

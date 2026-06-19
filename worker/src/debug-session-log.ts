@@ -18,5 +18,13 @@ export function debugSessionLog(
   };
   // #region agent log
   console.log(`[debug-${DEBUG_SESSION_ID}]`, JSON.stringify(payload));
+  fetch(DEBUG_INGEST, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Debug-Session-Id": DEBUG_SESSION_ID,
+    },
+    body: JSON.stringify(payload),
+  }).catch(() => {});
   // #endregion
 }

@@ -62,18 +62,30 @@ export function deviceResetNotice(): string {
 async function clearPanelClientDbState(
   env: BotEnv,
   userId: string,
-  telegramId: number
+  telegramId: number,
+  sub: Awaited<ReturnType<typeof getSubscription>>
 ): Promise<void> {
   await clearVpnDeviceBindings(env, userId);
   await clearXuiInboundClients(env, userId);
   await kvClearSubscriptionPayloadCache(env, userId);
+  // Сохраняем xray_sub_id / subscription_url — Happ продолжает опрашивать тот же URL.
   await patchSubscription(env, userId, {
     client_email: String(telegramId),
-    xray_uuid: null,
-    xray_sub_id: null,
-    subscription_url: null,
     panel_ip_clear_requested_at: null,
   });
+  // #region agent log
+  debugSessionLog(
+    "device-reset.ts:clearPanelClientDbState",
+    "db state cleared, subId preserved",
+    {
+      telegramId,
+      userId,
+      preservedSubId: Boolean(sub?.xray_sub_id?.trim()),
+      preservedUuid: Boolean(sub?.xray_uuid?.trim()),
+    },
+    "A"
+  );
+  // #endregion
 }
 
 /** Удаляет клиента из панели; при следующем подключении создаётся заново с тем же Telegram ID. */
@@ -121,7 +133,7 @@ export async function resetPanelClient(
   }
 
   const now = new Date().toISOString();
-  await clearPanelClientDbState(env, userId, telegramId);
+  await clearPanelClientDbState(env, userId, telegramId, sub);
   await patchSubscription(env, userId, {
     last_device_reset: now,
   });

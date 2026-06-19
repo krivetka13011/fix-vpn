@@ -258,6 +258,18 @@ export async function handleApiRequest(
     }
 
     if (!dbSub || dbSub.status !== "active") {
+      // #region agent log
+      debugSessionLog(
+        "api-handler.ts:/sub",
+        "subscription lookup miss",
+        {
+          subIdPrefix: subId.slice(0, 8),
+          found: Boolean(dbSub),
+          status: dbSub?.status ?? null,
+        },
+        "A"
+      );
+      // #endregion
       return new Response("subscription revoked", { status: 404, headers: CORS });
     }
 
@@ -347,6 +359,18 @@ export async function handleApiRequest(
         }
       }
       if (!upstreamRes) {
+        // #region agent log
+        debugSessionLog(
+          "api-handler.ts:/sub",
+          "subscription unavailable after ensure",
+          {
+            subIdPrefix: subId.slice(0, 8),
+            hadCache: false,
+            panelLive: Boolean(live?.body),
+          },
+          "B"
+        );
+        // #endregion
         return new Response("subscription unavailable", { status: 503, headers: CORS });
       }
       const rawBody = await upstreamRes.text();

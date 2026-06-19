@@ -3,6 +3,7 @@ import {
   fetchPanelSubscriptionBody,
   subscriptionBodyForClients,
 } from "./connect-links";
+import { debugSessionLog } from "./debug-session-log";
 import { panelLimitIpForSubscription } from "./device-limit";
 import type { BotEnv } from "./env";
 import { withTimeout } from "./async-timeout";
@@ -169,8 +170,11 @@ export async function ensurePanelClientRecord(
   }
 ): Promise<string | null> {
   const sub = params.dbSubscription;
-  if (sub?.xray_sub_id?.trim() && sub?.xray_uuid?.trim()) {
-    return sub.xray_sub_id.trim();
+  const lockedSubId = sub?.xray_sub_id?.trim();
+  const lockedUuid = sub?.xray_uuid?.trim();
+  if (lockedSubId && lockedUuid) {
+    const live = await fetchPanelSubscriptionBody(env, lockedSubId);
+    if (live?.body) return lockedSubId;
   }
 
   const xui = new XuiApi(env);
@@ -222,7 +226,7 @@ export async function ensureActiveSubscriptionPanel(
   if (!user) return false;
 
   try {
-    await ensurePanelClientRecord(env, {
+    const recreatedSubId = await ensurePanelClientRecord(env, {
       userId: user.id,
       telegramId: user.telegram_id,
       username: user.username,
@@ -230,12 +234,26 @@ export async function ensureActiveSubscriptionPanel(
       dbSubscription: dbSub,
       enableClient: true,
     });
+    // #region agent log
+    debugSessionLog(
+      "subscription-activate.ts:ensureActiveSubscriptionPanel",
+      "panel ensure finished",
+      {
+        hadSubId: Boolean(subId),
+        recreated: Boolean(recreatedSubId),
+        subId: recreatedSubId || subId || null,
+      },
+      "B"
+    );
+    // #endregion
     const refreshed = await getSubscription(env, user.id);
-    const newSubId = refreshed?.xray_sub_id?.trim();
+    const newSubId = refreshed?.xray_sub_id?.trim() || recreatedSubId?.trim();
     if (newSubId) {
       await refreshSubscriptionCache(env, user.id, newSubId);
+      const verify = await fetchPanelSubscriptionBody(env, newSubId);
+      return Boolean(verify?.body);
     }
-    return true;
+    return false;
   } catch (error) {
     console.error("ensureActiveSubscriptionPanel:", error);
     return false;

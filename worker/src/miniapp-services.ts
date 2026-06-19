@@ -264,7 +264,9 @@ export async function buildMiniappConnectUrl(
     throw new Error(gate.message.replace(/<[^>]+>/g, ""));
   }
 
-  const subId = await resolvePanelSubIdForUser(env, tg, { force: !sub?.xray_sub_id?.trim() });
+  const subId = await resolvePanelSubIdForUser(env, tg, {
+    force: !sub?.xray_sub_id?.trim() || !sub?.xray_uuid?.trim(),
+  });
   if (!subId) {
     throw new Error("Подписка ещё синхронизируется. Повторите через минуту.");
   }

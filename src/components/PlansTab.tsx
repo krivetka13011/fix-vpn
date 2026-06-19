@@ -9,6 +9,7 @@ interface Props {
   onPurchased: () => void | Promise<void>;
   onUserUpdate?: (user: UserProfile) => void;
   onTrialActivated?: () => void;
+  onGoToProfile?: () => void;
 }
 
 type PaymentMethod = "sbp" | "crypto_usdt";
@@ -21,7 +22,7 @@ const PERIOD_LABELS: Record<BillingMonths, string> = {
   12: "1 год",
 };
 
-export function PlansTab({ catalog, user, onPurchased, onUserUpdate, onTrialActivated }: Props) {
+export function PlansTab({ catalog, user, onPurchased, onUserUpdate, onTrialActivated, onGoToProfile }: Props) {
   const [planType, setPlanType] = useState<PlanType | null>(null);
   const [months, setMonths] = useState<BillingMonths | null>(null);
   const [extraDevices, setExtraDevices] = useState(0);
@@ -107,6 +108,14 @@ export function PlansTab({ catalog, user, onPurchased, onUserUpdate, onTrialActi
   const showTrial = user.trialAvailable === true;
   const trialEnded =
     user.subscription.status === "expired" && Boolean(user.subscription.isTrial);
+  const activeTrial =
+    user.subscription.status === "active" && Boolean(user.subscription.isTrial);
+  const devicesUsed = user.subscription.devicesUsed ?? 0;
+  const devicesMax = user.subscription.devicesMax ?? 1;
+  const trialAtLimit =
+    activeTrial &&
+    user.subscription.canConnect !== true &&
+    devicesUsed >= devicesMax;
 
   return (
     <>
@@ -122,6 +131,25 @@ export function PlansTab({ catalog, user, onPurchased, onUserUpdate, onTrialActi
         {trialEnded && (
           <p className="toast">
             Пробный период завершён. Выберите тариф ниже и оплатите подписку.
+          </p>
+        )}
+        {trialAtLimit && (
+          <>
+            <p className="toast">
+              Пробный период активен, но лимит {devicesUsed}/{devicesMax} занят.
+              Сбросьте подключение в профиле, затем подключитесь во вкладке «Помощь».
+            </p>
+            {onGoToProfile && (
+              <button type="button" className="btn btn-ghost" onClick={onGoToProfile}>
+                <span className="material-symbols-outlined">devices</span>
+                Перейти в профиль → сбросить
+              </button>
+            )}
+          </>
+        )}
+        {activeTrial && user.subscription.canConnect === true && (
+          <p className="toast">
+            Пробный период активен — откройте «Помощь» и нажмите «Подключиться».
           </p>
         )}
         {showTrial && (

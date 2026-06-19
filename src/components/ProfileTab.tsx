@@ -9,6 +9,7 @@ interface Props {
   fallbackPhoto?: string;
   onRefresh: () => void | Promise<void>;
   onUserUpdate?: (user: UserProfile) => void;
+  onGoToHelp?: () => void;
 }
 
 function deviceHint(
@@ -35,6 +36,7 @@ export function ProfileTab({
   fallbackPhoto,
   onRefresh,
   onUserUpdate,
+  onGoToHelp,
 }: Props) {
   const sub = user.subscription;
   const photo = user.photoUrl ?? fallbackPhoto;
@@ -106,6 +108,9 @@ export function ProfileTab({
       );
       if (result.user) {
         onUserUpdate?.(result.user);
+        if (result.user.subscription.canConnect) {
+          onGoToHelp?.();
+        }
       } else {
         await onRefresh();
       }

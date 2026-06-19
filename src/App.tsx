@@ -195,6 +195,7 @@ export default function App() {
             onPurchased={load}
             onUserUpdate={setUser}
             onTrialActivated={() => setTab("help")}
+            onGoToProfile={() => setTab("profile")}
           />
         )}
         {tab === "profile" && (
@@ -204,6 +205,7 @@ export default function App() {
             fallbackPhoto={tgPhoto}
             onRefresh={load}
             onUserUpdate={setUser}
+            onGoToHelp={() => setTab("help")}
           />
         )}
       </main>

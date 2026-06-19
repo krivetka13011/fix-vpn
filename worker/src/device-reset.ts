@@ -172,11 +172,13 @@ export async function resetPanelClient(
   let prewarmed = false;
   const subId = refreshedSub?.xray_sub_id?.trim() ?? "";
   if (refreshedSub?.status === "active" && subId) {
+    const xui = new XuiApi(env);
     for (let attempt = 0; attempt < 4 && !prewarmed; attempt += 1) {
       try {
         await ensureActiveSubscriptionPanel(env, refreshedSub);
+        const onInbound = await xui.findClientByTelegramId(telegramId);
         const live = await fetchPanelSubscriptionBody(env, subId);
-        if (live?.body) {
+        if (onInbound && live?.body) {
           await kvSetSubscriptionPayloadCache(
             env,
             userId,
@@ -188,6 +190,10 @@ export async function resetPanelClient(
         console.error("resetPanelClient prewarm attempt:", error);
       }
     }
+  }
+
+  if (refreshedSub?.status === "active" && subId && !prewarmed) {
+    throw new DeviceResetPanelError();
   }
 
   // #region agent log

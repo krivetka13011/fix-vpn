@@ -64,13 +64,11 @@ export async function syncPanelSubIdForUser(
     if (panel) {
       const onInbound = await xui.findClientByTelegramId(telegramId);
       if (!onInbound) {
-        await xui.syncPanelClientDisplayName(
-          panel,
-          telegramId,
+        await xui.attachClientToInbounds(telegramId, panel, {
           username,
           displayName,
-          panelLimitIpForSubscription(sub)
-        );
+          limitIp: panelLimitIpForSubscription(sub),
+        });
       }
     }
 

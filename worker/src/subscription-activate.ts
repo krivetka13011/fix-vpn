@@ -282,7 +282,7 @@ export async function ensureActiveSubscriptionPanel(
       "C"
     );
     // #endregion
-    return Boolean(live?.body) || Boolean(json?.body);
+    return Boolean(onInbound && live?.body);
   } catch (error) {
     console.error("ensureActiveSubscriptionPanel:", error);
     return false;

@@ -1049,6 +1049,70 @@ export class XuiApi {
     console.error("forceEnableClient failed:", telegramId);
   }
 
+  /** Global-only client must be re-added to inbounds; clients/update alone is not enough. */
+  async attachClientToInbounds(
+    telegramId: number,
+    panel: { email: string; subId: string; primaryUuid: string },
+    options?: {
+      username?: string | null;
+      displayName?: string | null;
+      limitIp?: number;
+      expiryMs?: number;
+    }
+  ): Promise<boolean> {
+    const onInbound = await this.findClientByTelegramId(telegramId);
+    if (onInbound?.subId?.trim() && onInbound.primaryUuid) return true;
+
+    const record = await this.fetchClientRecord(panel.email);
+    const limitIp = options?.limitIp ?? record?.limitIp ?? this.limitIp;
+    const expiryMs =
+      options?.expiryMs && options.expiryMs > 0
+        ? options.expiryMs
+        : record?.expiryTime ?? 0;
+    const client = this.buildClient(
+      panel.email,
+      panel.subId,
+      telegramId,
+      expiryMs,
+      record?.totalGB ?? 0,
+      true,
+      panel.primaryUuid || record?.id || "",
+      limitIp
+    );
+
+    try {
+      await this.addClient(client, { enableAfterAdd: true });
+    } catch (error) {
+      const message = error instanceof Error ? error.message.toLowerCase() : "";
+      if (message.includes("already in use")) {
+        await this.touchPanelClient(telegramId, panel.email, { limitIp });
+        await this.forceEnableClient(telegramId, panel.email);
+      } else {
+        await this.syncPanelClientDisplayName(
+          panel,
+          telegramId,
+          options?.username ?? null,
+          options?.displayName ?? null,
+          limitIp,
+          expiryMs
+        );
+        try {
+          await this.addClient(client, { enableAfterAdd: true });
+        } catch (retryError) {
+          const retryMsg =
+            retryError instanceof Error ? retryError.message.toLowerCase() : "";
+          if (!retryMsg.includes("already in use")) {
+            console.error("attachClientToInbounds add retry:", retryError);
+          }
+        }
+      }
+    }
+
+    this.invalidateScan();
+    const attached = await this.findClientByTelegramId(telegramId);
+    return Boolean(attached?.subId?.trim() && attached.primaryUuid);
+  }
+
   private async touchPanelClient(
     telegramId: number,
     email: string,

@@ -1,5 +1,6 @@
 import type { BotEnv } from "./env";
 import type { DbSubscription } from "./types";
+import { debugSessionLog } from "./debug-session-log";
 import { deviceSlotDisplayName } from "./panel-client-label";
 import { getSubscription, listVpnDeviceBindings } from "./repository";
 import type { PanelDeviceIp } from "./xui";
@@ -51,36 +52,61 @@ export async function countUsedDeviceSlots(
 ): Promise<number> {
   if (!Number.isFinite(telegramId) || telegramId <= 0) return 0;
 
-  if (userId) {
-    const bindings = await listVpnDeviceBindings(env, userId);
-    if (bindings.length > 0) return bindings.length;
-  }
-
-  let used = 0;
+  let panelChecked = false;
+  let panelUsed = 0;
   try {
     const xui = new XuiApi(env);
     const panelEmail = await xui.resolvePanelEmail(telegramId);
     if (panelEmail) {
+      panelChecked = true;
       try {
         const ips = await xui.getClientIps(panelEmail);
-        used = ips.length;
+        panelUsed = ips.length;
       } catch {
-        used = 0;
+        panelUsed = 0;
       }
-      if (used === 0) {
+      if (panelUsed === 0) {
         try {
           const onlines = await xui.getOnlineClientEmails();
-          if (onlines.some((entry) => entry === panelEmail)) used = 1;
+          if (onlines.some((entry) => entry === panelEmail)) panelUsed = 1;
         } catch {
           // ignore
         }
       }
     }
   } catch {
-    used = 0;
+    panelChecked = false;
+    panelUsed = 0;
   }
 
-  return used;
+  if (panelChecked) {
+    // #region agent log
+    debugSessionLog(
+      "device-limit.ts:countUsedDeviceSlots",
+      "panel slot count",
+      { telegramId, panelUsed, source: "panel" },
+      "F"
+    );
+    // #endregion
+    return panelUsed;
+  }
+
+  if (userId) {
+    const bindings = await listVpnDeviceBindings(env, userId);
+    if (bindings.length > 0) {
+      // #region agent log
+      debugSessionLog(
+        "device-limit.ts:countUsedDeviceSlots",
+        "binding fallback slot count",
+        { telegramId, bindingCount: bindings.length, source: "bindings" },
+        "F"
+      );
+      // #endregion
+      return bindings.length;
+    }
+  }
+
+  return 0;
 }
 
 export async function canConnectNewDevice(

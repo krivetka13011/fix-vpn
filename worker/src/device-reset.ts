@@ -4,6 +4,7 @@ import {
   clearVpnDeviceBindings,
   clearXuiInboundClients,
   getSubscription,
+  getUserByTelegramId,
   kvClearSubscriptionPayloadCache,
   patchSubscription,
 } from "./repository";
@@ -102,7 +103,11 @@ export async function resetPanelClient(
   }
 
   const xui = new XuiApi(env);
-  const deleted = await xui.deletePanelClientByTelegramId(telegramId);
+  const panelUser = await getUserByTelegramId(env, telegramId);
+  const deleted = await xui.deletePanelClientByTelegramId(telegramId, {
+    username: panelUser?.username,
+    displayName: panelUser?.display_name,
+  });
   const stillThere = await xui.findClientByTelegramId(telegramId);
   if (stillThere) {
     console.error(

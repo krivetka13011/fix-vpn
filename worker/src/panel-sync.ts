@@ -73,6 +73,19 @@ export async function syncPanelSubIdForUser(
     const xui = new XuiApi(env);
     panel = await xui.resolvePanelClientForTelegram(telegramId, sub, username);
 
+    if (panel) {
+      const onInbound = await xui.findClientByTelegramId(telegramId);
+      if (!onInbound) {
+        await xui.syncPanelClientDisplayName(
+          panel,
+          telegramId,
+          username,
+          displayName,
+          panelLimitIpForSubscription(sub)
+        );
+      }
+    }
+
     if (!panel) {
       const provision = await xui.ensureClientPrepared(env, {
         userId,

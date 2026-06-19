@@ -363,6 +363,20 @@ export class XuiApi {
       if (bySub) return bySub;
     }
 
+    if (username) {
+      for (let slot = 1; slot <= 3; slot += 1) {
+        const label = panelDisplayLabel(username, null, telegramId, { slot });
+        const byLabel = await this.findClientByEmail(label);
+        if (byLabel?.subId?.trim() && byLabel.primaryUuid) {
+          return {
+            email: byLabel.email,
+            subId: byLabel.subId,
+            primaryUuid: byLabel.primaryUuid,
+          };
+        }
+      }
+    }
+
     return null;
   }
 
@@ -1190,11 +1204,25 @@ export class XuiApi {
   }
 
   /** Полное удаление клиента из панели (inbound + global). */
-  async deletePanelClientByTelegramId(telegramId: number): Promise<boolean> {
+  async deletePanelClientByTelegramId(
+    telegramId: number,
+    options?: { username?: string | null; displayName?: string | null }
+  ): Promise<boolean> {
     if (!Number.isFinite(telegramId) || telegramId <= 0) return false;
 
     this.invalidateScan();
     const emails = new Set<string>([String(telegramId)]);
+
+    for (let slot = 1; slot <= 3; slot += 1) {
+      emails.add(
+        panelDisplayLabel(
+          options?.username,
+          options?.displayName,
+          telegramId,
+          { slot }
+        )
+      );
+    }
 
     const byTg = await this.findClientByTelegramId(telegramId);
     if (byTg?.email) emails.add(byTg.email);
@@ -1269,6 +1297,23 @@ export class XuiApi {
         stillThere.email
       );
       return false;
+    }
+    for (let slot = 1; slot <= 3; slot += 1) {
+      const label = panelDisplayLabel(
+        options?.username,
+        options?.displayName,
+        telegramId,
+        { slot }
+      );
+      const global = await this.getClientByEmailApi(label);
+      if (global) {
+        console.error(
+          "deletePanelClientByTelegramId: global client remains",
+          telegramId,
+          label
+        );
+        return false;
+      }
     }
 
     return removed || emails.size > 0;
@@ -1629,17 +1674,21 @@ export class XuiApi {
         limitIp,
         enableClient
       );
+      const byLabel = await this.findClientByEmail(panelLabel);
       const resolved =
         (await this.waitForPanelClient(
           params.telegramId,
           params.username ?? null,
           params.dbSubscription,
           panelLabel
-        )) || (await this.findClientByTelegramId(params.telegramId));
+        )) ||
+        (await this.findClientByTelegramId(params.telegramId)) ||
+        byLabel;
       existing = {
-        email: resolved?.email || panelLabel,
-        subId: resolved?.subId?.trim() || seedSubId,
-        primaryUuid: resolved?.primaryUuid || primaryUuid,
+        email: resolved?.email || byLabel?.email || panelLabel,
+        subId: resolved?.subId?.trim() || byLabel?.subId?.trim() || seedSubId,
+        primaryUuid:
+          resolved?.primaryUuid || byLabel?.primaryUuid || primaryUuid,
       };
     }
 

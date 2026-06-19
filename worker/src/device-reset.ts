@@ -99,6 +99,17 @@ export async function resetPanelClient(
 ): Promise<void> {
   const sub = await getSubscription(env, userId);
   if (!sub) throw new Error("Подписка не найдена");
+  if (sub.status !== "active") {
+    // #region agent log
+    debugSessionLog(
+      "device-reset.ts:resetPanelClient",
+      "reset blocked inactive subscription",
+      { userId, status: sub.status },
+      "E"
+    );
+    // #endregion
+    throw new Error("Подписка неактивна. Оформите или продлите доступ перед сбросом.");
+  }
 
   const telegramId =
     options?.telegramId ?? Number(sub.client_email?.trim()) ?? 0;

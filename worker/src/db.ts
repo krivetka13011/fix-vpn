@@ -37,18 +37,31 @@ function emptySubscription(userId: string): DbSubscription {
   };
 }
 
+export function subscriptionExpiryMs(
+  sub: Pick<DbSubscription, "expires_at" | "ends_at" | "is_trial">
+): number | null {
+  const fromExpires = sub.expires_at
+    ? new Date(sub.expires_at).getTime()
+    : Number.NaN;
+  const fromEnds = sub.ends_at
+    ? new Date(`${sub.ends_at}T23:59:59+03:00`).getTime()
+    : Number.NaN;
+
+  if (sub.is_trial) {
+    if (Number.isFinite(fromExpires)) return fromExpires;
+    if (Number.isFinite(fromEnds)) return fromEnds;
+    return null;
+  }
+  if (Number.isFinite(fromEnds)) return fromEnds;
+  if (Number.isFinite(fromExpires)) return fromExpires;
+  return null;
+}
+
 function applyExpiry(sub: DbSubscription): DbSubscription {
   if (sub.status !== "active") return sub;
-  if (sub.expires_at) {
-    const end = new Date(sub.expires_at).getTime();
-    if (Number.isFinite(end) && end < Date.now()) {
-      return { ...sub, status: "expired" };
-    }
-    return sub;
-  }
-  if (!sub.ends_at) return sub;
-  const end = new Date(`${sub.ends_at}T23:59:59+03:00`);
-  if (end < new Date()) return { ...sub, status: "expired" };
+  const endMs = subscriptionExpiryMs(sub);
+  if (endMs == null) return sub;
+  if (endMs < Date.now()) return { ...sub, status: "expired" };
   return sub;
 }
 

@@ -1,6 +1,7 @@
 import { clientBotToken, type BotEnv } from "./env";
+import { subscriptionExpiryMs } from "./db";
 import { sendMessage } from "./bots/telegram-api";
-import { d1All } from "./d1-db";
+import { d1All, mapSubscriptionRow } from "./d1-db";
 import { patchSubscription, patchUser, kvClearSubscriptionPayloadCache } from "./repository";
 import { XuiApi } from "./xui";
 
@@ -77,13 +78,26 @@ export async function runSubscriptionExpiryJobs(env: BotEnv): Promise<void> {
     }
   }
 
-  const expiredRows = await fetchExpiringRows(
-    env,
-    "AND s.expires_at < ? ORDER BY s.expires_at ASC",
-    [new Date(now).toISOString()]
+  const expiredRows = await d1All<{
+    id: string;
+    user_id: string;
+    plan_type: string;
+    is_trial: number | boolean;
+    expires_at: string | null;
+    ends_at: string | null;
+    telegram_id: number;
+  }>(
+    env.DB,
+    `SELECT s.id, s.user_id, s.plan_type, s.is_trial, s.expires_at, s.ends_at, u.telegram_id
+     FROM subscriptions s
+     INNER JOIN users u ON u.id = s.user_id
+     WHERE s.status = 'active'`
   );
 
   for (const row of expiredRows) {
+    const sub = mapSubscriptionRow(row as Record<string, unknown>);
+    const endMs = subscriptionExpiryMs(sub);
+    if (endMs == null || endMs >= now) continue;
     try {
       const isTrial = row.is_trial === 1 || row.is_trial === true;
       await patchSubscription(env, row.user_id, {

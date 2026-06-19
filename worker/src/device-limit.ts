@@ -2,7 +2,7 @@ import type { BotEnv } from "./env";
 import type { DbSubscription } from "./types";
 import { debugSessionLog } from "./debug-session-log";
 import { deviceSlotDisplayName } from "./panel-client-label";
-import { getSubscription, listVpnDeviceBindings } from "./repository";
+import { getSubscription } from "./repository";
 import type { PanelDeviceIp } from "./xui";
 import { XuiApi } from "./xui";
 
@@ -48,57 +48,75 @@ export function formatConnectedDevices(
 export async function countUsedDeviceSlots(
   env: BotEnv,
   telegramId: number,
-  userId?: string
+  _userId?: string
 ): Promise<number> {
   if (!Number.isFinite(telegramId) || telegramId <= 0) return 0;
 
-  let panelChecked = false;
-  let panelUsed = 0;
   try {
     const xui = new XuiApi(env);
     const panelEmail = await xui.resolvePanelEmail(telegramId);
-    if (panelEmail) {
-      panelChecked = true;
-      try {
-        const onlines = await xui.getOnlineClientEmails();
-        panelUsed = onlines.some((entry) => entry === panelEmail) ? 1 : 0;
-      } catch {
-        panelUsed = 0;
-      }
-    }
-  } catch {
-    panelChecked = false;
-    panelUsed = 0;
-  }
-
-  if (panelChecked) {
-    // #region agent log
-    debugSessionLog(
-      "device-limit.ts:countUsedDeviceSlots",
-      "panel slot count",
-      { telegramId, panelUsed, source: "panel" },
-      "F"
-    );
-    // #endregion
-    return panelUsed;
-  }
-
-  if (userId) {
-    const bindings = await listVpnDeviceBindings(env, userId);
-    if (bindings.length > 0) {
+    if (!panelEmail) {
       // #region agent log
       debugSessionLog(
         "device-limit.ts:countUsedDeviceSlots",
-        "binding fallback slot count",
-        { telegramId, bindingCount: bindings.length, source: "bindings" },
+        "no panel email — slots free",
+        { telegramId, used: 0, source: "no-email" },
         "F"
       );
       // #endregion
-      return bindings.length;
+      return 0;
     }
-  }
 
-  return 0;
+    try {
+      const onlines = await xui.getOnlineClientEmails();
+      const used = onlines.includes(panelEmail) ? 1 : 0;
+      // #region agent log
+      debugSessionLog(
+        "device-limit.ts:countUsedDeviceSlots",
+        "panel online slot count",
+        { telegramId, panelEmail, used, source: "onlines" },
+        "F"
+      );
+      // #endregion
+      if (used > 0) return used;
+    } catch {
+      // fall through to IP count
+    }
+
+    try {
+      const ips = await xui.getClientIps(panelEmail);
+      const used = ips.length;
+      // #region agent log
+      debugSessionLog(
+        "device-limit.ts:countUsedDeviceSlots",
+        "panel ip slot count",
+        { telegramId, panelEmail, used, source: "ips" },
+        "F"
+      );
+      // #endregion
+      return used;
+    } catch {
+      // #region agent log
+      debugSessionLog(
+        "device-limit.ts:countUsedDeviceSlots",
+        "panel unreachable — slots free",
+        { telegramId, used: 0, source: "unreachable" },
+        "F"
+      );
+      // #endregion
+      return 0;
+    }
+  } catch {
+    // #region agent log
+    debugSessionLog(
+      "device-limit.ts:countUsedDeviceSlots",
+      "panel lookup failed — slots free",
+      { telegramId, used: 0, source: "error" },
+      "F"
+    );
+    // #endregion
+    return 0;
+  }
 }
 
 export async function canConnectNewDevice(

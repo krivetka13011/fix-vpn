@@ -243,7 +243,7 @@ export function HelpTab({ catalog, user, onRefresh, onGoToProfile, onUserUpdate 
             )}
           </>
         )}
-        {!canConnect && isActive && !atDeviceLimit && (
+        {!canConnect && isActive && !atDeviceLimit && connectBlockReason && (
           <p className="toast">
             {connectBlockReason ??
               "Подписка активна — идёт подготовка ссылки для подключения."}

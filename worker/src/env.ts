@@ -111,11 +111,12 @@ export function parseTesterIds(env: BotEnv): number[] {
 }
 
 export function isTesterAccount(
-  _env: BotEnv,
-  _telegramId: number,
-  _userIsTester?: boolean
+  env: BotEnv,
+  telegramId: number,
+  userIsTester?: boolean
 ): boolean {
-  return false;
+  if (userIsTester) return true;
+  return parseTesterIds(env).includes(telegramId);
 }
 
 export function managerChatId(env: BotEnv): number | null {

@@ -1,5 +1,5 @@
 import type { BotEnv } from "../env";
-import { clientBotToken } from "../env";
+import { clientBotToken, isTesterAccount } from "../env";
 import {
   clearSession,
   clearVpnDeviceBindings,
@@ -678,6 +678,7 @@ async function resetDeviceBinding(
 
   await resetPanelClient(env, user.id, {
     telegramId: tg.id,
+    isTester: isTesterAccount(env, tg.id, user.is_tester),
   });
 
   await showProfile(

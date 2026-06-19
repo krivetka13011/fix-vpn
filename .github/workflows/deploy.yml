@@ -134,7 +134,7 @@ jobs:
           put_secret TRIAL_DURATION_MINUTES "5"
           put_secret TEST_CHECKOUT_PRICE_RUB "1"
           put_secret TEST_SUBSCRIPTION_MINUTES "10"
-          npx wrangler@4.69.0 secret delete TESTER_TELEGRAM_IDS 2>/dev/null || true
+          put_secret TESTER_TELEGRAM_IDS "1159166497"
           npx wrangler@4.69.0 secret delete CARDLINK_API_TOKEN 2>/dev/null || true
           npx wrangler@4.69.0 secret delete CARDLINK_SHOP_ID 2>/dev/null || true
 

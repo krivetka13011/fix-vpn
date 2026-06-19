@@ -1,4 +1,5 @@
 import type { BotEnv } from "./env";
+import { isTesterAccount } from "./env";
 import { TARIFFS } from "./catalog";
 import { bundleToApiUser } from "./db";
 import {
@@ -285,7 +286,7 @@ export async function resetMiniappDevices(env: BotEnv, tg: TelegramUser): Promis
   if (!user) throw new Error("Пользователь не найден");
   await resetPanelClient(env, user.id, {
     telegramId: tg.id,
-    isTester: user.is_tester,
+    isTester: isTesterAccount(env, tg.id, user.is_tester),
   });
   return deviceResetNotice();
 }

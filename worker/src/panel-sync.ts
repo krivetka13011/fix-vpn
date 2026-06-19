@@ -55,10 +55,8 @@ export async function syncPanelSubIdForUser(
   if (!options?.force && lockedSubId && lockedUuid) {
     try {
       const xui = new XuiApi(env);
-      const onPanel =
-        (await xui.findClientBySubId(lockedSubId)) ||
-        (await xui.resolvePanelClientForTelegram(telegramId, sub, username));
-      if (onPanel?.subId?.trim()) {
+      const onInbound = await xui.findClientByTelegramId(telegramId);
+      if (onInbound?.subId?.trim() === lockedSubId) {
         return lockedSubId;
       }
     } catch (error) {

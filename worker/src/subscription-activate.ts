@@ -1,5 +1,6 @@
 import {
   buildPanelSubscriptionUrlForUser,
+  fetchPanelJsonSubscription,
   fetchPanelSubscriptionBody,
   subscriptionBodyForClients,
 } from "./connect-links";
@@ -7,6 +8,7 @@ import { debugSessionLog } from "./debug-session-log";
 import { panelLimitIpForSubscription } from "./device-limit";
 import type { BotEnv } from "./env";
 import { withTimeout } from "./async-timeout";
+import { syncPanelSubIdForUser } from "./panel-sync";
 import {
   getSubscription,
   getUserById,
@@ -173,8 +175,12 @@ export async function ensurePanelClientRecord(
   const lockedSubId = sub?.xray_sub_id?.trim();
   const lockedUuid = sub?.xray_uuid?.trim();
   if (lockedSubId && lockedUuid) {
-    const live = await fetchPanelSubscriptionBody(env, lockedSubId);
-    if (live?.body) return lockedSubId;
+    const xui = new XuiApi(env);
+    const onInbound = await xui.findClientByTelegramId(params.telegramId);
+    if (onInbound?.subId?.trim()) {
+      const live = await fetchPanelSubscriptionBody(env, lockedSubId);
+      if (live?.body) return lockedSubId;
+    }
   }
 
   const xui = new XuiApi(env);
@@ -216,24 +222,33 @@ export async function ensureActiveSubscriptionPanel(
 ): Promise<boolean> {
   if (dbSub.status !== "active") return false;
 
-  const subId = dbSub.xray_sub_id?.trim();
-  if (subId) {
-    const live = await fetchPanelSubscriptionBody(env, subId);
-    if (live?.body) return true;
-  }
-
   const user = await getUserById(env, dbSub.user_id);
   if (!user) return false;
 
+  const subId = dbSub.xray_sub_id?.trim();
+  if (subId) {
+    const xui = new XuiApi(env);
+    const onInbound = await xui.findClientByTelegramId(user.telegram_id);
+    if (onInbound) {
+      const [live, json] = await Promise.all([
+        fetchPanelSubscriptionBody(env, subId),
+        fetchPanelJsonSubscription(env, subId),
+      ]);
+      if (live?.body) return true;
+      void json;
+    }
+  }
+
   try {
-    const recreatedSubId = await ensurePanelClientRecord(env, {
-      userId: user.id,
-      telegramId: user.telegram_id,
-      username: user.username,
-      displayName: user.display_name,
-      dbSubscription: dbSub,
-      enableClient: true,
-    });
+    const recreatedSubId = await syncPanelSubIdForUser(
+      env,
+      user.id,
+      user.telegram_id,
+      user.username,
+      user.display_name,
+      dbSub,
+      { force: true }
+    );
     // #region agent log
     debugSessionLog(
       "subscription-activate.ts:ensureActiveSubscriptionPanel",
@@ -246,14 +261,26 @@ export async function ensureActiveSubscriptionPanel(
       "B"
     );
     // #endregion
-    const refreshed = await getSubscription(env, user.id);
-    const newSubId = refreshed?.xray_sub_id?.trim() || recreatedSubId?.trim();
-    if (newSubId) {
-      await refreshSubscriptionCache(env, user.id, newSubId);
-      const verify = await fetchPanelSubscriptionBody(env, newSubId);
-      return Boolean(verify?.body);
-    }
-    return false;
+    if (!recreatedSubId) return false;
+
+    await kvClearSubscriptionPayloadCache(env, user.id);
+    await refreshSubscriptionCache(env, user.id, recreatedSubId);
+    const xui = new XuiApi(env);
+    const onInbound = await xui.findClientByTelegramId(user.telegram_id);
+    const live = await fetchPanelSubscriptionBody(env, recreatedSubId);
+    // #region agent log
+    debugSessionLog(
+      "subscription-activate.ts:ensureActiveSubscriptionPanel",
+      "panel verify after sync",
+      {
+        onInbound: Boolean(onInbound),
+        hasSubBody: Boolean(live?.body),
+        subId: recreatedSubId,
+      },
+      "C"
+    );
+    // #endregion
+    return Boolean(onInbound && live?.body);
   } catch (error) {
     console.error("ensureActiveSubscriptionPanel:", error);
     return false;

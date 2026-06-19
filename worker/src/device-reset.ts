@@ -68,11 +68,14 @@ async function clearPanelClientDbState(
   await clearVpnDeviceBindings(env, userId);
   await clearXuiInboundClients(env, userId);
   await kvClearSubscriptionPayloadCache(env, userId);
-  // Сохраняем xray_sub_id / subscription_url — Happ продолжает опрашивать тот же URL.
-  await patchSubscription(env, userId, {
-    client_email: String(telegramId),
+  // Сохраняем xray_sub_id / subscription_url / client_email — Happ продолжает опрашивать тот же URL.
+  const patch: Record<string, unknown> = {
     panel_ip_clear_requested_at: null,
-  });
+  };
+  if (!sub?.client_email?.trim()) {
+    patch.client_email = String(telegramId);
+  }
+  await patchSubscription(env, userId, patch);
   // #region agent log
   debugSessionLog(
     "device-reset.ts:clearPanelClientDbState",

@@ -422,27 +422,26 @@ export async function handleApiRequest(
       return new Response("subscription revoked", { status: 404, headers: CORS });
     }
 
-    const live = await fetchPanelJsonSubscription(env, subId);
+    let live = await fetchPanelJsonSubscription(env, subId);
     if (!live?.body) {
+      await fetchPanelSubscriptionBody(env, subId);
       await ensureActiveSubscriptionPanel(env, dbSub);
-      const retried = await fetchPanelJsonSubscription(env, subId);
-      if (!retried?.body) {
-        return new Response("json subscription unavailable", { status: 503, headers: CORS });
+      live = await fetchPanelJsonSubscription(env, subId);
+      if (!live?.body) {
+        await fetchPanelSubscriptionBody(env, subId);
+        live = await fetchPanelJsonSubscription(env, subId);
       }
-      const headers = mergeHappSubscriptionHeaders(
-        {
-          "Content-Type": "text/plain; charset=utf-8",
-          "Cache-Control": "no-store",
-          ...retried.headers,
-          ...CORS,
-          "Content-Disposition": `attachment; filename=${subId}`,
-        },
-        env
+    }
+    if (!live?.body) {
+      // #region agent log
+      debugSessionLog(
+        "api-handler.ts:/json",
+        "json subscription unavailable",
+        { subIdPrefix: subId.slice(0, 8) },
+        "C"
       );
-      const userinfo = subscriptionUserinfoHeader(dbSub.ends_at ?? null);
-      if (userinfo) headers["Subscription-Userinfo"] = userinfo;
-      const wireBody = encodeJsonSubscriptionBodyForHapp(retried.body);
-      return new Response(wireBody, { status: 200, headers });
+      // #endregion
+      return new Response("json subscription unavailable", { status: 503, headers: CORS });
     }
 
     const headers = mergeHappSubscriptionHeaders(

@@ -268,6 +268,7 @@ export async function ensureActiveSubscriptionPanel(
     const xui = new XuiApi(env);
     const onInbound = await xui.findClientByTelegramId(user.telegram_id);
     const live = await fetchPanelSubscriptionBody(env, recreatedSubId);
+    const json = await fetchPanelJsonSubscription(env, recreatedSubId);
     // #region agent log
     debugSessionLog(
       "subscription-activate.ts:ensureActiveSubscriptionPanel",
@@ -275,12 +276,13 @@ export async function ensureActiveSubscriptionPanel(
       {
         onInbound: Boolean(onInbound),
         hasSubBody: Boolean(live?.body),
+        hasJsonBody: Boolean(json?.body),
         subId: recreatedSubId,
       },
       "C"
     );
     // #endregion
-    return Boolean(onInbound && live?.body);
+    return Boolean(live?.body) || Boolean(json?.body);
   } catch (error) {
     console.error("ensureActiveSubscriptionPanel:", error);
     return false;

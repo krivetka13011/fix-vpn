@@ -118,22 +118,35 @@ export function HelpTab({ catalog, user, onRefresh, onGoToProfile, onUserUpdate 
     if (client === "happ" && platform === "android") {
       const subUrl =
         result.subUrl || result.connectUrl.replace(/^happ:\/\/add\//i, "");
+      const redirectHttps = result.redirectUrl?.startsWith("https://")
+        ? result.redirectUrl
+        : openUrl.startsWith("https://")
+          ? openUrl
+          : null;
+      if (tg?.openLink && redirectHttps) {
+        tg.openLink(redirectHttps);
+        setHint("Открываем Happ для импорта подписки…");
+        // #region agent log
+        debugClientLog(
+          "HelpTab.tsx:openConnectImport",
+          "happ android tg.openLink redirect",
+          { redirectUrl: redirectHttps.slice(0, 80) },
+          "S"
+        );
+        // #endregion
+        return;
+      }
       if (result.connectUrl.startsWith("happ://")) {
         window.location.assign(result.connectUrl);
         setHint("Открываем Happ…");
         // #region agent log
         debugClientLog(
           "HelpTab.tsx:openConnectImport",
-          "happ android deeplink assign",
+          "happ android deeplink assign fallback",
           { connectUrl: result.connectUrl.slice(0, 80) },
           "S"
         );
         // #endregion
-        return;
-      }
-      if (tg?.openLink && openUrl.startsWith("https://")) {
-        tg.openLink(openUrl);
-        setHint("Открываем Happ для импорта подписки…");
         return;
       }
       try {
@@ -239,20 +252,23 @@ export function HelpTab({ catalog, user, onRefresh, onGoToProfile, onUserUpdate 
         {!isActive && user.subscription.status === "expired" && canRetrial && (
           <>
             <p className="toast">
-              Пробный период завершён. Нажмите кнопку ниже, затем «Подключиться».
+              Пробный период завершён. Нажмите кнопку ниже — активируем пробный период и
+              откроем Happ.
             </p>
             <button
               type="button"
               className="btn btn-fill btn-pill"
-              disabled={trialLoading}
+              disabled={trialLoading || connecting}
               onClick={handleRetrial}
             >
               <span className="material-symbols-outlined">bolt</span>
-              {trialLoading
-                ? "Активация…"
+              {trialLoading || connecting
+                ? trialLoading
+                  ? "Активация…"
+                  : "Подключение…"
                 : catalog.trialDurationMinutes
-                  ? `Пробный период · ${catalog.trialDurationMinutes} мин`
-                  : "Пробный период"}
+                  ? `Активировать · ${catalog.trialDurationMinutes} мин`
+                  : "Активировать пробный период"}
             </button>
           </>
         )}

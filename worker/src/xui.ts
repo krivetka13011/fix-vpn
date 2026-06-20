@@ -1267,24 +1267,6 @@ export class XuiApi {
     }
   }
 
-  /** Disable/enable client to drop active VPN session after IP clear. */
-  async kickClientSession(email: string, telegramId: number): Promise<void> {
-    const record = await this.fetchClientRecord(email);
-    if (!record) return;
-    await this.updateClient({
-      ...record,
-      email,
-      enable: false,
-      tgId: telegramId,
-    });
-    await this.updateClient({
-      ...record,
-      email,
-      enable: true,
-      tgId: telegramId,
-    });
-  }
-
   /** Полное удаление клиента из панели (inbound + global). */
   async deletePanelClientByTelegramId(
     telegramId: number,

@@ -190,12 +190,6 @@ export async function resetPanelClient(
     if (await xui.tryClearClientIps(email, 12_000)) cleared = true;
   }
 
-  try {
-    await xui.kickClientSession(panelEmail, telegramId);
-  } catch {
-    // non-fatal: IPs already cleared
-  }
-
   let ipsAfterClear = -1;
   try {
     ipsAfterClear = (await xui.getClientIps(panelEmail)).length;
@@ -222,6 +216,27 @@ export async function resetPanelClient(
 
   if (!resetOk) {
     throw new DeviceResetPanelError();
+  }
+
+  try {
+    await xui.forceEnableClient(telegramId, panelEmail);
+    // #region agent log
+    debugSessionLog(
+      "device-reset.ts:resetPanelClient",
+      "forceEnableClient after clear",
+      { telegramId, panelEmail },
+      "K"
+    );
+    // #endregion
+  } catch {
+    // #region agent log
+    debugSessionLog(
+      "device-reset.ts:resetPanelClient",
+      "forceEnableClient failed after clear",
+      { telegramId, panelEmail },
+      "K"
+    );
+    // #endregion
   }
 
   const now = new Date().toISOString();

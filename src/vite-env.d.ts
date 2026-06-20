@@ -37,6 +37,7 @@ interface TelegramWebApp {
   enableClosingConfirmation?: () => void;
   openTelegramLink?: (url: string) => void;
   openLink?: (url: string, options?: { try_browser?: boolean; try_instant_view?: boolean }) => void;
+  showAlert?: (message: string, callback?: () => void) => void;
 }
 
 interface Window {

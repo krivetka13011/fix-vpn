@@ -16,6 +16,7 @@ import {
   countUsedDeviceSlots,
   canConnectNewDevice,
   fetchPanelDeviceIps,
+  resolvePanelEmailForUser,
   subscriptionDeviceLimit,
   syncPanelDeviceLimit,
   telegramIdFromClientEmail,
@@ -198,7 +199,7 @@ export async function fetchMiniappDevices(
   if (telegramId > 0) {
     try {
       const xui = new XuiApi(env);
-      const panelEmail = await xui.resolvePanelEmail(telegramId);
+      const panelEmail = await resolvePanelEmailForUser(env, telegramId, userId);
       if (panelEmail) {
         const onlineEmails = await xui.getOnlineClientEmails();
         panelOnline = onlineEmails.includes(panelEmail);
@@ -218,7 +219,7 @@ export async function fetchMiniappDevices(
   }));
 
   if (devices.length === 0 && telegramId > 0) {
-    const panelIps = await fetchPanelDeviceIps(env, telegramId);
+    const panelIps = await fetchPanelDeviceIps(env, telegramId, userId);
     devices = panelIps.map((row, index) => ({
       id: row.ip,
       label: deviceSlotDisplayName(user?.username, telegramId, index + 1),

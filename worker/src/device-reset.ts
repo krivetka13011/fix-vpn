@@ -1,6 +1,7 @@
 import { telegramIdFromClientEmail } from "./device-limit";
 import type { BotEnv } from "./env";
 import { isTesterAccount } from "./env";
+import { panelDisplayLabel } from "./panel-client-label";
 import {
   clearVpnDeviceBindings,
   clearXuiInboundClients,
@@ -171,7 +172,31 @@ export async function resetPanelClient(
     ipsBefore = -1;
   }
 
-  const cleared = await xui.tryClearClientIps(panelEmail, 12_000);
+  const emailsToClear = new Set<string>([panelEmail, String(telegramId)]);
+  const dbEmail = sub.client_email?.trim();
+  if (dbEmail) emailsToClear.add(dbEmail);
+  const username = dbUser?.username;
+  if (username) {
+    for (let slot = 1; slot <= 3; slot += 1) {
+      emailsToClear.add(
+        panelDisplayLabel(username, dbUser?.display_name ?? null, telegramId, {
+          slot,
+        })
+      );
+    }
+  }
+
+  let cleared = false;
+  for (const email of emailsToClear) {
+    if (await xui.tryClearClientIps(email, 12_000)) cleared = true;
+  }
+
+  try {
+    await xui.kickClientSession(panelEmail, telegramId);
+  } catch {
+    // non-fatal: IPs already cleared
+  }
+
   let ipsAfterClear = -1;
   try {
     ipsAfterClear = (await xui.getClientIps(panelEmail)).length;
@@ -183,7 +208,15 @@ export async function resetPanelClient(
   debugSessionLog(
     "device-reset.ts:resetPanelClient",
     "clearClientIps result",
-    { telegramId, panelEmail, ipsBefore, cleared, ipsAfterClear, resetOk },
+    {
+      telegramId,
+      panelEmail,
+      ipsBefore,
+      cleared,
+      ipsAfterClear,
+      resetOk,
+      emailsCleared: [...emailsToClear],
+    },
     "G"
   );
   // #endregion

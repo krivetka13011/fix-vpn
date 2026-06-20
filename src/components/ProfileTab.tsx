@@ -37,7 +37,6 @@ export function ProfileTab({
   fallbackPhoto,
   onRefresh,
   onUserUpdate,
-  onGoToHelp,
 }: Props) {
   const sub = user.subscription;
   const photo = user.photoUrl ?? fallbackPhoto;
@@ -103,10 +102,10 @@ export function ProfileTab({
     setHint(null);
     try {
       const result = await resetDevices();
-      setHint(
+      const successMessage =
         result.message ||
-          "Подключение сброшено. Подключите VPN заново во вкладке «Помощь». Следующий сброс — через 24 часа."
-      );
+        "Подключение сброшено. Подключите VPN заново во вкладке «Помощь». Следующий сброс — через 24 часа.";
+      setHint(successMessage);
       if (result.user) {
         onUserUpdate?.(result.user);
         // #region agent log
@@ -121,11 +120,10 @@ export function ProfileTab({
           "R"
         );
         // #endregion
-        if (result.user.subscription.canConnect) {
-          onGoToHelp?.();
-        }
+        window.Telegram?.WebApp?.showAlert?.(successMessage);
       } else {
         await onRefresh();
+        window.Telegram?.WebApp?.showAlert?.(successMessage);
       }
     } catch (error) {
       const message =

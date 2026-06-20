@@ -50,6 +50,7 @@ import { PRIVACY_POLICY_URL, SUPPORT_TELEGRAM_USERNAME, TERMS_OF_SERVICE_URL } f
 import { managerTxnKeyboard, notifyManager } from "./manager";
 import { handleManagerPartnerCallback } from "./partner-bot";
 import { clearStuckRotationFlags } from "../subscription-rotate";
+import { debugSessionLog } from "../debug-session-log";
 import {
   DeviceResetCooldownError,
   DeviceResetPanelError,
@@ -671,6 +672,16 @@ async function resetDeviceBinding(
     telegramId: tg.id,
     isTester: isTesterAccount(env, tg.id, user.is_tester),
   });
+
+  const used = await countUsedDeviceSlots(env, tg.id, user.id);
+  // #region agent log
+  debugSessionLog(
+    "client-bot.ts:resetDeviceBinding",
+    "bot reset complete",
+    { telegramId: tg.id, devicesUsed: used },
+    "F"
+  );
+  // #endregion
 
   await showProfile(
     env,

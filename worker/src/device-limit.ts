@@ -45,16 +45,33 @@ export function formatConnectedDevices(
   return `\n\nПодключённые устройства:\n${lines.join("\n")}`;
 }
 
+export async function resolvePanelEmailForUser(
+  env: BotEnv,
+  telegramId: number,
+  userId?: string
+): Promise<string | null> {
+  const xui = new XuiApi(env);
+  if (userId) {
+    const sub = await getSubscription(env, userId);
+    const dbEmail = sub?.client_email?.trim();
+    if (dbEmail) {
+      const byDbEmail = await xui.findClientByEmail(dbEmail);
+      if (byDbEmail?.email) return byDbEmail.email;
+    }
+  }
+  return xui.resolvePanelEmail(telegramId);
+}
+
 export async function countUsedDeviceSlots(
   env: BotEnv,
   telegramId: number,
-  _userId?: string
+  userId?: string
 ): Promise<number> {
   if (!Number.isFinite(telegramId) || telegramId <= 0) return 0;
 
   try {
     const xui = new XuiApi(env);
-    const panelEmail = await xui.resolvePanelEmail(telegramId);
+    const panelEmail = await resolvePanelEmailForUser(env, telegramId, userId);
     if (!panelEmail) {
       // #region agent log
       debugSessionLog(
@@ -166,12 +183,13 @@ export async function syncPanelDeviceLimit(
 
 export async function fetchPanelDeviceIps(
   env: BotEnv,
-  telegramId: number
+  telegramId: number,
+  userId?: string
 ): Promise<PanelDeviceIp[]> {
   if (!Number.isFinite(telegramId) || telegramId <= 0) return [];
   try {
     const xui = new XuiApi(env);
-    const panelEmail = await xui.resolvePanelEmail(telegramId);
+    const panelEmail = await resolvePanelEmailForUser(env, telegramId, userId);
     if (!panelEmail) return [];
     return await xui.getClientIps(panelEmail);
   } catch {

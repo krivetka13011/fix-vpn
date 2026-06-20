@@ -1,7 +1,3 @@
-import {
-  fetchPanelSubscriptionBody,
-  subscriptionBodyForClients,
-} from "./connect-links";
 import { telegramIdFromClientEmail } from "./device-limit";
 import type { BotEnv } from "./env";
 import { isTesterAccount } from "./env";
@@ -12,11 +8,9 @@ import {
   getUserById,
   getUserByTelegramId,
   kvClearSubscriptionPayloadCache,
-  kvSetSubscriptionPayloadCache,
   patchSubscription,
 } from "./repository";
 import { clearStuckRotationFlags } from "./subscription-rotate";
-import { ensureActiveSubscriptionPanel } from "./subscription-activate";
 import { debugSessionLog } from "./debug-session-log";
 import { XuiApi } from "./xui";
 
@@ -55,9 +49,10 @@ export class DeviceResetCooldownError extends Error {
 }
 
 export class DeviceResetPanelError extends Error {
-  constructor() {
+  constructor(message?: string) {
     super(
-      "Не удалось удалить клиента из панели. Подождите 1–2 минуты и повторите сброс."
+      message ??
+        "Не удалось сбросить привязку устройств в панели. Подождите 1–2 минуты и повторите."
     );
     this.name = "DeviceResetPanelError";
   }
@@ -79,7 +74,6 @@ async function clearPanelClientDbState(
   await clearVpnDeviceBindings(env, userId);
   await clearXuiInboundClients(env, userId);
   await kvClearSubscriptionPayloadCache(env, userId);
-  // Сохраняем xray_sub_id / subscription_url / client_email — Happ продолжает опрашивать тот же URL.
   const patch: Record<string, unknown> = {
     panel_ip_clear_requested_at: null,
   };
@@ -90,7 +84,7 @@ async function clearPanelClientDbState(
   // #region agent log
   debugSessionLog(
     "device-reset.ts:clearPanelClientDbState",
-    "db state cleared, subId preserved",
+    "db bindings cleared, subId preserved",
     {
       telegramId,
       userId,
@@ -102,7 +96,10 @@ async function clearPanelClientDbState(
   // #endregion
 }
 
-/** Удаляет клиента из панели; при следующем подключении создаётся заново с тем же Telegram ID. */
+/**
+ * Сброс устройства: очищаем IP-привязки в панели (clearClientIps), клиент и subId не удаляем.
+ * После сброса слот свободен — можно подключиться снова с тем же URL подписки.
+ */
 export async function resetPanelClient(
   env: BotEnv,
   userId: string,
@@ -144,20 +141,39 @@ export async function resetPanelClient(
   }
 
   const xui = new XuiApi(env);
-  const panelUser = await getUserByTelegramId(env, telegramId);
-  const deleted = await xui.deletePanelClientByTelegramId(telegramId, {
-    username: panelUser?.username,
-    displayName: panelUser?.display_name,
-  });
-  const stillThere = await xui.findClientByTelegramId(telegramId);
-  if (stillThere) {
-    console.error(
-      "resetPanelClient: delete failed for",
-      telegramId,
-      stillThere.email,
-      "removed=",
-      deleted
+  const panelEmail = await xui.resolvePanelEmail(telegramId);
+  if (!panelEmail) {
+    // #region agent log
+    debugSessionLog(
+      "device-reset.ts:resetPanelClient",
+      "no panel email for reset",
+      { telegramId, userId },
+      "G"
     );
+    // #endregion
+    throw new DeviceResetPanelError(
+      "Клиент не найден в панели. Сначала подключитесь во вкладке «Помощь», затем повторите сброс."
+    );
+  }
+
+  let ipsBefore = 0;
+  try {
+    ipsBefore = (await xui.getClientIps(panelEmail)).length;
+  } catch {
+    ipsBefore = -1;
+  }
+
+  const cleared = await xui.tryClearClientIps(panelEmail, 12_000);
+  // #region agent log
+  debugSessionLog(
+    "device-reset.ts:resetPanelClient",
+    "clearClientIps result",
+    { telegramId, panelEmail, ipsBefore, cleared },
+    "G"
+  );
+  // #endregion
+
+  if (!cleared) {
     throw new DeviceResetPanelError();
   }
 
@@ -168,39 +184,24 @@ export async function resetPanelClient(
   });
   await clearStuckRotationFlags(env, userId);
 
-  const refreshedSub = await getSubscription(env, userId);
-  let prewarmed = false;
-  const subId = refreshedSub?.xray_sub_id?.trim() ?? "";
-  if (refreshedSub?.status === "active" && subId) {
-    const xui = new XuiApi(env);
-    for (let attempt = 0; attempt < 4 && !prewarmed; attempt += 1) {
-      try {
-        await ensureActiveSubscriptionPanel(env, refreshedSub);
-        const onInbound = await xui.findClientByTelegramId(telegramId);
-        const live = await fetchPanelSubscriptionBody(env, subId);
-        if (onInbound && live?.body) {
-          await kvSetSubscriptionPayloadCache(
-            env,
-            userId,
-            subscriptionBodyForClients(live.body)
-          );
-          prewarmed = true;
-        }
-      } catch (error) {
-        console.error("resetPanelClient prewarm attempt:", error);
-      }
-    }
-  }
-
-  if (refreshedSub?.status === "active" && subId && !prewarmed) {
-    throw new DeviceResetPanelError();
+  let ipsAfter = -1;
+  try {
+    ipsAfter = (await xui.getClientIps(panelEmail)).length;
+  } catch {
+    ipsAfter = -1;
   }
 
   // #region agent log
   debugSessionLog(
     "device-reset.ts:resetPanelClient",
-    "panel client reset complete",
-    { telegramId, userId, panelDeleted: deleted, prewarmed, subId: subId || null },
+    "device reset complete",
+    {
+      telegramId,
+      userId,
+      panelEmail,
+      ipsBefore,
+      ipsAfter,
+    },
     "J"
   );
   // #endregion

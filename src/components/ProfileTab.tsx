@@ -128,7 +128,17 @@ export function ProfileTab({
         await onRefresh();
       }
     } catch (error) {
-      setHint(error instanceof Error ? error.message : "Не удалось сбросить");
+      const message =
+        error instanceof Error ? error.message : "Не удалось сбросить";
+      setHint(message);
+      // #region agent log
+      debugClientLog(
+        "ProfileTab.tsx:handleResetDevices",
+        "reset failed",
+        { message },
+        "H"
+      );
+      // #endregion
     } finally {
       setResetting(false);
     }

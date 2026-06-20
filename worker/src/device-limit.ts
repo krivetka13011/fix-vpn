@@ -68,22 +68,6 @@ export async function countUsedDeviceSlots(
     }
 
     try {
-      const onlines = await xui.getOnlineClientEmails();
-      const used = onlines.includes(panelEmail) ? 1 : 0;
-      // #region agent log
-      debugSessionLog(
-        "device-limit.ts:countUsedDeviceSlots",
-        "panel online slot count",
-        { telegramId, panelEmail, used, source: "onlines" },
-        "F"
-      );
-      // #endregion
-      if (used > 0) return used;
-    } catch {
-      // fall through to IP count
-    }
-
-    try {
       const ips = await xui.getClientIps(panelEmail);
       const used = ips.length;
       // #region agent log
@@ -91,6 +75,22 @@ export async function countUsedDeviceSlots(
         "device-limit.ts:countUsedDeviceSlots",
         "panel ip slot count",
         { telegramId, panelEmail, used, source: "ips" },
+        "F"
+      );
+      // #endregion
+      if (used > 0) return used;
+    } catch {
+      // fall through to online fallback
+    }
+
+    try {
+      const onlines = await xui.getOnlineClientEmails();
+      const used = onlines.includes(panelEmail) ? 1 : 0;
+      // #region agent log
+      debugSessionLog(
+        "device-limit.ts:countUsedDeviceSlots",
+        "panel online slot count",
+        { telegramId, panelEmail, used, source: "onlines" },
         "F"
       );
       // #endregion

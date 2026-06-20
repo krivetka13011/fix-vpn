@@ -296,6 +296,14 @@ export async function buildMiniappConnectUrl(
 export async function resetMiniappDevices(env: BotEnv, tg: TelegramUser): Promise<string> {
   const user = await getUserByTelegramId(env, tg.id);
   if (!user) throw new Error("Пользователь не найден");
+  // #region agent log
+  debugSessionLog(
+    "miniapp-services.ts:resetMiniappDevices",
+    "reset requested",
+    { telegramId: tg.id, isTester: user.is_tester },
+    "H"
+  );
+  // #endregion
   await resetPanelClient(env, user.id, {
     telegramId: tg.id,
     isTester: isTesterAccount(env, tg.id, user.is_tester),

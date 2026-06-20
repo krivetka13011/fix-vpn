@@ -6,7 +6,6 @@ import { HelpTab } from "./components/HelpTab";
 import { PlansTab } from "./components/PlansTab";
 import { ProfileTab } from "./components/ProfileTab";
 import type { Catalog, TabId, UserProfile } from "./types";
-import { debugClientLog } from "./utils/debugLog";
 
 const DEFAULT_CATALOG: Catalog = {
   tariffs: [
@@ -98,20 +97,7 @@ export default function App() {
     }
 
     if (meResult.status === "fulfilled") {
-      const nextUser = meResult.value.user;
-      // #region agent log
-      debugClientLog(
-        "App.tsx:load",
-        "profile loaded without reset-to-empty",
-        {
-          status: nextUser.subscription.status,
-          canConnect: nextUser.subscription.canConnect,
-          devicesUsed: nextUser.subscription.devicesUsed,
-        },
-        "K"
-      );
-      // #endregion
-      setUser(nextUser);
+      setUser(meResult.value.user);
     } else {
       setUser((prev) => {
         const fallback = prev ?? devFallbackUser();
@@ -123,17 +109,6 @@ export default function App() {
               : "Откройте приложение через Telegram"
           );
         }
-        // #region agent log
-        debugClientLog(
-          "App.tsx:load",
-          "kept cached profile after /api/me failure",
-          {
-            hadCachedProfile: Boolean(prev),
-            cachedStatus: prev?.subscription.status ?? null,
-          },
-          "K"
-        );
-        // #endregion
         return fallback;
       });
     }

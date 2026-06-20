@@ -1,6 +1,5 @@
 import type { Catalog, UserProfile } from "../types";
 import type { BillingMonths, PlanType } from "../types";
-import { debugClientLog } from "../utils/debugLog";
 
 const API_TIMEOUT_MS = 12000;
 const SLOW_API_TIMEOUT_MS = 45000;
@@ -28,16 +27,9 @@ async function api<T>(
     });
     if (!res.ok) {
       const err = (await res.json().catch(() => ({}))) as { error?: string };
-      // #region agent log
-      debugClientLog("client.ts:api", "api error", { path, status: res.status, error: err.error }, "C");
-      // #endregion
       throw new Error(err.error ?? `HTTP ${res.status}`);
     }
-    const data = (await res.json()) as T;
-    // #region agent log
-    debugClientLog("client.ts:api", "api ok", { path, ok: true }, "C");
-    // #endregion
-    return data;
+    return (await res.json()) as T;
   } finally {
     clearTimeout(timer);
   }

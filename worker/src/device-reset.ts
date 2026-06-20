@@ -8,12 +8,10 @@ import {
   clearXuiInboundClients,
   getSubscription,
   getUserById,
-  getUserByTelegramId,
   kvClearSubscriptionPayloadCache,
   patchSubscription,
 } from "./repository";
 import { clearStuckRotationFlags } from "./subscription-rotate";
-import { debugSessionLogKv } from "./debug-session-log";
 import { XuiApi } from "./xui";
 
 export const DEVICE_RESET_COOLDOWN_MS = 24 * 60 * 60 * 1000;
@@ -95,25 +93,9 @@ export async function ensurePanelClientActive(
   if (!subId || !primaryUuid) return false;
 
   const expiryMs = subscriptionExpiryMs(subscription);
-  if (!expiryMs || expiryMs <= Date.now()) {
-    // #region agent log
-    await debugSessionLogKv(
-      env,
-      "device-reset.ts:ensurePanelClientActive",
-      "skip reenable — panel expiry missing or past",
-      {
-        telegramId,
-        endsAt: subscription.ends_at,
-        expiresAt: subscription.expires_at,
-        expiryMs,
-      },
-      "M"
-    );
-    // #endregion
-    return false;
-  }
+  if (!expiryMs || expiryMs <= Date.now()) return false;
 
-  const reenabled = await xui.reenableInboundClientAfterReset(
+  return xui.reenableInboundClientAfterReset(
     telegramId,
     {
       email: panelEmail,
@@ -125,16 +107,6 @@ export async function ensurePanelClientActive(
       limitIp: panelLimitIpForSubscription(subscription),
     }
   );
-  // #region agent log
-  await debugSessionLogKv(
-    env,
-    "device-reset.ts:ensurePanelClientActive",
-    "reenable with db expiry",
-    { telegramId, panelEmail, expiryMs, reenabled },
-    "M"
-  );
-  // #endregion
-  return reenabled;
 }
 
 async function clearPanelClientDbState(
@@ -153,20 +125,6 @@ async function clearPanelClientDbState(
     patch.client_email = String(telegramId);
   }
   await patchSubscription(env, userId, patch);
-  // #region agent log
-  await debugSessionLogKv(
-    env,
-    "device-reset.ts:clearPanelClientDbState",
-    "db bindings cleared, subId preserved",
-    {
-      telegramId,
-      userId,
-      preservedSubId: Boolean(sub?.xray_sub_id?.trim()),
-      preservedUuid: Boolean(sub?.xray_uuid?.trim()),
-    },
-    "A"
-  );
-  // #endregion
 }
 
 /**
@@ -181,15 +139,6 @@ export async function resetPanelClient(
   const sub = await getSubscription(env, userId);
   if (!sub) throw new Error("Подписка не найдена");
   if (sub.status !== "active") {
-    // #region agent log
-    await debugSessionLogKv(
-      env,
-      "device-reset.ts:resetPanelClient",
-      "reset blocked inactive subscription",
-      { userId, status: sub.status },
-      "E"
-    );
-    // #endregion
     throw new Error("Подписка неактивна. Оформите или продлите доступ перед сбросом.");
   }
 
@@ -225,25 +174,9 @@ export async function resetPanelClient(
     panelEmail = await xui.resolvePanelEmail(telegramId);
   }
   if (!panelEmail) {
-    // #region agent log
-    await debugSessionLogKv(
-      env,
-      "device-reset.ts:resetPanelClient",
-      "no panel email for reset",
-      { telegramId, userId },
-      "G"
-    );
-    // #endregion
     throw new DeviceResetPanelError(
       "Клиент не найден в панели. Сначала подключитесь во вкладке «Помощь», затем повторите сброс."
     );
-  }
-
-  let ipsBefore = 0;
-  try {
-    ipsBefore = (await xui.getClientIps(panelEmail)).length;
-  } catch {
-    ipsBefore = -1;
   }
 
   const emailsToClear = new Set<string>([panelEmail, String(telegramId)]);
@@ -271,31 +204,11 @@ export async function resetPanelClient(
     ipsAfterClear = -1;
   }
   const resetOk = cleared || ipsAfterClear === 0;
-  // #region agent log
-  await debugSessionLogKv(
-    env,
-    "device-reset.ts:resetPanelClient",
-    "clearClientIps result",
-    {
-      telegramId,
-      panelEmail,
-      ipsBefore,
-      cleared,
-      ipsAfterClear,
-      resetOk,
-      emailsCleared: [...emailsToClear],
-    },
-    "G"
-  );
-  // #endregion
 
   if (!resetOk) {
     throw new DeviceResetPanelError();
   }
 
-  let pruned = 0;
-  let reenabled = false;
-  let ipsAfter = ipsAfterClear;
   try {
     const now = new Date().toISOString();
     await clearPanelClientDbState(env, userId, telegramId, sub);
@@ -303,59 +216,16 @@ export async function resetPanelClient(
       last_device_reset: now,
     });
     await clearStuckRotationFlags(env, userId);
-
-    if (ipsAfter < 0) {
-      try {
-        ipsAfter = (await xui.getClientIps(panelEmail)).length;
-      } catch {
-        ipsAfter = -1;
-      }
-    }
   } finally {
     try {
-      reenabled = await ensurePanelClientActive(env, telegramId, userId, sub);
+      const reenabled = await ensurePanelClientActive(env, telegramId, userId, sub);
       if (!reenabled) {
-        pruned = await xui.pruneDuplicateInboundClients(telegramId, panelEmail);
+        await xui.pruneDuplicateInboundClients(telegramId, panelEmail);
       }
       await xui.forceEnableClient(telegramId, panelEmail);
       await syncPanelDeviceLimit(env, userId);
-      // #region agent log
-      await debugSessionLogKv(
-        env,
-        "device-reset.ts:resetPanelClient",
-        "post-clear panel sync",
-        { telegramId, panelEmail, pruned, reenabled, limitIp: panelLimitIpForSubscription(sub) },
-        "K"
-      );
-      // #endregion
     } catch {
-      // #region agent log
-      await debugSessionLogKv(
-        env,
-        "device-reset.ts:resetPanelClient",
-        "post-clear panel sync failed",
-        { telegramId, panelEmail },
-        "K"
-      );
-      // #endregion
+      // panel sync best-effort
     }
   }
-
-  // #region agent log
-  await debugSessionLogKv(
-    env,
-    "device-reset.ts:resetPanelClient",
-    "device reset complete",
-    {
-      telegramId,
-      userId,
-      panelEmail,
-      ipsBefore,
-      ipsAfter,
-      pruned,
-      reenabled,
-    },
-    "J"
-  );
-  // #endregion
 }

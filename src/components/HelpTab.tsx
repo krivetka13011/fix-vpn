@@ -3,7 +3,6 @@ import type { Catalog, DevicePlatform, UserProfile, VpnClientId } from "../types
 import { fetchConnect, activateTrial } from "../api/client";
 import { CLIENTS, installUrl, PLATFORMS } from "../data/helpLinks";
 import { openSupportChat, openTelegramLink, openExternalLink } from "../utils/copy";
-import { debugClientLog } from "../utils/debugLog";
 
 interface Props {
   catalog: Catalog;
@@ -83,17 +82,6 @@ export function HelpTab({ catalog, user, onRefresh, onGoToProfile, onUserUpdate 
       if (res.user) {
         onUserUpdate?.(res.user);
         setHint(res.message);
-        // #region agent log
-        debugClientLog(
-          "HelpTab.tsx:handleRetrial",
-          "trial activated from help",
-          {
-            canConnect: res.user.subscription.canConnect,
-            status: res.user.subscription.status,
-          },
-          "P"
-        );
-        // #endregion
         if (res.user.subscription.canConnect) {
           await runConnect(platform ?? "android", client ?? "happ");
         }
@@ -144,14 +132,6 @@ export function HelpTab({ catalog, user, onRefresh, onGoToProfile, onUserUpdate 
       } else {
         setHint(`Скопируйте ссылку и вставьте в Happ:\n${subUrl}`);
       }
-      // #region agent log
-      debugClientLog(
-        "HelpTab.tsx:openConnectImport",
-        "happ android copy-first",
-        { copied, redirectUrl: redirectHttps?.slice(0, 80) ?? null },
-        "S"
-      );
-      // #endregion
       return;
     }
     if (tg?.openLink) {
@@ -173,14 +153,6 @@ export function HelpTab({ catalog, user, onRefresh, onGoToProfile, onUserUpdate 
       await onRefresh?.();
     } catch (error) {
       const message = error instanceof Error ? error.message : "Не удалось подключиться";
-      // #region agent log
-      debugClientLog(
-        "HelpTab.tsx:runConnect",
-        "connect failed",
-        { message, platform, client },
-        "L"
-      );
-      // #endregion
       setHint(message);
     } finally {
       setConnecting(false);

@@ -1,6 +1,5 @@
 import type { Catalog, UserProfile } from "../types";
 import { formatRuDate } from "../utils/copy";
-import { debugClientLog } from "../utils/debugLog";
 import { purchaseDevices, resetDevices } from "../api/client";
 import { useState } from "react";
 
@@ -108,18 +107,6 @@ export function ProfileTab({
       setHint(successMessage);
       if (result.user) {
         onUserUpdate?.(result.user);
-        // #region agent log
-        debugClientLog(
-          "ProfileTab.tsx:handleResetDevices",
-          "reset profile updated",
-          {
-            canConnect: result.user.subscription.canConnect,
-            devicesUsed: result.user.subscription.devicesUsed,
-            panelOnline: result.user.subscription.panelOnline,
-          },
-          "R"
-        );
-        // #endregion
         window.Telegram?.WebApp?.showAlert?.(successMessage);
       } else {
         await onRefresh();
@@ -129,14 +116,6 @@ export function ProfileTab({
       const message =
         error instanceof Error ? error.message : "Не удалось сбросить";
       setHint(message);
-      // #region agent log
-      debugClientLog(
-        "ProfileTab.tsx:handleResetDevices",
-        "reset failed",
-        { message },
-        "H"
-      );
-      // #endregion
     } finally {
       setResetting(false);
     }

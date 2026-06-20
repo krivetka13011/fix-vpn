@@ -22,7 +22,6 @@ import {
   telegramIdFromClientEmail,
 } from "./device-limit";
 import { deviceSlotDisplayName } from "./panel-client-label";
-import { debugSessionLog } from "./debug-session-log";
 import {
   getSubscription,
   getUserById,
@@ -301,14 +300,6 @@ export async function buildMiniappConnectUrl(
 export async function resetMiniappDevices(env: BotEnv, tg: TelegramUser): Promise<string> {
   const user = await getUserByTelegramId(env, tg.id);
   if (!user) throw new Error("Пользователь не найден");
-  // #region agent log
-  debugSessionLog(
-    "miniapp-services.ts:resetMiniappDevices",
-    "reset requested",
-    { telegramId: tg.id, isTester: user.is_tester },
-    "H"
-  );
-  // #endregion
   await resetPanelClient(env, user.id, {
     telegramId: tg.id,
     isTester: isTesterAccount(env, tg.id, user.is_tester),
@@ -390,21 +381,6 @@ export async function buildMiniappUserProfile(
         connectBlockReason = gate.message.replace(/<[^>]+>/g, "");
       }
     }
-    // #region agent log
-    debugSessionLog(
-      "miniapp-services.ts:buildMiniappUserProfile",
-      "canConnect resolved",
-      {
-        canConnect,
-        subStatus: sub.status,
-        hasSubId: Boolean(sub.xray_sub_id?.trim()),
-        hasClientEmail: Boolean(sub.client_email?.trim()),
-        devicesUsed: deviceInfo.used,
-        connectBlockReason,
-      },
-      "R"
-    );
-    // #endregion
   } else if (sub.status !== "active") {
     connectBlockReason =
       "Сначала активируйте пробный период или оформите подписку.";

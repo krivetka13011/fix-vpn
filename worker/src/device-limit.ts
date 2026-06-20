@@ -1,6 +1,5 @@
 import type { BotEnv } from "./env";
 import type { DbSubscription } from "./types";
-import { debugSessionLog } from "./debug-session-log";
 import { deviceSlotDisplayName } from "./panel-client-label";
 import { getSubscription, getUserById, listVpnDeviceBindings } from "./repository";
 import type { PanelDeviceIp } from "./xui";
@@ -72,88 +71,27 @@ export async function countUsedDeviceSlots(
   try {
     const xui = new XuiApi(env);
     const panelEmail = await resolvePanelEmailForUser(env, telegramId, userId);
-    if (!panelEmail) {
-      // #region agent log
-      debugSessionLog(
-        "device-limit.ts:countUsedDeviceSlots",
-        "no panel email — slots free",
-        { telegramId, used: 0, source: "no-email" },
-        "F"
-      );
-      // #endregion
-      return 0;
-    }
+    if (!panelEmail) return 0;
 
     try {
       const ips = await xui.getClientIps(panelEmail);
-      const used = ips.length;
-      // #region agent log
-      debugSessionLog(
-        "device-limit.ts:countUsedDeviceSlots",
-        "panel ip slot count",
-        { telegramId, panelEmail, used, source: "ips" },
-        "F"
-      );
-      // #endregion
-      if (used > 0) return used;
+      if (ips.length > 0) return ips.length;
     } catch {
       // fall through
     }
 
     if (userId) {
       const bindings = await listVpnDeviceBindings(env, userId);
-      if (bindings.length > 0) {
-        const used = bindings.length;
-        // #region agent log
-        debugSessionLog(
-          "device-limit.ts:countUsedDeviceSlots",
-          "d1 binding slot count",
-          {
-            telegramId,
-            panelEmail,
-            used,
-            bindings: bindings.length,
-            source: "d1-binding",
-          },
-          "F"
-        );
-        // #endregion
-        return used;
-      }
+      if (bindings.length > 0) return bindings.length;
     }
 
     try {
       const onlines = await xui.getOnlineClientEmails();
-      const used = onlines.includes(panelEmail) ? 1 : 0;
-      // #region agent log
-      debugSessionLog(
-        "device-limit.ts:countUsedDeviceSlots",
-        "panel online slot count",
-        { telegramId, panelEmail, used, source: "onlines" },
-        "F"
-      );
-      // #endregion
-      return used;
+      return onlines.includes(panelEmail) ? 1 : 0;
     } catch {
-      // #region agent log
-      debugSessionLog(
-        "device-limit.ts:countUsedDeviceSlots",
-        "panel unreachable — slots free",
-        { telegramId, used: 0, source: "unreachable" },
-        "F"
-      );
-      // #endregion
       return 0;
     }
   } catch {
-    // #region agent log
-    debugSessionLog(
-      "device-limit.ts:countUsedDeviceSlots",
-      "panel lookup failed — slots free",
-      { telegramId, used: 0, source: "error" },
-      "F"
-    );
-    // #endregion
     return 0;
   }
 }

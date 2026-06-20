@@ -2,7 +2,6 @@ import { useCallback, useMemo, useState } from "react";
 import type { BillingMonths, Catalog, PlanType, UserProfile } from "../types";
 import { activateTrial, purchasePlan } from "../api/client";
 import { useTelegramMainButton } from "../hooks/useTelegramMainButton";
-import { debugClientLog } from "../utils/debugLog";
 
 interface Props {
   catalog: Catalog;
@@ -112,14 +111,6 @@ export function PlansTab({ catalog, user, onPurchased, onUserUpdate, onTrialActi
         setMonths(null);
         if (id === "personal") setExtraDevices(0);
       }
-      // #region agent log
-      debugClientLog(
-        "PlansTab.tsx:selectPlan",
-        "tariff selected",
-        { from: prev, to: id },
-        "U"
-      );
-      // #endregion
       return id;
     });
   }, []);

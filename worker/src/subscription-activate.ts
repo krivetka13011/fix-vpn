@@ -4,7 +4,6 @@ import {
   fetchPanelSubscriptionBody,
   subscriptionBodyForClients,
 } from "./connect-links";
-import { debugSessionLog } from "./debug-session-log";
 import { panelLimitIpForSubscription } from "./device-limit";
 import type { BotEnv } from "./env";
 import { withTimeout } from "./async-timeout";
@@ -249,18 +248,6 @@ export async function ensureActiveSubscriptionPanel(
       dbSub,
       { force: true }
     );
-    // #region agent log
-    debugSessionLog(
-      "subscription-activate.ts:ensureActiveSubscriptionPanel",
-      "panel ensure finished",
-      {
-        hadSubId: Boolean(subId),
-        recreated: Boolean(recreatedSubId),
-        subId: recreatedSubId || subId || null,
-      },
-      "B"
-    );
-    // #endregion
     if (!recreatedSubId) return false;
 
     await kvClearSubscriptionPayloadCache(env, user.id);
@@ -268,20 +255,6 @@ export async function ensureActiveSubscriptionPanel(
     const xui = new XuiApi(env);
     const onInbound = await xui.findClientByTelegramId(user.telegram_id);
     const live = await fetchPanelSubscriptionBody(env, recreatedSubId);
-    const json = await fetchPanelJsonSubscription(env, recreatedSubId);
-    // #region agent log
-    debugSessionLog(
-      "subscription-activate.ts:ensureActiveSubscriptionPanel",
-      "panel verify after sync",
-      {
-        onInbound: Boolean(onInbound),
-        hasSubBody: Boolean(live?.body),
-        hasJsonBody: Boolean(json?.body),
-        subId: recreatedSubId,
-      },
-      "C"
-    );
-    // #endregion
     return Boolean(onInbound && live?.body);
   } catch (error) {
     console.error("ensureActiveSubscriptionPanel:", error);

@@ -22,7 +22,6 @@ import {
   getTransactionByPayloadId,
   getTransactionByPlategaId,
   getUserById,
-  getUserByTelegramId,
   kvGetSubscriptionPayloadCache,
   kvSetSubscriptionPayloadCache,
 } from "./repository";
@@ -44,8 +43,6 @@ import { beginE2eTrace, endE2eTrace } from "./e2e-trace";
 import { DeviceResetCooldownError, DeviceResetPanelError } from "./device-reset";
 import { approvePaidTransaction } from "./approve-transaction";
 import { isTestMode, trialDurationMs } from "./test-mode";
-import { debugSessionLog, readDebugSessionLogs } from "./debug-session-log";
-import { isTesterAccount } from "./env";
 import {
   reconcilePlategaFromReturnUrl,
 } from "./platega-reconcile";
@@ -259,18 +256,6 @@ export async function handleApiRequest(
     }
 
     if (!dbSub || dbSub.status !== "active") {
-      // #region agent log
-      debugSessionLog(
-        "api-handler.ts:/sub",
-        "subscription lookup miss",
-        {
-          subIdPrefix: subId.slice(0, 8),
-          found: Boolean(dbSub),
-          status: dbSub?.status ?? null,
-        },
-        "A"
-      );
-      // #endregion
       return new Response("subscription revoked", { status: 404, headers: CORS });
     }
 
@@ -341,32 +326,12 @@ export async function handleApiRequest(
         return new Response(body, { status: 200, headers });
       }
 
-      // #region agent log
-      debugSessionLog(
-        "api-handler.ts:/sub",
-        "subscription unavailable after ensure",
-        {
-          subIdPrefix: subId.slice(0, 8),
-          hadCache: false,
-          panelLive: Boolean(live?.body),
-        },
-        "B"
-      );
-      // #endregion
       return new Response("subscription unavailable", {
         status: 503,
         headers: { ...CORS, "Retry-After": "3" },
       });
     } catch (error) {
       console.error("subscription serve:", error);
-      // #region agent log
-      debugSessionLog(
-        "api-handler.ts:/sub",
-        "subscription serve exception",
-        { subIdPrefix: subId.slice(0, 8) },
-        "F"
-      );
-      // #endregion
       return new Response("subscription unavailable", {
         status: 503,
         headers: { ...CORS, "Retry-After": "3" },
@@ -402,14 +367,6 @@ export async function handleApiRequest(
         }
       }
       if (!live?.body) {
-        // #region agent log
-        debugSessionLog(
-          "api-handler.ts:/json",
-          "json subscription unavailable",
-          { subIdPrefix: subId.slice(0, 8) },
-          "C"
-        );
-        // #endregion
         return new Response("json subscription unavailable", { status: 503, headers: CORS });
       }
 
@@ -747,20 +704,6 @@ export async function handleApiRequest(
       );
       const fresh = (await getBundle(env, tgUser.id)) ?? userRow;
       const profile = await buildMiniappUserProfile(env, fresh);
-      // #region agent log
-      debugSessionLog(
-        "api-handler.ts:/api/me",
-        "profile loaded",
-        {
-          status: fresh.subscription.status,
-          canConnect: profile.subscription.canConnect,
-          devicesUsed: profile.subscription.devicesUsed,
-          devicesMax: profile.subscription.devicesMax,
-          trialAvailable: miniappTrialAvailable(env, tgUser.id, fresh.user, fresh.subscription),
-        },
-        "B"
-      );
-      // #endregion
       return json({
         user: {
           ...profile,
@@ -789,38 +732,13 @@ export async function handleApiRequest(
         return json({ error: "Invalid client" }, 400);
       }
       const result = await buildMiniappConnectUrl(env, tgUser, platform, client);
-      // #region agent log
-      debugSessionLog(
-        "api-handler.ts:/api/connect",
-        "connect ok",
-        { platform, client, hasSubId: Boolean(result.subId) },
-        "C"
-      );
-      // #endregion
       return json({ ok: true, ...result });
     } catch (e) {
-      // #region agent log
-      debugSessionLog(
-        "api-handler.ts:/api/connect",
-        "connect failed",
-        { error: e instanceof Error ? e.message : "unknown" },
-        "C"
-      );
-      // #endregion
       return json(
         { error: e instanceof Error ? e.message : "Connect failed" },
         400
       );
     }
-  }
-
-  if (path === "/api/debug/session-381494" && request.method === "GET") {
-    const user = await getUserByTelegramId(env, tgUser.id);
-    if (!isTesterAccount(env, tgUser.id, user?.is_tester)) {
-      return json({ error: "Forbidden" }, 403);
-    }
-    const logs = await readDebugSessionLogs(env);
-    return json({ logs });
   }
 
   if (path === "/api/devices/reset" && request.method === "POST") {
@@ -854,18 +772,6 @@ export async function handleApiRequest(
       const profile = await buildMiniappUserProfile(env, bundle, {
         skipPanel: true,
       });
-      // #region agent log
-      debugSessionLog(
-        "api-handler.ts:/api/trial",
-        "trial activated",
-        {
-          canConnect: profile.subscription.canConnect,
-          isTrial: profile.subscription.isTrial,
-          trialMinutes: Math.round(trialDurationMs(env) / 60000),
-        },
-        "A"
-      );
-      // #endregion
       return json({
         ok: true,
         message: result.message,

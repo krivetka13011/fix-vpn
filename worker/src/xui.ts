@@ -1,6 +1,5 @@
 import type { BotEnv } from "./env";
 import { parseIdList, subscriptionBaseUrl, xuiBaseUrlCandidates, xuiWorkerBaseUrl } from "./env";
-import { debugSessionLogKv } from "./debug-session-log";
 import { isPanelErrorBody, panelFetch } from "./panel-fetch";
 import { canonicalClientKey, panelDisplayLabel } from "./panel-client-label";
 import type { StorageEnv } from "./storage-env";
@@ -1215,19 +1214,6 @@ export class XuiApi {
         const active =
           merged.expiryTime === 0 || merged.expiryTime > Date.now();
         if (active) merged.enable = true;
-        // #region agent log
-        await debugSessionLogKv(
-          this.env,
-          "xui.ts:updateClient",
-          "global missing — addClient fallback",
-          {
-            email: merged.email,
-            subIdPrefix: merged.subId.slice(0, 8),
-            inboundOnly: true,
-          },
-          "N"
-        );
-        // #endregion
         await this.addClient(merged, { enableAfterAdd: active });
         this.invalidateScan();
         return;
@@ -1271,19 +1257,6 @@ export class XuiApi {
         this.isMissingClientError(error) ||
         message.includes("empty client")
       ) {
-        // #region agent log
-        await debugSessionLogKv(
-          this.env,
-          "xui.ts:updateClient",
-          "update failed — addClient fallback",
-          {
-            email: merged.email,
-            subIdPrefix: merged.subId.slice(0, 8),
-            reason: message.slice(0, 80),
-          },
-          "N"
-        );
-        // #endregion
         await this.addClient(merged, { enableAfterAdd: active });
         this.invalidateScan();
         return;

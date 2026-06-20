@@ -1,6 +1,7 @@
-import { telegramIdFromClientEmail } from "./device-limit";
+import { telegramIdFromClientEmail, panelLimitIpForSubscription } from "./device-limit";
 import type { BotEnv } from "./env";
 import { isTesterAccount } from "./env";
+import { subscriptionExpiryMs } from "./db";
 import { panelDisplayLabel } from "./panel-client-label";
 import {
   clearVpnDeviceBindings,
@@ -93,11 +94,47 @@ export async function ensurePanelClientActive(
     subscription.xray_uuid?.trim() || clientInfo?.primaryUuid || "";
   if (!subId || !primaryUuid) return false;
 
-  return xui.reenableInboundClientAfterReset(telegramId, {
-    email: panelEmail,
-    subId,
-    primaryUuid,
-  });
+  const expiryMs = subscriptionExpiryMs(subscription);
+  if (!expiryMs || expiryMs <= Date.now()) {
+    // #region agent log
+    await debugSessionLogKv(
+      env,
+      "device-reset.ts:ensurePanelClientActive",
+      "skip reenable — panel expiry missing or past",
+      {
+        telegramId,
+        endsAt: subscription.ends_at,
+        expiresAt: subscription.expires_at,
+        expiryMs,
+      },
+      "M"
+    );
+    // #endregion
+    return false;
+  }
+
+  const reenabled = await xui.reenableInboundClientAfterReset(
+    telegramId,
+    {
+      email: panelEmail,
+      subId,
+      primaryUuid,
+    },
+    {
+      expiryMs,
+      limitIp: panelLimitIpForSubscription(subscription),
+    }
+  );
+  // #region agent log
+  await debugSessionLogKv(
+    env,
+    "device-reset.ts:ensurePanelClientActive",
+    "reenable with db expiry",
+    { telegramId, panelEmail, expiryMs, reenabled },
+    "M"
+  );
+  // #endregion
+  return reenabled;
 }
 
 async function clearPanelClientDbState(

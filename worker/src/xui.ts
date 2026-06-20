@@ -1,5 +1,6 @@
 import type { BotEnv } from "./env";
 import { parseIdList, subscriptionBaseUrl, xuiBaseUrlCandidates, xuiWorkerBaseUrl } from "./env";
+import { debugSessionLogKv } from "./debug-session-log";
 import { isPanelErrorBody, panelFetch } from "./panel-fetch";
 import { canonicalClientKey, panelDisplayLabel } from "./panel-client-label";
 import type { StorageEnv } from "./storage-env";
@@ -1195,6 +1196,42 @@ export class XuiApi {
 
   async updateClient(client: XuiClientRecord): Promise<void> {
     const existing = await this.fetchClientRecord(client.email);
+    if (!existing) {
+      const onInbound = await this.findClientByEmail(client.email);
+      if (onInbound?.primaryUuid) {
+        const merged: XuiClientRecord = {
+          email: onInbound.email,
+          id: client.id?.trim() || onInbound.primaryUuid,
+          subId: client.subId?.trim() || onInbound.subId,
+          limitIp: client.limitIp > 0 ? client.limitIp : this.limitIp,
+          expiryTime: panelExpiryTimeMs(client.expiryTime),
+          enable: client.enable !== false,
+          tgId: client.tgId || onInbound.tgId || 0,
+          totalGB: client.totalGB ?? 0,
+          flow: client.flow ?? "",
+        };
+        const active =
+          merged.expiryTime === 0 || merged.expiryTime > Date.now();
+        if (active) merged.enable = true;
+        // #region agent log
+        await debugSessionLogKv(
+          this.env,
+          "xui.ts:updateClient",
+          "global missing — addClient fallback",
+          {
+            email: merged.email,
+            subIdPrefix: merged.subId.slice(0, 8),
+            inboundOnly: true,
+          },
+          "N"
+        );
+        // #endregion
+        await this.addClient(merged, { enableAfterAdd: active });
+        this.invalidateScan();
+        return;
+      }
+    }
+
     const merged: XuiClientRecord = existing
       ? {
           ...existing,
@@ -1356,9 +1393,12 @@ export class XuiApi {
     if (!panel.subId?.trim() || !panel.primaryUuid?.trim()) return false;
 
     const expiryMs =
-      options?.expiryMs && options.expiryMs > 0
+      options?.expiryMs && options.expiryMs > Date.now()
         ? options.expiryMs
         : await this.resolveClientExpiryMs(telegramId, panel.email);
+    if (!expiryMs || expiryMs <= Date.now()) {
+      return false;
+    }
     const limitIp = options?.limitIp ?? 1;
     const client = this.buildClient(
       panel.email,

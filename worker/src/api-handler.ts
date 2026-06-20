@@ -16,7 +16,7 @@ import {
 import { startMiniappAddonDevicesCheckout, startMiniappPlategaCheckout } from "./miniapp-checkout";
 import { activateMiniappTrial } from "./miniapp-trial";
 import { runUserPendingPlategaReconcile } from "./platega-reconcile";
-import { trialButtonHidden } from "./trial-button";
+import { trialButtonHidden, canActivateTrial } from "./trial-button";
 import {
   getSubscriptionBySubId,
   getTransactionByPayloadId,
@@ -114,10 +114,7 @@ function miniappTrialAvailable(
   user: Parameters<typeof trialButtonHidden>[0],
   sub: Parameters<typeof trialButtonHidden>[1]
 ): boolean {
-  void env;
-  void telegramId;
-  if (sub?.status === "active") return false;
-  return !trialButtonHidden(user, sub);
+  return canActivateTrial(env, telegramId, user, sub);
 }
 
 async function getAuthUser(

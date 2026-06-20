@@ -1,4 +1,5 @@
 import type { BotEnv } from "./env";
+import { isTesterAccount } from "./env";
 import { getBundle } from "./db";
 import {
   formatSubscriptionDateFields,
@@ -7,11 +8,12 @@ import {
 } from "./test-mode";
 import {
   clearVpnDeviceBindings,
+  resetTesterTrial,
   upsertTelegramUser,
 } from "./repository";
 import { activateTrialSubscription } from "./subscription-activate";
 import type { TelegramUser } from "./telegram";
-import { trialButtonHidden } from "./trial-button";
+import { canActivateTrial } from "./trial-button";
 import { debugSessionLog } from "./debug-session-log";
 
 export async function activateMiniappTrial(
@@ -24,7 +26,7 @@ export async function activateMiniappTrial(
   const user = bundle.user;
   const existingSub = bundle.subscription;
 
-  if (trialButtonHidden(user, existingSub)) {
+  if (!canActivateTrial(env, tg.id, user, existingSub)) {
     // #region agent log
     debugSessionLog(
       "miniapp-trial.ts:activateMiniappTrial",
@@ -33,6 +35,7 @@ export async function activateMiniappTrial(
         hasUsedTrial: user.has_used_trial,
         subStatus: existingSub?.status ?? null,
         isTrial: Boolean(existingSub?.is_trial),
+        isTester: isTesterAccount(env, tg.id, user.is_tester),
       },
       "T"
     );
@@ -41,6 +44,13 @@ export async function activateMiniappTrial(
       env.MSG_TRIAL_ALREADY_USED ||
         "Пробный период уже использован на этом аккаунте Telegram."
     );
+  }
+
+  if (
+    isTesterAccount(env, tg.id, user.is_tester) &&
+    existingSub?.status !== "active"
+  ) {
+    await resetTesterTrial(env, tg.id);
   }
 
   if (existingSub?.is_trial && existingSub.status === "active") {

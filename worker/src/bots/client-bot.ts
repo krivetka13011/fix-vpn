@@ -15,12 +15,13 @@ import {
   markTrialFirstConnectAt,
   patchSubscription,
   patchTransaction,
+  resetTesterTrial,
   resetTesterTrialPlan,
   setSession,
   upsertTelegramUser,
   upsertVpnDeviceBinding,
 } from "../repository";
-import { trialButtonHidden } from "../trial-button";
+import { canActivateTrial, trialButtonHidden } from "../trial-button";
 import { XuiApi } from "../xui";
 import type { TelegramUser } from "../telegram";
 import {
@@ -452,7 +453,7 @@ async function activateTrial(
   const user = await upsertTelegramUser(env, tg);
   const existingSub = await getSubscription(env, user.id);
 
-  if (trialButtonHidden(user, existingSub)) {
+  if (!canActivateTrial(env, tg.id, user, existingSub)) {
     await sendMessage(
       token,
       chatId,
@@ -460,6 +461,13 @@ async function activateTrial(
         "Пробный период уже использован на этом аккаунте Telegram."
     );
     return;
+  }
+
+  if (
+    isTesterAccount(env, tg.id, user.is_tester) &&
+    existingSub?.status !== "active"
+  ) {
+    await resetTesterTrial(env, tg.id);
   }
 
   if (existingSub?.is_trial && existingSub.status === "active") {
@@ -566,7 +574,10 @@ async function showMainMenu(
   const freshUser = (await finalizeTrialButtonGrace(env, tg.id)) ?? user;
   const sub = await getSubscription(env, freshUser.id);
   const text = mainMenuText(freshUser.display_name);
-  const markup = mainMenuKeyboard(env, trialButtonHidden(freshUser, sub));
+  const markup = mainMenuKeyboard(
+    env,
+    !canActivateTrial(env, tg.id, freshUser, sub)
+  );
   try {
     if (messageId) {
       await editMessage(token, chatId, messageId, text, markup);

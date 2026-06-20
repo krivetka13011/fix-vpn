@@ -2,7 +2,7 @@ import type { BotEnv } from "./env";
 import type { DbSubscription } from "./types";
 import { debugSessionLog } from "./debug-session-log";
 import { deviceSlotDisplayName } from "./panel-client-label";
-import { getSubscription, getUserById } from "./repository";
+import { getSubscription, getUserById, listVpnDeviceBindings } from "./repository";
 import type { PanelDeviceIp } from "./xui";
 import { XuiApi } from "./xui";
 
@@ -95,10 +95,36 @@ export async function countUsedDeviceSlots(
         "F"
       );
       // #endregion
-      // limitIp tracks bound IPs; empty IPs = free slot even if VPN still online
-      return used;
+      if (used > 0) return used;
     } catch {
-      // fall through to online fallback only when IPs API fails
+      // fall through
+    }
+
+    if (userId) {
+      const bindings = await listVpnDeviceBindings(env, userId);
+      if (bindings.length > 0) {
+        const sub = await getSubscription(env, userId);
+        const limit = subscriptionDeviceLimit(sub);
+        const used =
+          limit === 0
+            ? bindings.length
+            : Math.min(bindings.length, limit > 0 ? limit : bindings.length);
+        // #region agent log
+        debugSessionLog(
+          "device-limit.ts:countUsedDeviceSlots",
+          "d1 binding slot count",
+          {
+            telegramId,
+            panelEmail,
+            used,
+            bindings: bindings.length,
+            source: "d1-binding",
+          },
+          "F"
+        );
+        // #endregion
+        return used;
+      }
     }
 
     try {

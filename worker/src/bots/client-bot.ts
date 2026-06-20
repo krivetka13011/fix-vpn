@@ -12,6 +12,7 @@ import {
   getSubscription,
   getUserByTelegramId,
   getTransaction,
+  listVpnDeviceBindings,
   markTrialFirstConnectAt,
   patchSubscription,
   patchTransaction,
@@ -658,6 +659,14 @@ async function showProfile(
       : "Истёк";
 
   const deviceLine = formatDeviceLimitLine(used, limit, sub?.plan_type);
+  const bindings = await listVpnDeviceBindings(env, user.id);
+  const devicesBlock =
+    bindings.length > 0
+      ? `\n\nПодключённые устройства:\n${bindings
+          .slice(0, 5)
+          .map((row) => `• ${row.label}`)
+          .join("\n")}`
+      : "";
 
   const hint =
     "Смена устройства: Нажмите «Сбросить подключение» (доступно 1 раз в 24 часа), если вы купили новый телефон или переустановили приложение.";
@@ -667,7 +676,7 @@ async function showProfile(
     `👤 Мой профиль\n` +
     `Статус: ${statusLabel}\n` +
     `Период: ${period}\n` +
-    `${deviceLine}\n` +
+    `${deviceLine}${devicesBlock}\n` +
     hint;
 
   await editMessage(

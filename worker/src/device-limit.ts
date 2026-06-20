@@ -78,9 +78,10 @@ export async function countUsedDeviceSlots(
         "F"
       );
       // #endregion
-      if (used > 0) return used;
+      // limitIp tracks bound IPs; empty IPs = free slot even if VPN still online
+      return used;
     } catch {
-      // fall through to online fallback
+      // fall through to online fallback only when IPs API fails
     }
 
     try {

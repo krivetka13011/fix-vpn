@@ -1420,13 +1420,23 @@ export class XuiApi {
     return false;
   }
 
-  /** Fast panel IP reset — direct panel URL, short timeout, inbound API first. */
+  /** Fast panel IP reset — direct panel URL, short timeout. */
   async tryClearClientIps(email: string, timeoutMs = 5000): Promise<boolean> {
-    const encoded = encodeURIComponent(email);
-    const paths = [
-      `/panel/api/inbounds/clearClientIps/${encoded}`,
-      `/panel/api/clients/clearIps/${encoded}`,
-    ];
+    const trimmed = email.trim();
+    if (!trimmed) return false;
+
+    const encoded = encodeURIComponent(trimmed);
+    const encodedCandidates = [
+      encoded,
+      ...(trimmed.includes("@") ? [trimmed] : []),
+    ].filter((value, index, list) => list.indexOf(value) === index);
+
+    const paths: string[] = [];
+    for (const candidate of encodedCandidates) {
+      paths.push(`/panel/api/clients/clearIps/${candidate}`);
+      paths.push(`/panel/api/inbounds/clearClientIps/${candidate}`);
+    }
+
     const bases = [xuiWorkerBaseUrl(this.env), ...this.baseUrls].filter(
       (base, index, list) => base && list.indexOf(base) === index
     );
@@ -1439,9 +1449,10 @@ export class XuiApi {
             { method: "POST", body: "{}" },
             timeoutMs
           );
-          await this.parseResponse(response, "clearClientIps");
-          this.invalidateScan();
-          return true;
+          if (await this.panelActionSucceeded(response)) {
+            this.invalidateScan();
+            return true;
+          }
         } catch {
           // try next path/base
         }

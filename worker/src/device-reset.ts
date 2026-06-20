@@ -141,7 +141,15 @@ export async function resetPanelClient(
   }
 
   const xui = new XuiApi(env);
-  const panelEmail = await xui.resolvePanelEmail(telegramId);
+  let panelEmail: string | null = null;
+  const dbEmail = sub.client_email?.trim();
+  if (dbEmail) {
+    const byDbEmail = await xui.findClientByEmail(dbEmail);
+    if (byDbEmail) panelEmail = byDbEmail.email;
+  }
+  if (!panelEmail) {
+    panelEmail = await xui.resolvePanelEmail(telegramId);
+  }
   if (!panelEmail) {
     // #region agent log
     debugSessionLog(

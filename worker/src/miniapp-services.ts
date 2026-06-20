@@ -30,8 +30,8 @@ import {
   listVpnDeviceBindings,
   markTrialFirstConnectAt,
   patchSubscription,
+  registerVpnDeviceBinding,
   upsertTelegramUser,
-  upsertVpnDeviceBinding,
 } from "./repository";
 import type { TelegramUser } from "./telegram";
 import type { UserBundle } from "./types";
@@ -72,15 +72,17 @@ async function recordMiniappDeviceConnect(
 ): Promise<void> {
   const os = mapPlatform(platform);
   const vpnClient = mapClient(client);
-  await upsertVpnDeviceBinding(
+  const sub = await getSubscription(env, userId);
+  const limit = subscriptionDeviceLimit(sub);
+  await registerVpnDeviceBinding(
     env,
     userId,
     os,
     vpnClient,
-    deviceBindingLabel(platform, client)
+    deviceBindingLabel(platform, client),
+    limit
   );
   await syncPanelDeviceLimit(env, userId);
-  const sub = await getSubscription(env, userId);
   if (sub?.is_trial) {
     await markTrialFirstConnectAt(env, tg.id);
   }

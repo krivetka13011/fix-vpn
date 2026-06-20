@@ -16,11 +16,12 @@ import {
   markTrialFirstConnectAt,
   patchSubscription,
   patchTransaction,
+  registerVpnDeviceBinding,
   resetTesterTrial,
   resetTesterTrialPlan,
   setSession,
   upsertTelegramUser,
-  upsertVpnDeviceBinding,
+  registerVpnDeviceBinding,
 } from "../repository";
 import { canActivateTrial, trialButtonHidden } from "../trial-button";
 import { XuiApi } from "../xui";
@@ -331,10 +332,11 @@ async function recordDeviceConnect(
   vpnClient: VpnClientId
 ): Promise<void> {
   const label = deviceBindingLabel(os, vpnClient);
-  await upsertVpnDeviceBinding(env, userId, os, vpnClient, label);
+  const sub = await getSubscription(env, userId);
+  const limit = subscriptionDeviceLimit(sub);
+  await registerVpnDeviceBinding(env, userId, os, vpnClient, label, limit);
   await syncPanelDeviceLimit(env, userId);
 
-  const sub = await getSubscription(env, userId);
   if (sub?.is_trial) {
     await markTrialFirstConnectAt(env, tg.id);
   }

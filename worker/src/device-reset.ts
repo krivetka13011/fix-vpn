@@ -1,4 +1,4 @@
-import { telegramIdFromClientEmail, panelLimitIpForSubscription } from "./device-limit";
+import { telegramIdFromClientEmail, panelLimitIpForSubscription, syncPanelDeviceLimit } from "./device-limit";
 import type { BotEnv } from "./env";
 import { isTesterAccount } from "./env";
 import { subscriptionExpiryMs } from "./db";
@@ -61,7 +61,7 @@ export class DeviceResetPanelError extends Error {
 }
 
 export const DEVICE_RESET_SUCCESS_NOTICE =
-  "Подключение сброшено. Сначала отключите VPN на текущем устройстве, затем подключите заново во вкладке «Помощь». Следующий сброс — через 24 часа.";
+  "Подключение сброшено. Отключите VPN на всех устройствах (телефон и ПК), затем подключите заново через «Подключить VPN». Следующий сброс — через 24 часа.";
 
 export function deviceResetNotice(): string {
   return DEVICE_RESET_SUCCESS_NOTICE;
@@ -246,6 +246,29 @@ export async function resetPanelClient(
     ipsBefore = -1;
   }
 
+  try {
+    await xui.suspendClientSessions(telegramId, panelEmail);
+    // #region agent log
+    await debugSessionLogKv(
+      env,
+      "device-reset.ts:resetPanelClient",
+      "client suspended before ip clear",
+      { telegramId, panelEmail },
+      "G"
+    );
+    // #endregion
+  } catch {
+    // #region agent log
+    await debugSessionLogKv(
+      env,
+      "device-reset.ts:resetPanelClient",
+      "client suspend failed — continuing reset",
+      { telegramId, panelEmail },
+      "G"
+    );
+    // #endregion
+  }
+
   const emailsToClear = new Set<string>([panelEmail, String(telegramId)]);
   if (dbEmail) emailsToClear.add(dbEmail);
   const username = dbUser?.username;
@@ -317,12 +340,13 @@ export async function resetPanelClient(
       if (!reenabled) {
         pruned = await xui.pruneDuplicateInboundClients(telegramId, panelEmail);
       }
+      await syncPanelDeviceLimit(env, userId);
       // #region agent log
       await debugSessionLogKv(
         env,
         "device-reset.ts:resetPanelClient",
         "post-clear panel sync",
-        { telegramId, panelEmail, pruned, reenabled },
+        { telegramId, panelEmail, pruned, reenabled, limitIp: panelLimitIpForSubscription(sub) },
         "K"
       );
       // #endregion

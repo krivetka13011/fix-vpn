@@ -845,6 +845,21 @@ export async function upsertVpnDeviceBinding(
   );
 }
 
+/** Регистрирует устройство; при лимите 1 заменяет предыдущую привязку. */
+export async function registerVpnDeviceBinding(
+  env: StorageEnv,
+  userId: string,
+  os: string,
+  vpnClient: string,
+  label: string,
+  deviceLimit: number
+): Promise<void> {
+  if (deviceLimit === 1) {
+    await clearVpnDeviceBindings(env, userId);
+  }
+  await upsertVpnDeviceBinding(env, userId, os, vpnClient, label);
+}
+
 export async function clearVpnDeviceBindings(
   env: StorageEnv,
   userId: string

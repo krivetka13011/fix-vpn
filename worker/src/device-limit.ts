@@ -103,12 +103,7 @@ export async function countUsedDeviceSlots(
     if (userId) {
       const bindings = await listVpnDeviceBindings(env, userId);
       if (bindings.length > 0) {
-        const sub = await getSubscription(env, userId);
-        const limit = subscriptionDeviceLimit(sub);
-        const used =
-          limit === 0
-            ? bindings.length
-            : Math.min(bindings.length, limit > 0 ? limit : bindings.length);
+        const used = bindings.length;
         // #region agent log
         debugSessionLog(
           "device-limit.ts:countUsedDeviceSlots",

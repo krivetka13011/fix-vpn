@@ -102,7 +102,7 @@ export class XuiApi {
     this.baseUrls = xuiBaseUrlCandidates(env);
     this.token = env.XUI_API_TOKEN;
     this.inboundIds = parseIdList(env.XUI_INBOUND_IDS);
-    this.limitIp = Number(env.XUI_CLIENT_LIMIT_IP || "0");
+    this.limitIp = Number(env.XUI_CLIENT_LIMIT_IP || "1");
   }
 
   private headers(): HeadersInit {
@@ -1065,7 +1065,9 @@ export class XuiApi {
     if (onInbound?.subId?.trim() && onInbound.primaryUuid) return true;
 
     const record = await this.fetchClientRecord(panel.email);
-    const limitIp = options?.limitIp ?? record?.limitIp ?? this.limitIp;
+    const limitIp =
+      options?.limitIp ??
+      (record?.limitIp && record.limitIp > 0 ? record.limitIp : 1);
     const expiryMs =
       options?.expiryMs && options.expiryMs > 0
         ? options.expiryMs
@@ -1304,6 +1306,21 @@ export class XuiApi {
         await this.forceEnableClient(tgId, merged.email);
       }
     }
+  }
+
+  /** Временно отключает клиента в панели — разрывает активные VPN-сессии. */
+  async suspendClientSessions(telegramId: number, email: string): Promise<void> {
+    const trimmed = email.trim();
+    if (!trimmed || !Number.isFinite(telegramId) || telegramId <= 0) return;
+
+    const record = await this.fetchClientRecord(trimmed);
+    if (record) {
+      await this.updateClient({ ...record, enable: false, tgId: telegramId });
+    }
+    await this.syncInboundClientFields(telegramId, trimmed, (row) => {
+      row.enable = false;
+    });
+    this.invalidateScan();
   }
 
   /** Отключает доступ в панели после истечения подписки/пробного. */

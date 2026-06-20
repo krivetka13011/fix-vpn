@@ -122,17 +122,26 @@ async function safeAnswerCallback(
   }
 }
 
-function mainMenuText(displayName: string): string {
+function mainMenuText(
+  displayName: string,
+  sub?: Awaited<ReturnType<typeof getSubscription>>
+): string {
   const safeName = escapeTelegramHtml(displayName);
-  return (
+  let text =
     `Привет, <b>${safeName}</b>! 👋\n` +
     `⚡️ VPN нового уровня\n` +
     `🌍 Свободный доступ к сайтам и сервисам\n` +
     `📞 Звонки и видео без ограничений\n` +
     `⚙️ Пробный период — 1 день\n` +
     `🔐 Полная защита и конфиденциальность\n` +
-    `📶 Работает стабильно даже в мобильных сетях`
-  );
+    `📶 Работает стабильно даже в мобильных сетях`;
+  if (sub?.status === "active" && sub.is_trial) {
+    text +=
+      `\n\n✅ <b>Пробный период уже активен.</b> Нажмите «🔌 Подключить VPN» — настройка Happ.`;
+  } else if (sub?.status === "expired" && sub.is_trial) {
+    text += `\n\n⏱ Пробный период истёк. Нажмите «🧪 Пробный период» или «💳 Оформить подписку».`;
+  }
+  return text;
 }
 
 function mainMenuKeyboard(env: BotEnv, hasUsedTrial: boolean) {
@@ -573,7 +582,7 @@ async function showMainMenu(
   const user = await upsertTelegramUser(env, tg);
   const freshUser = (await finalizeTrialButtonGrace(env, tg.id)) ?? user;
   const sub = await getSubscription(env, freshUser.id);
-  const text = mainMenuText(freshUser.display_name);
+  const text = mainMenuText(freshUser.display_name, sub);
   const markup = mainMenuKeyboard(
     env,
     !canActivateTrial(env, tg.id, freshUser, sub)

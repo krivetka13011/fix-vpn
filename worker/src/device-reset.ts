@@ -66,6 +66,40 @@ export function deviceResetNotice(): string {
   return DEVICE_RESET_SUCCESS_NOTICE;
 }
 
+export async function ensurePanelClientActive(
+  env: BotEnv,
+  telegramId: number,
+  userId: string,
+  sub?: Awaited<ReturnType<typeof getSubscription>>
+): Promise<boolean> {
+  const subscription = sub ?? (await getSubscription(env, userId));
+  if (!subscription || subscription.status !== "active") return false;
+
+  const xui = new XuiApi(env);
+  let panelEmail: string | null = null;
+  const dbEmail = subscription.client_email?.trim();
+  if (dbEmail) {
+    const byDbEmail = await xui.findClientByEmail(dbEmail);
+    if (byDbEmail) panelEmail = byDbEmail.email;
+  }
+  if (!panelEmail) {
+    panelEmail = await xui.resolvePanelEmail(telegramId);
+  }
+  if (!panelEmail) return false;
+
+  const clientInfo = await xui.findClientByTelegramId(telegramId);
+  const subId = subscription.xray_sub_id?.trim() || clientInfo?.subId || "";
+  const primaryUuid =
+    subscription.xray_uuid?.trim() || clientInfo?.primaryUuid || "";
+  if (!subId || !primaryUuid) return false;
+
+  return xui.reenableInboundClientAfterReset(telegramId, {
+    email: panelEmail,
+    subId,
+    primaryUuid,
+  });
+}
+
 async function clearPanelClientDbState(
   env: BotEnv,
   userId: string,
@@ -224,50 +258,47 @@ export async function resetPanelClient(
 
   let pruned = 0;
   let reenabled = false;
-  try {
-    const clientInfo = await xui.findClientByTelegramId(telegramId);
-    const subId = sub.xray_sub_id?.trim() || clientInfo?.subId || "";
-    const primaryUuid = sub.xray_uuid?.trim() || clientInfo?.primaryUuid || "";
-    reenabled = await xui.reenableInboundClientAfterReset(telegramId, {
-      email: panelEmail,
-      subId,
-      primaryUuid,
-    });
-    pruned = reenabled ? 0 : await xui.pruneDuplicateInboundClients(telegramId, panelEmail);
-    // #region agent log
-    await debugSessionLogKv(
-      env,
-      "device-reset.ts:resetPanelClient",
-      "post-clear panel sync",
-      { telegramId, panelEmail, pruned, reenabled },
-      "K"
-    );
-    // #endregion
-  } catch {
-    // #region agent log
-    await debugSessionLogKv(
-      env,
-      "device-reset.ts:resetPanelClient",
-      "post-clear panel sync failed",
-      { telegramId, panelEmail },
-      "K"
-    );
-    // #endregion
-  }
-
-  const now = new Date().toISOString();
-  await clearPanelClientDbState(env, userId, telegramId, sub);
-  await patchSubscription(env, userId, {
-    last_device_reset: now,
-  });
-  await clearStuckRotationFlags(env, userId);
-
   let ipsAfter = ipsAfterClear;
-  if (ipsAfter < 0) {
+  try {
+    const now = new Date().toISOString();
+    await clearPanelClientDbState(env, userId, telegramId, sub);
+    await patchSubscription(env, userId, {
+      last_device_reset: now,
+    });
+    await clearStuckRotationFlags(env, userId);
+
+    if (ipsAfter < 0) {
+      try {
+        ipsAfter = (await xui.getClientIps(panelEmail)).length;
+      } catch {
+        ipsAfter = -1;
+      }
+    }
+  } finally {
     try {
-      ipsAfter = (await xui.getClientIps(panelEmail)).length;
+      reenabled = await ensurePanelClientActive(env, telegramId, userId, sub);
+      if (!reenabled) {
+        pruned = await xui.pruneDuplicateInboundClients(telegramId, panelEmail);
+      }
+      // #region agent log
+      await debugSessionLogKv(
+        env,
+        "device-reset.ts:resetPanelClient",
+        "post-clear panel sync",
+        { telegramId, panelEmail, pruned, reenabled },
+        "K"
+      );
+      // #endregion
     } catch {
-      ipsAfter = -1;
+      // #region agent log
+      await debugSessionLogKv(
+        env,
+        "device-reset.ts:resetPanelClient",
+        "post-clear panel sync failed",
+        { telegramId, panelEmail },
+        "K"
+      );
+      // #endregion
     }
   }
 

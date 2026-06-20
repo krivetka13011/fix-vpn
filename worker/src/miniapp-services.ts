@@ -36,7 +36,7 @@ import {
 import type { TelegramUser } from "./telegram";
 import type { UserBundle } from "./types";
 import { XuiApi } from "./xui";
-import { DeviceResetCooldownError, deviceResetNotice, resetPanelClient } from "./device-reset";
+import { DeviceResetCooldownError, deviceResetNotice, ensurePanelClientActive, resetPanelClient } from "./device-reset";
 
 export type MiniappPlatform = "android" | "ios" | "windows" | "mac";
 export type MiniappClient = "happ" | "v2raytun" | "hiddify";
@@ -277,6 +277,8 @@ export async function buildMiniappConnectUrl(
   if (!subId) {
     throw new Error("Подписка ещё синхронизируется. Повторите через минуту.");
   }
+
+  await ensurePanelClientActive(env, tg.id, user.id, sub);
 
   const mappedClient = mapClient(client);
   await syncPanelDeviceLimit(env, user.id);

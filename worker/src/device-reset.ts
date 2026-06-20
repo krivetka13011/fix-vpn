@@ -173,7 +173,6 @@ export async function resetPanelClient(
   }
 
   const emailsToClear = new Set<string>([panelEmail, String(telegramId)]);
-  const dbEmail = sub.client_email?.trim();
   if (dbEmail) emailsToClear.add(dbEmail);
   const username = dbUser?.username;
   if (username) {

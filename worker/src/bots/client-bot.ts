@@ -23,7 +23,7 @@ import {
   upsertTelegramUser,
   registerVpnDeviceBinding,
 } from "../repository";
-import { canActivateTrial, trialButtonHidden } from "../trial-button";
+import { canActivateTrial, isSubscriptionTimeActive } from "../trial-button";
 import { XuiApi } from "../xui";
 import type { TelegramUser } from "../telegram";
 import {
@@ -83,6 +83,7 @@ import {
   formatSubscriptionDateFields,
   isTestMode,
   trialDurationMs,
+  effectiveTrialDurationMs,
 } from "../test-mode";
 import {
   canConnectNewDevice,
@@ -477,17 +478,20 @@ async function activateTrial(
 
   if (
     isTesterAccount(env, tg.id, user.is_tester) &&
-    existingSub?.status !== "active"
+    !isSubscriptionTimeActive(existingSub)
   ) {
     await resetTesterTrial(env, tg.id);
   }
 
-  if (existingSub?.is_trial && existingSub.status === "active") {
+  if (existingSub?.is_trial && isSubscriptionTimeActive(existingSub)) {
     await showConnectOsMenu(token, chatId, messageId);
     return;
   }
 
-  const TRIAL_MS = trialDurationMs(env);
+  const TRIAL_MS = effectiveTrialDurationMs(env, {
+    telegramId: tg.id,
+    isTester: user.is_tester,
+  });
   const expiryMs = Math.floor(Date.now() + TRIAL_MS);
   const trialPlanLabel = isTestMode(env)
     ? `Пробный · ${Math.round(TRIAL_MS / 60000)} мин`

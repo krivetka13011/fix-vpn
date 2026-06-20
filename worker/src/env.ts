@@ -58,6 +58,7 @@ export interface BotEnv extends StorageEnv {
   /** "1" = короткие пробный/оплата для QA (5 мин, 1 ₽) */
   TEST_MODE?: string;
   TRIAL_DURATION_MINUTES?: string;
+  TESTER_TRIAL_DURATION_MINUTES?: string;
   TEST_CHECKOUT_PRICE_RUB?: string;
   TEST_SUBSCRIPTION_MINUTES?: string;
   /** "1" = временная пауза: 503 на все запросы, cron отключён */

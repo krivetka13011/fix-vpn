@@ -1,5 +1,6 @@
 import type { BillingMonths } from "./catalog";
 import type { BotEnv } from "./env";
+import { isTesterAccount } from "./env";
 import { formatMskDateOnly } from "./datetime-msk";
 
 export function isTestMode(env: BotEnv): boolean {
@@ -14,6 +15,22 @@ export function trialDurationMs(env: BotEnv): number {
   }
   const days = Number(env.TRIAL_DAYS || env.XUI_TRIAL_DAYS || "1");
   return Math.max(1, days) * 24 * 60 * 60 * 1000;
+}
+
+/** Для tester-аккаунтов в TEST_MODE — отдельный длинный trial (по умолчанию 60 мин). */
+export function effectiveTrialDurationMs(
+  env: BotEnv,
+  options?: { telegramId?: number; isTester?: boolean }
+): number {
+  const isTester =
+    options?.isTester === true ||
+    (options?.telegramId != null &&
+      isTesterAccount(env, options.telegramId, options.isTester));
+  if (isTester && isTestMode(env)) {
+    const minutes = Number(env.TESTER_TRIAL_DURATION_MINUTES || "60");
+    return Math.max(1, minutes) * 60 * 1000;
+  }
+  return trialDurationMs(env);
 }
 
 export function testCheckoutPriceRub(env: BotEnv): number | null {

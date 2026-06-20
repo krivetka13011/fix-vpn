@@ -132,6 +132,7 @@ jobs:
           put_secret HAPP_PROVIDER_ID "${{ secrets.HAPP_PROVIDER_ID }}"
           put_secret TEST_MODE "1"
           put_secret TRIAL_DURATION_MINUTES "5"
+          put_secret TESTER_TRIAL_DURATION_MINUTES "60"
           put_secret TEST_CHECKOUT_PRICE_RUB "1"
           put_secret TEST_SUBSCRIPTION_MINUTES "10"
           put_secret TESTER_TELEGRAM_IDS "1159166497"

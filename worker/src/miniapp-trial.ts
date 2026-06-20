@@ -2,6 +2,7 @@ import type { BotEnv } from "./env";
 import { isTesterAccount } from "./env";
 import { getBundle } from "./db";
 import {
+  effectiveTrialDurationMs,
   formatSubscriptionDateFields,
   isTestMode,
   trialDurationMs,
@@ -13,7 +14,7 @@ import {
 } from "./repository";
 import { activateTrialSubscription } from "./subscription-activate";
 import type { TelegramUser } from "./telegram";
-import { canActivateTrial } from "./trial-button";
+import { canActivateTrial, isSubscriptionTimeActive } from "./trial-button";
 import { debugSessionLog } from "./debug-session-log";
 
 export async function activateMiniappTrial(
@@ -48,12 +49,12 @@ export async function activateMiniappTrial(
 
   if (
     isTesterAccount(env, tg.id, user.is_tester) &&
-    existingSub?.status !== "active"
+    !isSubscriptionTimeActive(existingSub)
   ) {
     await resetTesterTrial(env, tg.id);
   }
 
-  if (existingSub?.is_trial && existingSub.status === "active") {
+  if (existingSub?.is_trial && isSubscriptionTimeActive(existingSub)) {
     return { message: "Пробный период уже активен. Перейдите во вкладку «Помощь»." };
   }
 
@@ -61,7 +62,10 @@ export async function activateMiniappTrial(
     await clearVpnDeviceBindings(env, user.id);
   }
 
-  const trialMs = trialDurationMs(env);
+  const trialMs = effectiveTrialDurationMs(env, {
+    telegramId: tg.id,
+    isTester: user.is_tester,
+  });
   const expiryMs = Math.floor(Date.now() + trialMs);
   const trialPlanLabel = isTestMode(env)
     ? `Пробный · ${Math.round(trialMs / 60000)} мин`

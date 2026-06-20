@@ -172,16 +172,23 @@ export async function resetPanelClient(
   }
 
   const cleared = await xui.tryClearClientIps(panelEmail, 12_000);
+  let ipsAfterClear = -1;
+  try {
+    ipsAfterClear = (await xui.getClientIps(panelEmail)).length;
+  } catch {
+    ipsAfterClear = -1;
+  }
+  const resetOk = cleared || ipsAfterClear === 0;
   // #region agent log
   debugSessionLog(
     "device-reset.ts:resetPanelClient",
     "clearClientIps result",
-    { telegramId, panelEmail, ipsBefore, cleared },
+    { telegramId, panelEmail, ipsBefore, cleared, ipsAfterClear, resetOk },
     "G"
   );
   // #endregion
 
-  if (!cleared) {
+  if (!resetOk) {
     throw new DeviceResetPanelError();
   }
 
@@ -192,11 +199,13 @@ export async function resetPanelClient(
   });
   await clearStuckRotationFlags(env, userId);
 
-  let ipsAfter = -1;
-  try {
-    ipsAfter = (await xui.getClientIps(panelEmail)).length;
-  } catch {
-    ipsAfter = -1;
+  let ipsAfter = ipsAfterClear;
+  if (ipsAfter < 0) {
+    try {
+      ipsAfter = (await xui.getClientIps(panelEmail)).length;
+    } catch {
+      ipsAfter = -1;
+    }
   }
 
   // #region agent log

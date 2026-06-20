@@ -1420,42 +1420,30 @@ export class XuiApi {
     return false;
   }
 
-  /** Fast panel IP reset — direct panel URL, short timeout. */
-  async tryClearClientIps(email: string, timeoutMs = 5000): Promise<boolean> {
+  /** Fast panel IP reset via direct panel API (clients/clearIps first). */
+  async tryClearClientIps(email: string, timeoutMs = 12000): Promise<boolean> {
     const trimmed = email.trim();
     if (!trimmed) return false;
 
     const encoded = encodeURIComponent(trimmed);
-    const encodedCandidates = [
-      encoded,
-      ...(trimmed.includes("@") ? [trimmed] : []),
-    ].filter((value, index, list) => list.indexOf(value) === index);
+    const paths = [
+      `/panel/api/clients/clearIps/${encoded}`,
+      `/panel/api/inbounds/clearClientIps/${encoded}`,
+    ];
 
-    const paths: string[] = [];
-    for (const candidate of encodedCandidates) {
-      paths.push(`/panel/api/clients/clearIps/${candidate}`);
-      paths.push(`/panel/api/inbounds/clearClientIps/${candidate}`);
-    }
-
-    const bases = [xuiWorkerBaseUrl(this.env), ...this.baseUrls].filter(
-      (base, index, list) => base && list.indexOf(base) === index
-    );
-
-    for (const baseUrl of bases) {
-      for (const path of paths) {
-        try {
-          const response = await this.requestTimed(
-            `${baseUrl}${path}`,
-            { method: "POST", body: "{}" },
-            timeoutMs
-          );
-          if (await this.panelActionSucceeded(response)) {
-            this.invalidateScan();
-            return true;
-          }
-        } catch {
-          // try next path/base
+    for (const path of paths) {
+      try {
+        const response = await this.request(
+          path,
+          { method: "POST", body: "{}" },
+          timeoutMs
+        );
+        if (await this.panelActionSucceeded(response)) {
+          this.invalidateScan();
+          return true;
         }
+      } catch {
+        // try next path
       }
     }
     return false;

@@ -1347,6 +1347,46 @@ export class XuiApi {
     return removed;
   }
 
+  /** Re-attach client to inbounds with enable:true (clients/add — works on 3X-UI v3.2.7). */
+  async reenableInboundClientAfterReset(
+    telegramId: number,
+    panel: { email: string; subId: string; primaryUuid: string },
+    options?: { limitIp?: number; expiryMs?: number }
+  ): Promise<boolean> {
+    if (!panel.subId?.trim() || !panel.primaryUuid?.trim()) return false;
+
+    const expiryMs =
+      options?.expiryMs && options.expiryMs > 0
+        ? options.expiryMs
+        : await this.resolveClientExpiryMs(telegramId, panel.email);
+    const limitIp = options?.limitIp ?? 1;
+    const client = this.buildClient(
+      panel.email,
+      panel.subId,
+      telegramId,
+      expiryMs,
+      0,
+      true,
+      panel.primaryUuid,
+      limitIp
+    );
+
+    try {
+      await this.addClient(client, { enableAfterAdd: true });
+    } catch (error) {
+      const message = error instanceof Error ? error.message.toLowerCase() : "";
+      if (!message.includes("already in use")) {
+        console.error("reenableInboundClientAfterReset:", error);
+        return false;
+      }
+    }
+
+    this.invalidateScan();
+    await this.pruneDuplicateInboundClients(telegramId, panel.email);
+    const rows = await this.findInboundClientRows(telegramId, panel.email);
+    return rows.length > 0 && rows.some((row) => row.row.enable === true);
+  }
+
   /** Полное удаление клиента из панели (inbound + global). */
   async deletePanelClientByTelegramId(
     telegramId: number,

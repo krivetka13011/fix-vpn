@@ -223,15 +223,23 @@ export async function resetPanelClient(
   }
 
   let pruned = 0;
+  let reenabled = false;
   try {
-    await xui.forceEnableClient(telegramId, panelEmail);
-    pruned = await xui.pruneDuplicateInboundClients(telegramId, panelEmail);
+    const clientInfo = await xui.findClientByTelegramId(telegramId);
+    const subId = sub.xray_sub_id?.trim() || clientInfo?.subId || "";
+    const primaryUuid = sub.xray_uuid?.trim() || clientInfo?.primaryUuid || "";
+    reenabled = await xui.reenableInboundClientAfterReset(telegramId, {
+      email: panelEmail,
+      subId,
+      primaryUuid,
+    });
+    pruned = reenabled ? 0 : await xui.pruneDuplicateInboundClients(telegramId, panelEmail);
     // #region agent log
     await debugSessionLogKv(
       env,
       "device-reset.ts:resetPanelClient",
       "post-clear panel sync",
-      { telegramId, panelEmail, pruned },
+      { telegramId, panelEmail, pruned, reenabled },
       "K"
     );
     // #endregion
@@ -275,6 +283,7 @@ export async function resetPanelClient(
       ipsBefore,
       ipsAfter,
       pruned,
+      reenabled,
     },
     "J"
   );

@@ -160,7 +160,21 @@ export function normalizeSubscriptionBody(raw: string): string {
   return trimmed;
 }
 
-/** Remove duplicate protocol lines (same URL imported twice → N/D in Happ). */
+/** Stable key for dedupe: server display name (fragment) or full line. */
+function subscriptionLineDedupeKey(line: string): string {
+  const hash = line.indexOf("#");
+  if (hash >= 0) {
+    const fragment = line.slice(hash + 1);
+    try {
+      return decodeURIComponent(fragment).trim().toLowerCase();
+    } catch {
+      return fragment.trim().toLowerCase();
+    }
+  }
+  return line.trim().toLowerCase();
+}
+
+/** Remove duplicate servers (same remark across inbounds → repeated rows in Happ). */
 export function dedupeSubscriptionLines(body: string): string {
   const lines = body.split(/\r?\n/);
   const seen = new Set<string>();
@@ -172,8 +186,9 @@ export function dedupeSubscriptionLines(body: string): string {
       out.push(line);
       continue;
     }
-    if (seen.has(line)) continue;
-    seen.add(line);
+    const key = subscriptionLineDedupeKey(line);
+    if (seen.has(key)) continue;
+    seen.add(key);
     out.push(line);
   }
   return out.join("\n");
@@ -227,7 +242,7 @@ export async function fetchPanelSubscriptionBody(
     const xui = new XuiApi(env);
     const links = await xui.getClientSubLinks(subId);
     if (links.length > 0) {
-      let body = links.join("\n");
+      let body = dedupeSubscriptionLines(links.join("\n"));
       if (subscriptionBodyLooksValid(body) && PLAIN_PROTOCOL_RE.test(body)) {
         body = rewriteSubscriptionEgressHost(body, egressHost);
         body = filterUnreachableSubscriptionLines(body);

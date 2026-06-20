@@ -61,7 +61,7 @@ export class DeviceResetPanelError extends Error {
 }
 
 export const DEVICE_RESET_SUCCESS_NOTICE =
-  "Подключение сброшено. Отключите VPN на всех устройствах (телефон и ПК), затем подключите заново через «Подключить VPN». Следующий сброс — через 24 часа.";
+  "Подключение сброшено. Отключите VPN на телефоне, обновите подписку в Happ на ПК (↻), затем подключите через «Подключить VPN». Следующий сброс — через 24 часа.";
 
 export function deviceResetNotice(): string {
   return DEVICE_RESET_SUCCESS_NOTICE;
@@ -246,29 +246,6 @@ export async function resetPanelClient(
     ipsBefore = -1;
   }
 
-  try {
-    await xui.suspendClientSessions(telegramId, panelEmail);
-    // #region agent log
-    await debugSessionLogKv(
-      env,
-      "device-reset.ts:resetPanelClient",
-      "client suspended before ip clear",
-      { telegramId, panelEmail },
-      "G"
-    );
-    // #endregion
-  } catch {
-    // #region agent log
-    await debugSessionLogKv(
-      env,
-      "device-reset.ts:resetPanelClient",
-      "client suspend failed — continuing reset",
-      { telegramId, panelEmail },
-      "G"
-    );
-    // #endregion
-  }
-
   const emailsToClear = new Set<string>([panelEmail, String(telegramId)]);
   if (dbEmail) emailsToClear.add(dbEmail);
   const username = dbUser?.username;
@@ -340,6 +317,7 @@ export async function resetPanelClient(
       if (!reenabled) {
         pruned = await xui.pruneDuplicateInboundClients(telegramId, panelEmail);
       }
+      await xui.forceEnableClient(telegramId, panelEmail);
       await syncPanelDeviceLimit(env, userId);
       // #region agent log
       await debugSessionLogKv(

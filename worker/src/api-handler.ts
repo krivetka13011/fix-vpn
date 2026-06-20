@@ -22,6 +22,7 @@ import {
   getTransactionByPayloadId,
   getTransactionByPlategaId,
   getUserById,
+  getUserByTelegramId,
   kvGetSubscriptionPayloadCache,
   kvSetSubscriptionPayloadCache,
 } from "./repository";
@@ -43,7 +44,8 @@ import { beginE2eTrace, endE2eTrace } from "./e2e-trace";
 import { DeviceResetCooldownError, DeviceResetPanelError } from "./device-reset";
 import { approvePaidTransaction } from "./approve-transaction";
 import { isTestMode, trialDurationMs } from "./test-mode";
-import { debugSessionLog } from "./debug-session-log";
+import { debugSessionLog, readDebugSessionLogs } from "./debug-session-log";
+import { isTesterAccount } from "./env";
 import {
   reconcilePlategaFromReturnUrl,
 } from "./platega-reconcile";
@@ -813,6 +815,15 @@ export async function handleApiRequest(
         400
       );
     }
+  }
+
+  if (path === "/api/debug/session-381494" && request.method === "GET") {
+    const user = await getUserByTelegramId(env, tgUser.id);
+    if (!isTesterAccount(env, tgUser.id, user?.is_tester)) {
+      return json({ error: "Forbidden" }, 403);
+    }
+    const logs = await readDebugSessionLogs(env);
+    return json({ logs });
   }
 
   if (path === "/api/devices/reset" && request.method === "POST") {

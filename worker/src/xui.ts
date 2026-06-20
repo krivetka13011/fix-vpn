@@ -1267,6 +1267,86 @@ export class XuiApi {
     }
   }
 
+  /** Keep one enabled inbound row per telegramId; drop duplicate disabled copies. */
+  async pruneDuplicateInboundClients(
+    telegramId: number,
+    emailHint: string
+  ): Promise<number> {
+    const hint = emailHint.trim() || String(telegramId);
+    let removed = 0;
+
+    for (const inboundId of this.inboundIds) {
+      try {
+        const response = await this.request(`/panel/api/inbounds/get/${inboundId}`);
+        const payload = await this.readJsonBody(response);
+        if (!response.ok || payload.success === false) continue;
+        const obj = payload.obj as Record<string, unknown> | undefined;
+        if (!obj) continue;
+
+        const settingsRaw = obj.settings;
+        const settings =
+          typeof settingsRaw === "string"
+            ? (JSON.parse(settingsRaw) as {
+                clients?: Array<Record<string, unknown>>;
+              })
+            : ((settingsRaw as { clients?: Array<Record<string, unknown>> }) ?? {});
+        const clients = [...(settings.clients ?? [])];
+
+        const matches: Array<Record<string, unknown>> = [];
+        const others: Array<Record<string, unknown>> = [];
+        for (const row of clients) {
+          const rowEmail = String(row.email || "");
+          const tgId = Number(row.tgId) || 0;
+          if (
+            tgId === telegramId ||
+            rowEmail === hint ||
+            rowEmail === String(telegramId)
+          ) {
+            matches.push(row);
+          } else {
+            others.push(row);
+          }
+        }
+        if (matches.length <= 1) continue;
+
+        const keep =
+          matches.find((row) => row.enable === true) ?? matches[matches.length - 1];
+        const keepRow: Record<string, unknown> = {
+          ...keep,
+          enable: true,
+          tgId: telegramId,
+        };
+        removed += matches.length - 1;
+
+        const updateBody: Record<string, unknown> = {
+          ...obj,
+          settings: JSON.stringify({
+            ...settings,
+            clients: [...others, keepRow],
+          }),
+        };
+        for (const key of Object.keys(updateBody)) {
+          if (updateBody[key] === null) delete updateBody[key];
+        }
+
+        const updateResponse = await this.request(
+          `/panel/api/inbounds/update/${inboundId}`,
+          {
+            method: "POST",
+            body: JSON.stringify(updateBody),
+          }
+        );
+        if (await this.panelActionSucceeded(updateResponse)) {
+          this.invalidateScan();
+        }
+      } catch (error) {
+        console.error(`pruneDuplicateInboundClients ${inboundId}:`, error);
+      }
+    }
+
+    return removed;
+  }
+
   /** Полное удаление клиента из панели (inbound + global). */
   async deletePanelClientByTelegramId(
     telegramId: number,

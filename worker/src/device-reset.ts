@@ -12,7 +12,7 @@ import {
   patchSubscription,
 } from "./repository";
 import { clearStuckRotationFlags } from "./subscription-rotate";
-import { debugSessionLog } from "./debug-session-log";
+import { debugSessionLogKv } from "./debug-session-log";
 import { XuiApi } from "./xui";
 
 export const DEVICE_RESET_COOLDOWN_MS = 24 * 60 * 60 * 1000;
@@ -60,7 +60,7 @@ export class DeviceResetPanelError extends Error {
 }
 
 export const DEVICE_RESET_SUCCESS_NOTICE =
-  "Подключение сброшено. В Happ обновите подписку (потяните вниз), затем подключитесь заново во вкладке «Помощь». Следующий сброс — через 24 часа.";
+  "Подключение сброшено. Сначала отключите VPN на текущем устройстве, затем подключите заново во вкладке «Помощь». Следующий сброс — через 24 часа.";
 
 export function deviceResetNotice(): string {
   return DEVICE_RESET_SUCCESS_NOTICE;
@@ -83,7 +83,8 @@ async function clearPanelClientDbState(
   }
   await patchSubscription(env, userId, patch);
   // #region agent log
-  debugSessionLog(
+  await debugSessionLogKv(
+    env,
     "device-reset.ts:clearPanelClientDbState",
     "db bindings cleared, subId preserved",
     {
@@ -110,7 +111,8 @@ export async function resetPanelClient(
   if (!sub) throw new Error("Подписка не найдена");
   if (sub.status !== "active") {
     // #region agent log
-    debugSessionLog(
+    await debugSessionLogKv(
+      env,
       "device-reset.ts:resetPanelClient",
       "reset blocked inactive subscription",
       { userId, status: sub.status },
@@ -153,7 +155,8 @@ export async function resetPanelClient(
   }
   if (!panelEmail) {
     // #region agent log
-    debugSessionLog(
+    await debugSessionLogKv(
+      env,
       "device-reset.ts:resetPanelClient",
       "no panel email for reset",
       { telegramId, userId },
@@ -198,7 +201,8 @@ export async function resetPanelClient(
   }
   const resetOk = cleared || ipsAfterClear === 0;
   // #region agent log
-  debugSessionLog(
+  await debugSessionLogKv(
+    env,
     "device-reset.ts:resetPanelClient",
     "clearClientIps result",
     {
@@ -218,21 +222,25 @@ export async function resetPanelClient(
     throw new DeviceResetPanelError();
   }
 
+  let pruned = 0;
   try {
     await xui.forceEnableClient(telegramId, panelEmail);
+    pruned = await xui.pruneDuplicateInboundClients(telegramId, panelEmail);
     // #region agent log
-    debugSessionLog(
+    await debugSessionLogKv(
+      env,
       "device-reset.ts:resetPanelClient",
-      "forceEnableClient after clear",
-      { telegramId, panelEmail },
+      "post-clear panel sync",
+      { telegramId, panelEmail, pruned },
       "K"
     );
     // #endregion
   } catch {
     // #region agent log
-    debugSessionLog(
+    await debugSessionLogKv(
+      env,
       "device-reset.ts:resetPanelClient",
-      "forceEnableClient failed after clear",
+      "post-clear panel sync failed",
       { telegramId, panelEmail },
       "K"
     );
@@ -256,7 +264,8 @@ export async function resetPanelClient(
   }
 
   // #region agent log
-  debugSessionLog(
+  await debugSessionLogKv(
+    env,
     "device-reset.ts:resetPanelClient",
     "device reset complete",
     {
@@ -265,6 +274,7 @@ export async function resetPanelClient(
       panelEmail,
       ipsBefore,
       ipsAfter,
+      pruned,
     },
     "J"
   );

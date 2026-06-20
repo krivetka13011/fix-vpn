@@ -1261,7 +1261,33 @@ export class XuiApi {
         }),
       }
     );
-    await this.parseResponse(response, "updateClient");
+    try {
+      await this.parseResponse(response, "updateClient");
+    } catch (error) {
+      const message = error instanceof Error ? error.message.toLowerCase() : "";
+      if (
+        this.isMissingClientError(error) ||
+        message.includes("empty client")
+      ) {
+        // #region agent log
+        await debugSessionLogKv(
+          this.env,
+          "xui.ts:updateClient",
+          "update failed — addClient fallback",
+          {
+            email: merged.email,
+            subIdPrefix: merged.subId.slice(0, 8),
+            reason: message.slice(0, 80),
+          },
+          "N"
+        );
+        // #endregion
+        await this.addClient(merged, { enableAfterAdd: active });
+        this.invalidateScan();
+        return;
+      }
+      throw error;
+    }
     this.invalidateScan();
 
     const tgId = merged.tgId || Number(merged.email) || 0;

@@ -2,7 +2,6 @@ import { telegramIdFromClientEmail, panelLimitIpForSubscription, syncPanelDevice
 import type { BotEnv } from "./env";
 import { isTesterAccount } from "./env";
 import { subscriptionExpiryMs } from "./db";
-import { panelDisplayLabel } from "./panel-client-label";
 import {
   clearVpnDeviceBindings,
   clearXuiInboundClients,
@@ -179,34 +178,21 @@ export async function resetPanelClient(
     );
   }
 
-  const emailsToClear = new Set<string>([panelEmail, String(telegramId)]);
-  if (dbEmail) emailsToClear.add(dbEmail);
+  // Сброс через delete+recreate: удаляем клиента в панели (Xray-core разрывает
+  // все активные сессии старого устройства) и пересоздаём с теми же UUID/subId/
+  // expiryTime/limitIp. clearClientIps для этой задачи не подходит — он чистит
+  // список IP, но не убивает активные VPN-сессии, поэтому работали оба устройства.
   const username = dbUser?.username;
-  if (username) {
-    for (let slot = 1; slot <= 3; slot += 1) {
-      emailsToClear.add(
-        panelDisplayLabel(username, dbUser?.display_name ?? null, telegramId, {
-          slot,
-        })
-      );
-    }
-  }
-
-  let cleared = false;
-  for (const email of emailsToClear) {
-    if (await xui.tryClearClientIps(email, 12_000)) cleared = true;
-  }
-
-  let ipsAfterClear = -1;
   try {
-    ipsAfterClear = (await xui.getClientIps(panelEmail)).length;
-  } catch {
-    ipsAfterClear = -1;
-  }
-  const resetOk = cleared || ipsAfterClear === 0;
-
-  if (!resetOk) {
-    throw new DeviceResetPanelError();
+    await xui.recreatePanelClient(telegramId, panelEmail, {
+      username,
+      displayName: dbUser?.display_name ?? null,
+    });
+  } catch (error) {
+    console.error("resetPanelClient: recreatePanelClient failed", error);
+    throw new DeviceResetPanelError(
+      "Не удалось пересоздать клиента в панели. Подождите 1–2 минуты и повторите сброс."
+    );
   }
 
   try {

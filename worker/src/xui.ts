@@ -1559,6 +1559,89 @@ export class XuiApi {
     return removed || emails.size > 0;
   }
 
+  /**
+   * Полный пересоздание клиента в панели — для сброса подключения.
+   *
+   * В отличие от clearClientIps (который чистит список IP, но НЕ разрывает
+   * активные VPN-сессии Xray-core), удаление клиента выгружает его из конфига
+   * Xray-core и немедленно убивает все сессии. После пересоздания старые
+   * устройства больше не подключены — слот limitIp освобождается по-настоящему.
+   *
+   * Поля сохраняем из текущей записи клиента: UUID, subId, expiryTime, limitIp,
+   * totalGB. URL подписки и ключ в Happ остаются прежними — обновлять не нужно.
+   */
+  async recreatePanelClient(
+    telegramId: number,
+    email: string,
+    options?: { username?: string | null; displayName?: string | null }
+  ): Promise<{ subId: string; uuid: string; expiryMs: number; limitIp: number }> {
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail || !Number.isFinite(telegramId) || telegramId <= 0) {
+      throw new Error("recreatePanelClient: некорректные аргументы");
+    }
+
+    const record = await this.fetchClientRecord(trimmedEmail);
+    if (!record) {
+      throw new Error(
+        "recreatePanelClient: клиент не найден в панели — нечего пересоздавать"
+      );
+    }
+
+    const subId = record.subId?.trim();
+    const uuid = record.id?.trim();
+    const expiryMs = panelExpiryTimeMs(record.expiryTime);
+    const limitIp = record.limitIp > 0 ? record.limitIp : this.limitIp;
+    const totalGB = record.totalGB || 0;
+    if (!subId || !uuid) {
+      throw new Error(
+        "recreatePanelClient: у клиента нет subId/UUID — невозможно сохранить подписку"
+      );
+    }
+
+    const deleted = await this.deletePanelClientByTelegramId(telegramId, {
+      username: options?.username,
+      displayName: options?.displayName,
+    });
+    if (!deleted) {
+      console.error(
+        "recreatePanelClient: удаление не подтверждено, пробуем пересоздать всё равно",
+        telegramId
+      );
+    }
+
+    // Пересоздание с retry: окно без клиента длится секунды. Если add упадёт,
+    // пользователь останется без VPN — пробуем до 2 раз перед тем как сдаться.
+    const rebuilt = this.buildClient(
+      trimmedEmail,
+      subId,
+      telegramId,
+      expiryMs,
+      totalGB,
+      true,
+      uuid,
+      limitIp
+    );
+
+    let lastError: unknown = null;
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      try {
+        await this.addClient(rebuilt, { enableAfterAdd: true });
+        return { subId, uuid, expiryMs, limitIp };
+      } catch (error) {
+        lastError = error;
+        console.error(
+          `recreatePanelClient: addClient попытка ${attempt} не удалась`,
+          error
+        );
+      }
+    }
+    throw new Error(
+      `recreatePanelClient: не удалось пересоздать клиента после удаления — ${
+        lastError instanceof Error ? lastError.message : String(lastError)
+      }`
+    );
+  }
+
   /** Полное удаление клиента из панели (для сброса подключения). */
   async tryDeletePanelClient(email: string, timeoutMs = 8000): Promise<boolean> {
     const trimmed = email.trim();

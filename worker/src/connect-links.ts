@@ -282,7 +282,11 @@ export async function verifyPanelSubscription(
   return false;
 }
 
-const DEAD_OUTBOUND_PORTS = new Set([53120]);
+// Раньше здесь был занесён порт 53120 (inbound 21, hysteria) — он блокировал
+// выдачу hysteria в подписку. Проверено 2026-06-23: inbound 21 жив (enable=true,
+// up=430МБ, down=8ГБ трафика), клиенты подключаются. Блокировка снята.
+// Если в будущем какой-то inbound снова отвалится — добавьте его порт сюда.
+const DEAD_OUTBOUND_PORTS = new Set<number>([]);
 
 export function subscriptionEgressHost(env: BotEnv): string {
   return env.VPN_SUBSCRIPTION_HOST?.trim() || PANEL_EGRESS_IP;

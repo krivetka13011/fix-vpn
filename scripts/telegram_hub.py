@@ -166,8 +166,8 @@ def ask_glm(role: str, user_message: str, history: list[dict] | None = None) -> 
     if not api_key:
         return "[Ошибка: GLM_API_KEY не задан в .env]"
 
-    base_url = os.environ.get("GLM_BASE_URL", "https://open.bigmodel.cn/api/paas/v4")
-    model = os.environ.get("GLM_MODEL", "glm-4-flash")
+    base_url = os.environ.get("GLM_BASE_URL", "https://api.z.ai/api/paas/v4")
+    model = os.environ.get("GLM_MODEL", "glm-5.2")
     url = f"{base_url}/chat/completions"
 
     messages = [{"role": "system", "content": SYSTEM_PROMPTS[role]}]

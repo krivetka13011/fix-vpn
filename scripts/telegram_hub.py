@@ -69,6 +69,41 @@ ROLES = {
     },
 }
 
+# ============================================================
+# System Prompts — «личность» каждого бота
+# ============================================================
+SYSTEM_PROMPTS = {
+    "designer": (
+        "Ты — 🎨 Дизайнер в команде разработки. "
+        "Проектируешь UI/UX, пишешь технические задания, спецификации компонентов, "
+        "архитектуру систем и API-контракты. "
+        "Отвечаешь кратко, по делу, с примерами кода/макетов. "
+        "Пишешь на русском. Используй Markdown для форматирования."
+    ),
+    "developer": (
+        "Ты — 💻 Разработчик в команде. "
+        "Пишешь код (TypeScript, Python), интегрируешь компоненты, "
+        "исправляешь баги, прогоняешь билд. "
+        "Объясняешь решения технически точно, с фрагментами кода в блоках ```язык. "
+        "Пишешь на русском. Строго следуешь конвенциям проекта."
+    ),
+    "tester": (
+        "Ты — 🧪 Тестировщик в команде. "
+        "Проверяешь безопасность, прогоняешь smoke и e2e тесты, "
+        "сканируешь git diff на утечки секретов. "
+        "Отвечаешь структурированно: Шаг → Ожидание → Результат. "
+        "Пишешь на русском. Блокируешь деплой при уязвимостях."
+    ),
+    "admin": (
+        "Ты — 👑 Админ и координатор команды. "
+        "Принимаешь задачи от владельца, распределяешь их между Дизайнером, "
+        "Разработчиком и Тестировщиком. "
+        "Деплоишь в production, откатываешь при сбоях. "
+        "Пишешь на русском. Принимаешь финальные решения."
+    ),
+}
+
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -112,6 +147,54 @@ def get_bot_token(role: str) -> str | None:
     if not token:
         log.warning("Токен %s не задан в .env", env_key)
     return token
+
+
+def ask_glm(role: str, user_message: str, history: list[dict] | None = None) -> str:
+    """Запросить ответ у GLM от имени роли бота.
+
+    Использует OpenAI-compatible API Zhipu AI (GLM).
+
+    Args:
+        role: Роль бота (определяет system prompt).
+        user_message: Текст сообщения пользователя.
+        history: Предыдущие сообщения диалога (список {role, content}).
+
+    Returns:
+        Ответ модели или сообщение об ошибке.
+    """
+    api_key = os.environ.get("GLM_API_KEY", "")
+    if not api_key:
+        return "[Ошибка: GLM_API_KEY не задан в .env]"
+
+    base_url = os.environ.get("GLM_BASE_URL", "https://open.bigmodel.cn/api/paas/v4")
+    model = os.environ.get("GLM_MODEL", "glm-4-flash")
+    url = f"{base_url}/chat/completions"
+
+    messages = [{"role": "system", "content": SYSTEM_PROMPTS[role]}]
+    if history:
+        messages.extend(history)
+    messages.append({"role": "user", "content": user_message})
+
+    try:
+        response = requests.post(
+            url,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json={"model": model, "messages": messages, "temperature": 0.7},
+            timeout=60,
+        )
+        data = response.json()
+        if "choices" in data and data["choices"]:
+            return data["choices"][0]["message"]["content"].strip()
+        return f"[Ошибка GLM: {data.get('error', data)}]"
+    except requests.RequestException as exc:
+        log.error("GLM request failed: %s", exc)
+        return f"[Сетевая ошибка GLM: {exc}]"
+    except (KeyError, ValueError) as exc:
+        log.error("GLM parse error: %s", exc)
+        return f"[Ошибка разбора ответа GLM: {exc}]"
 
 
 def telegram_api(token: str, method: str, **params) -> dict:
@@ -588,8 +671,35 @@ def cmd_send(text: str, to_owner: bool = False) -> int:
     return 0 if ok else 1
 
 
+def route_to_role(text: str) -> str:
+    """Определить роль-исполнителя по содержанию сообщения.
+
+    Args:
+        text: Текст задачи от владельца.
+
+    Returns:
+        Ключ роли: designer, developer, tester или admin.
+    """
+    lower = text.lower()
+    if any(w in lower for w in ["баг", "ошибка", "fix", "чинить", "не работает", "сломал"]):
+        return "developer"
+    if any(w in lower for w in ["тест", "провер", "audit", "безопасн", "security", " smoke", "e2e"]):
+        return "tester"
+    if any(w in lower for w in ["депло", "deploy", "выкат", "prod", "откат", "rollback"]):
+        return "admin"
+    if any(w in lower for w in ["дизайн", "макет", "ui", "ux", "тз", "спецификац", "api контракт"]):
+        return "designer"
+    # По умолчанию — Дизайнер (проектирует ТЗ первым шагом)
+    return "designer"
+
+
 def cmd_poll_once() -> int:
     """Однократный опрос обновлений и запуск пайплайна.
+
+    При получении задачи от владельца:
+    1. Админ подтверждает приём задачи.
+    2. Задача маршрутизируется к нужной роли.
+    3. Роль генерирует ответ через GLM и отправляет в чат.
 
     Returns:
         0 при успехе.
@@ -605,14 +715,33 @@ def cmd_poll_once() -> int:
         if not cmd.is_owner:
             log.warning("Сообщение от не-владельца (id=%s), игнорирую", cmd.from_id)
             continue
+        # Игнорировать команды ботов и служебные сообщения
+        if cmd.text.startswith("/"):
+            continue
         log.info("Команда от владельца: %s", cmd.text[:80])
-        # Простая маршрутизация: новая задача → Дизайнер
+
+        # 1. Админ подтверждает приём задачи
         append_to_pending(cmd.text)
         send_message(
-            "designer",
-            f"🎨 <b>Дизайнер</b>\n\nПриняла задачу:\n<blockquote>{cmd.text}</blockquote>\n\n"
-            "Начинаю проектирование ТЗ для Разработчика.",
+            "admin",
+            f"👑 <b>Админ</b>\n\nПринял задачу:\n<blockquote>{cmd.text}</blockquote>\n\n"
+            "Маршрутизирую исполнителю...",
         )
+
+        # 2. Маршрутизация к роли
+        role = route_to_role(cmd.text)
+        label = ROLES[role]["label"]
+        send_message(
+            role,
+            f"{label}: получила задачу, начинаю работу...",
+        )
+
+        # 3. Запрос к GLM от имени роли
+        glm_reply = ask_glm(role, cmd.text)
+        log.info("GLM (%s) ответил: %s...", role, glm_reply[:80])
+
+        # 4. Отправка ответа в чат
+        send_message(role, f"{label}:\n\n{glm_reply}")
     return 0
 
 

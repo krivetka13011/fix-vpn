@@ -720,27 +720,18 @@ def cmd_poll_once() -> int:
             continue
         log.info("Команда от владельца: %s", cmd.text[:80])
 
-        # 1. Админ подтверждает приём задачи
+        # Запись задачи в pending (тихо, без уведомления в чат)
         append_to_pending(cmd.text)
-        send_message(
-            "admin",
-            f"👑 <b>Админ</b>\n\nПринял задачу:\n<blockquote>{cmd.text}</blockquote>\n\n"
-            "Маршрутизирую исполнителю...",
-        )
 
-        # 2. Маршрутизация к роли
+        # Маршрутизация к роли
         role = route_to_role(cmd.text)
         label = ROLES[role]["label"]
-        send_message(
-            role,
-            f"{label}: получила задачу, начинаю работу...",
-        )
 
-        # 3. Запрос к GLM от имени роли
+        # Запрос к GLM от имени роли — только полезный ответ
         glm_reply = ask_glm(role, cmd.text)
         log.info("GLM (%s) ответил: %s...", role, glm_reply[:80])
 
-        # 4. Отправка ответа в чат
+        # Отправка только ответа GLM (без "принял задачу")
         send_message(role, f"{label}:\n\n{glm_reply}")
     return 0
 

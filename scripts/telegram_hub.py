@@ -167,7 +167,7 @@ def ask_glm(role: str, user_message: str, history: list[dict] | None = None) -> 
         return "[Ошибка: GLM_API_KEY не задан в .env]"
 
     base_url = os.environ.get("GLM_BASE_URL", "https://api.z.ai/api/paas/v4")
-    model = os.environ.get("GLM_MODEL", "glm-5.2")
+    model = os.environ.get("GLM_MODEL", "glm-4.5-flash")
     url = f"{base_url}/chat/completions"
 
     messages = [{"role": "system", "content": SYSTEM_PROMPTS[role]}]

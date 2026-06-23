@@ -34,8 +34,10 @@ import requests
 REPO_ROOT = Path(__file__).resolve().parent.parent
 ENV_PATH = REPO_ROOT / ".env"
 STATE_PATH = REPO_ROOT / "context" / "state.json"
+DIALOG_HISTORY_PATH = REPO_ROOT / "context" / "dialog_history.json"
 PENDING_PATH = REPO_ROOT / "context" / "pending_tasks.md"
 COMPLETED_PATH = REPO_ROOT / "context" / "completed_tasks.md"
+MAX_HISTORY_MESSAGES = 20
 
 # Роли ботов — каждая роль общается в TEAM_CHAT от своего имени.
 ROLES = {
@@ -147,6 +149,153 @@ def get_bot_token(role: str) -> str | None:
     if not token:
         log.warning("Токен %s не задан в .env", env_key)
     return token
+
+
+def load_dialog_history() -> list[dict]:
+    """Загрузить историю диалога из context/dialog_history.json.
+
+    Returns:
+        Список сообщений [{role, content}, ...].
+    """
+    if not DIALOG_HISTORY_PATH.is_file():
+        return []
+    try:
+        with open(DIALOG_HISTORY_PATH, encoding="utf-8") as handle:
+            return json.load(handle)
+    except (json.JSONDecodeError, OSError):
+        return []
+
+
+def save_dialog_history(history: list[dict]) -> None:
+    """Сохранить историю диалога, обрезая до MAX_HISTORY_MESSAGES.
+
+    Args:
+        history: Список сообщений диалога.
+    """
+    DIALOG_HISTORY_PATH.parent.mkdir(parents=True, exist_ok=True)
+    trimmed = history[-MAX_HISTORY_MESSAGES:]
+    with open(DIALOG_HISTORY_PATH, "w", encoding="utf-8") as handle:
+        json.dump(trimmed, handle, indent=2, ensure_ascii=False)
+
+
+def append_dialog(role_name: str, content: str) -> None:
+    """Добавить сообщение в историю диалога.
+
+    Args:
+        role_name: "user", "assistant", или "system".
+        content: Текст сообщения.
+    """
+    history = load_dialog_history()
+    history.append({"role": role_name, "content": content})
+    save_dialog_history(history)
+
+
+def download_telegram_file(role: str, file_id: str, suffix: str = "") -> Path | None:
+    """Скачать файл из Telegram (голосовое, фото, документ).
+
+    Args:
+        role: Роль бота (для токена).
+        file_id: ID файла в Telegram.
+        suffix: Расширение файла (например, .ogg, .jpg).
+
+    Returns:
+        Путь к скачанному файлу или None при ошибке.
+    """
+    token = get_bot_token(role)
+    if not token:
+        return None
+    data = telegram_api(token, "getFile", file_id=file_id)
+    if not data.get("ok"):
+        log.error("getFile failed: %s", data.get("description"))
+        return None
+    file_path = data["result"]["file_path"]
+    url = f"https://api.telegram.org/file/bot{token}/{file_path}"
+    try:
+        response = requests.get(url, timeout=30)
+        response.raise_for_status()
+    except requests.RequestException as exc:
+        log.error("File download failed: %s", exc)
+        return None
+    tmp_dir = REPO_ROOT / "context" / "tmp_media"
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    local_path = tmp_dir / f"{file_id[-12:]}{suffix}"
+    with open(local_path, "wb") as handle:
+        handle.write(response.content)
+    log.info("Файл скачан: %s (%d байт)", local_path, len(response.content))
+    return local_path
+
+
+def transcribe_voice(role: str, file_id: str) -> str | None:
+    """Транскрибировать голосовое сообщение через Whisper API (Z.ai).
+
+    Args:
+        role: Роль бота (для токена Telegram).
+        file_id: ID голосового файла в Telegram.
+
+    Returns:
+        Распознанный текст или None при ошибке.
+    """
+    audio_path = download_telegram_file(role, file_id, suffix=".ogg")
+    if not audio_path:
+        return None
+    api_key = os.environ.get("GLM_API_KEY", "")
+    base_url = os.environ.get("GLM_BASE_URL", "https://api.z.ai/api/paas/v4")
+    url = f"{base_url}/audio/transcriptions"
+    try:
+        with open(audio_path, "rb") as handle:
+            response = requests.post(
+                url,
+                headers={"Authorization": f"Bearer {api_key}"},
+                files={"file": handle},
+                data={"model": "whisper-1"},
+                timeout=60,
+            )
+        data = response.json()
+        text = data.get("text", "")
+        if text:
+            log.info("Голосовое распознано: %s...", text[:80])
+            return text.strip()
+        log.error("Whisper вернул пустой ответ: %s", data)
+        return None
+    except requests.RequestException as exc:
+        log.error("Whisper request failed: %s", exc)
+        return None
+    finally:
+        try:
+            audio_path.unlink()
+        except OSError:
+            pass
+
+
+def extract_message_text(update: dict, role: str) -> tuple[str | None, str | None]:
+    """Извлечь текст из сообщения (текст, голосовое, подпись фото).
+
+    Args:
+        update: Объект update из getUpdates.
+        role: Роль бота для скачивания медиа.
+
+    Returns:
+        Кортеж (text, caption): текст сообщения и подпись к медиа.
+        Если голосовое — возвращается распознанный текст в text.
+    """
+    message = update.get("message") or update.get("channel_post")
+    if not message:
+        return None, None
+
+    text = message.get("text", "").strip() or None
+    caption = message.get("caption", "").strip() or None
+
+    # Голосовое сообщение
+    voice = message.get("voice") or message.get("audio")
+    if voice:
+        file_id = voice.get("file_id")
+        if file_id:
+            log.info("Голосовое сообщение, file_id=%s...", file_id[:20])
+            transcribed = transcribe_voice(role, file_id)
+            if transcribed:
+                return transcribed, caption
+
+    return text, caption
 
 
 def ask_glm(role: str, user_message: str, history: list[dict] | None = None) -> str:
@@ -697,9 +846,10 @@ def cmd_poll_once() -> int:
     """Однократный опрос обновлений и запуск пайплайна.
 
     При получении задачи от владельца:
-    1. Админ подтверждает приём задачи.
+    1. Текст извлекается (текст, голосовое → Whisper, подпись фото).
     2. Задача маршрутизируется к нужной роли.
-    3. Роль генерирует ответ через GLM и отправляет в чат.
+    3. Роль генерирует ответ через GLM (с учётом истории диалога).
+    4. Ответ отправляется в чат, диалог сохраняется в историю.
 
     Returns:
         0 при успехе.
@@ -710,26 +860,45 @@ def cmd_poll_once() -> int:
         return 0
     for update in updates:
         cmd = parse_command(update)
-        if not cmd or not cmd.text:
+        if not cmd:
             continue
         if not cmd.is_owner:
             log.warning("Сообщение от не-владельца (id=%s), игнорирую", cmd.from_id)
             continue
-        # Игнорировать команды ботов и служебные сообщения
-        if cmd.text.startswith("/"):
+
+        # Служебные команды
+        if cmd.text and cmd.text.startswith("/"):
+            if cmd.text.lower() in ("/clear", "/reset", "/new"):
+                save_dialog_history([])
+                send_message("admin", "🧹 <b>История диалога очищена.</b> Новая задача с чистого листа.")
+                log.info("История очищена по команде %s", cmd.text)
             continue
-        log.info("Команда от владельца: %s", cmd.text[:80])
+
+        # Извлечение текста (включая голосовые через Whisper)
+        text, _caption = extract_message_text(update, "admin")
+        if not text:
+            log.warning("Не удалось извлечь текст из обновления %s", update.get("update_id"))
+            continue
+
+        log.info("Команда от владельца: %s", text[:80])
 
         # Запись задачи в pending (тихо, без уведомления в чат)
-        append_to_pending(cmd.text)
+        append_to_pending(text)
 
         # Маршрутизация к роли
-        role = route_to_role(cmd.text)
+        role = route_to_role(text)
         label = ROLES[role]["label"]
 
-        # Запрос к GLM от имени роли — только полезный ответ
-        glm_reply = ask_glm(role, cmd.text)
+        # Загрузка истории для контекста (чтобы дополнять задачу)
+        history = load_dialog_history()
+
+        # Запрос к GLM от имени роли — с историей диалога
+        glm_reply = ask_glm(role, text, history=history)
         log.info("GLM (%s) ответил: %s...", role, glm_reply[:80])
+
+        # Сохранение в историю: пользователь + ответ ассистента
+        append_dialog("user", text)
+        append_dialog("assistant", f"[{role}] {glm_reply}")
 
         # Отправка только ответа GLM (без "принял задачу")
         send_message(role, f"{label}:\n\n{glm_reply}")

@@ -127,8 +127,14 @@ async function clearPanelClientDbState(
 }
 
 /**
- * Сброс устройства: очищаем IP-привязки в панели (clearClientIps), клиент и subId не удаляем.
- * После сброса слот свободен — можно подключиться снова с тем же URL подписки.
+ * Сброс устройства: удаляем клиента в панели (Xray-core разрывает все активные
+ * сессии старого устройства) и пересоздаём с теми же UUID/subId/expiryTime/limitIp.
+ * После сброса старое устройство реально отключается — слот limitIp освобождается.
+ *
+ * Важно: ensurePanelClientActive/reenableInboundClientAfterReset здесь НЕ вызываем —
+ * клиент уже создан и активирован внутри recreatePanelClient. Повторный addClient
+ * приводил к дублированию клиента в каждом инбаунде, из-за чего Xray-core ломал
+ * счётчик limitIp и после сброса работали оба устройства.
  */
 export async function resetPanelClient(
   env: BotEnv,
@@ -195,23 +201,22 @@ export async function resetPanelClient(
     );
   }
 
+  const now = new Date().toISOString();
+  await clearPanelClientDbState(env, userId, telegramId, sub);
+  await patchSubscription(env, userId, {
+    last_device_reset: now,
+  });
+  await clearStuckRotationFlags(env, userId);
+
+  // Лучшая попытка синхронизации состояния в панели. Клиент уже создан и
+  // активирован внутри recreatePanelClient — здесь только подстраховка:
+  // forceEnableClient idempotent (без addClient), syncPanelDeviceLimit
+  // выставляет limitIp. НЕ вызываем ensurePanelClientActive — он повторно
+  // добавил бы клиента в инбаунды и создал дубли (см. комментарий выше).
   try {
-    const now = new Date().toISOString();
-    await clearPanelClientDbState(env, userId, telegramId, sub);
-    await patchSubscription(env, userId, {
-      last_device_reset: now,
-    });
-    await clearStuckRotationFlags(env, userId);
-  } finally {
-    try {
-      const reenabled = await ensurePanelClientActive(env, telegramId, userId, sub);
-      if (!reenabled) {
-        await xui.pruneDuplicateInboundClients(telegramId, panelEmail);
-      }
-      await xui.forceEnableClient(telegramId, panelEmail);
-      await syncPanelDeviceLimit(env, userId);
-    } catch {
-      // panel sync best-effort
-    }
+    await xui.forceEnableClient(telegramId, panelEmail);
+    await syncPanelDeviceLimit(env, userId);
+  } catch {
+    // panel sync best-effort
   }
 }

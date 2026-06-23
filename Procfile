@@ -1,0 +1,1 @@
+worker: python scripts/telegram_hub.py --poll

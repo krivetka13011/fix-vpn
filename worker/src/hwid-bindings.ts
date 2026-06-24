@@ -35,7 +35,10 @@ export async function getHwidBinding(
   env: StorageEnv,
   userId: string
 ): Promise<HwidBinding | null> {
-  const raw = await env.KV.get(bindingKey(userId));
+  // cacheTtl: 0 — читать актуальное значение, обходя edge-кэш KV.
+  // Иначе после сброса (clearHwidBinding) edge-нода будет отдавать старую
+  // привязку ещё ~60сек-минуты, и новое устройство не сможет подключиться.
+  const raw = await env.KV.get(bindingKey(userId), { cacheTtl: 0 });
   if (!raw) return null;
   try {
     return JSON.parse(raw) as HwidBinding;

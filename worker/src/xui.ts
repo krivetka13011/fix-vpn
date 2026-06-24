@@ -1567,14 +1567,32 @@ export class XuiApi {
    * Xray-core и немедленно убивает все сессии. После пересоздания старые
    * устройства больше не подключены — слот limitIp освобождается по-настоящему.
    *
-   * Поля сохраняем из текущей записи клиента: UUID, subId, expiryTime, limitIp,
-   * totalGB. URL подписки и ключ в Happ остаются прежними — обновлять не нужно.
+   * Поля сохраняем из текущей записи клиента: subId, expiryTime, limitIp,
+   * totalGB. URL подписки остаётся прежним — обновлять в Happ не нужно.
+   *
+   * При `rotateUuid: true` выдаётся НОВЫЙ UUID (crypto.randomUUID). Старый UUID
+   * отзывается — это закрывает баг «оба устройства работают после сброса», когда
+   * старое устройство переподключалось по кешированному UUID. Новый UUID
+   * возвращается и должен быть сохранён в D1 (subscriptions.xray_uuid), чтобы
+   * подписка отдавала актуальный конфиг.
+   *
+   * При `rotateUuid: false` (по умолчанию) UUID сохраняется прежним — поведение
+   * для обратной совместимости.
    */
   async recreatePanelClient(
     telegramId: number,
     email: string,
-    options?: { username?: string | null; displayName?: string | null }
-  ): Promise<{ subId: string; uuid: string; expiryMs: number; limitIp: number }> {
+    options?: {
+      username?: string | null;
+      displayName?: string | null;
+      rotateUuid?: boolean;
+    }
+  ): Promise<{
+    subId: string;
+    uuid: string;
+    expiryMs: number;
+    limitIp: number;
+  }> {
     const trimmedEmail = email.trim();
     if (!trimmedEmail || !Number.isFinite(telegramId) || telegramId <= 0) {
       throw new Error("recreatePanelClient: некорректные аргументы");
@@ -1588,15 +1606,18 @@ export class XuiApi {
     }
 
     const subId = record.subId?.trim();
-    const uuid = record.id?.trim();
+    const existingUuid = record.id?.trim();
     const expiryMs = panelExpiryTimeMs(record.expiryTime);
     const limitIp = record.limitIp > 0 ? record.limitIp : this.limitIp;
     const totalGB = record.totalGB || 0;
-    if (!subId || !uuid) {
+    if (!subId || !existingUuid) {
       throw new Error(
         "recreatePanelClient: у клиента нет subId/UUID — невозможно сохранить подписку"
       );
     }
+
+    // При rotateUuid выдаём новый UUID — старый отзывается вместе с удалением.
+    const uuid = options?.rotateUuid ? crypto.randomUUID() : existingUuid;
 
     const deleted = await this.deletePanelClientByTelegramId(telegramId, {
       username: options?.username,

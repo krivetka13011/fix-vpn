@@ -35,6 +35,8 @@ import {
   workerSubscriptionFetchBase,
   xuiBaseUrl,
   healthPingPanel,
+  isHwidEnforce,
+  isTesterAccount,
 } from "./env";
 import { isPanelErrorBody, panelFetch } from "./panel-fetch";
 import { handleClientBotUpdate } from "./bots/client-bot";
@@ -64,6 +66,12 @@ import {
 import { ensureActiveSubscriptionPanel } from "./subscription-activate";
 import { syncPanelSubIdForUser } from "./panel-sync";
 import { XuiApi } from "./xui";
+import {
+  extractHwidFromRequest,
+  getHwidBinding,
+  setHwidBinding,
+  touchHwidBinding,
+} from "./hwid-bindings";
 import {
   buildMiniappConnectUrl,
   buildMiniappUserProfile,
@@ -103,6 +111,83 @@ function json(data: unknown, status = 200): Response {
     status,
     headers: { "Content-Type": "application/json", ...CORS },
   });
+}
+
+/**
+ * Пустое тело подписки — ответ при блокировке второго устройства по HWID.
+ * Возвращаем 200 OK с пустым телом: Happ/v2RayTun показывают «нет серверов»,
+ * а не «ошибка сети», и второе устройство не подключается.
+ */
+function emptySubscriptionResponse(): Response {
+  return new Response("", { status: 200, headers: { ...CORS, "Cache-Control": "no-store" } });
+}
+
+/**
+ * Проверяет HWID-привязку устройства для подписки.
+ *
+ * Возвращает true, если подписку можно отдавать (устройство разрешено).
+ * Возвращает false, если устройство заблокировано (второе устройство по HWID).
+ *
+ * Логика:
+ *  - если HWID_ENFORCE выключен → пропускаем (true);
+ *  - если из запроса не извлечь HWID (Hiddify/v2rayNG) → пропускаем (true),
+ *    для них остаётся IP-лимит панели;
+ *  - тестер-аккаунт всегда пропускается;
+ *  - нет привязки → создаём (первое устройство);
+ *  - есть привязка и HWID совпадает → обновляем lastSeen, пропускаем;
+ *  - есть привязка и HWID другой → блок (false).
+ *
+ * Асинхронная часть (запись в KV) выполняется без ожидания в ctx.waitUntil
+ * на стороне вызывающего, чтобы не тормозить ответ подписки. Здесь же запись
+ * блокирующая только для первого подключения (создание привязки) — это редко.
+ */
+async function checkHwidBinding(
+  env: BotEnv,
+  request: Request,
+  ctx: ExecutionContext | undefined,
+  subscription: Awaited<ReturnType<typeof getSubscriptionBySubId>>,
+  telegramId: number,
+  isTester: boolean
+): Promise<boolean> {
+  if (!isHwidEnforce(env)) return true;
+  if (isTester) return true;
+
+  const extracted = extractHwidFromRequest(request);
+  if (!extracted) {
+    // Hiddify/v2rayNG или неизвестный клиент без X-HWID — остаётся IP-лимит.
+    return true;
+  }
+  if (!subscription) return true;
+
+  const userId = subscription.user_id;
+  const existing = await getHwidBinding(env, userId);
+
+  if (!existing) {
+    // Первое подключение — привязываем устройство.
+    const write = setHwidBinding(env, userId, {
+      hwid: extracted.hwid,
+      os: extracted.os,
+      model: extracted.model,
+      appVersion: extracted.appVersion,
+      vpnClient: extracted.vpnClient,
+    });
+    if (ctx) ctx.waitUntil(write.catch(() => {}));
+    else await write;
+    return true;
+  }
+
+  if (existing.hwid === extracted.hwid) {
+    // То же устройство — обновляем lastSeen в фоне.
+    if (ctx) ctx.waitUntil(touchHwidBinding(env, userId).catch(() => {}));
+    return true;
+  }
+
+  // Другой HWID — блок. Старое устройство остаётся привязанным.
+  console.warn(
+    `HWID block: user=${userId} tg=${telegramId} bound=${existing.hwid} (${existing.vpnClient}) ` +
+      `request=${extracted.hwid} (${extracted.vpnClient})`
+  );
+  return false;
 }
 
 function miniappTrialAvailable(
@@ -259,6 +344,22 @@ export async function handleApiRequest(
       return new Response("subscription revoked", { status: 404, headers: CORS });
     }
 
+    // HWID-привязка устройства (Happ/v2RayTun/V2Box). Блокируем второе устройство
+    // по HWID — IP здесь не важен. Hiddify/v2rayNG без X-HWID пропускаются.
+    const tgIdFromEmail = Number((dbSub.client_email || "").trim());
+    const subTelegramId = Number.isFinite(tgIdFromEmail) && tgIdFromEmail > 0 ? tgIdFromEmail : 0;
+    const hwidAllowed = await checkHwidBinding(
+      env,
+      request,
+      ctx,
+      dbSub,
+      subTelegramId,
+      subTelegramId > 0 ? isTesterAccount(env, subTelegramId) : false
+    );
+    if (!hwidAllowed) {
+      return emptySubscriptionResponse();
+    }
+
     try {
       let live = await fetchPanelSubscriptionBody(env, subId);
       if (!live?.body) {
@@ -355,6 +456,21 @@ export async function handleApiRequest(
     }
     if (!dbSub || dbSub.status !== "active") {
       return new Response("subscription revoked", { status: 404, headers: CORS });
+    }
+
+    // HWID-привязка для /json/ маршрута (та же логика, что и для /sub/).
+    const tgIdFromEmail = Number((dbSub.client_email || "").trim());
+    const subTelegramId = Number.isFinite(tgIdFromEmail) && tgIdFromEmail > 0 ? tgIdFromEmail : 0;
+    const hwidAllowed = await checkHwidBinding(
+      env,
+      request,
+      ctx,
+      dbSub,
+      subTelegramId,
+      subTelegramId > 0 ? isTesterAccount(env, subTelegramId) : false
+    );
+    if (!hwidAllowed) {
+      return emptySubscriptionResponse();
     }
 
     try {

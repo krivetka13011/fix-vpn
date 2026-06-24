@@ -65,6 +65,8 @@ export interface BotEnv extends StorageEnv {
   WORKER_PAUSED?: string;
   /** "1" = /api/health пингует 3X-UI (по умолчанию только проверяет наличие секретов) */
   HEALTH_PING_PANEL?: string;
+  /** "1" = привязка устройства по HWID для Happ/v2RayTun/V2Box (блок 2-го устройства). */
+  HWID_ENFORCE?: string;
 }
 
 export const XUI_INBOUND_IDS_DEFAULT = [19, 20, 21, 24];
@@ -80,6 +82,12 @@ export function workerPaused(env: BotEnv): boolean {
 
 export function healthPingPanel(env: BotEnv): boolean {
   const raw = env.HEALTH_PING_PANEL?.trim().toLowerCase();
+  return raw === "1" || raw === "true" || raw === "yes";
+}
+
+/** Включена ли привязка устройства по HWID (Happ/v2RayTun/V2Box). */
+export function isHwidEnforce(env: BotEnv): boolean {
+  const raw = env.HWID_ENFORCE?.trim().toLowerCase();
   return raw === "1" || raw === "true" || raw === "yes";
 }
 

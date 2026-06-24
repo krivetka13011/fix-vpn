@@ -1,6 +1,7 @@
 import { telegramIdFromClientEmail, panelLimitIpForSubscription, syncPanelDeviceLimit } from "./device-limit";
 import type { BotEnv } from "./env";
 import { isTesterAccount } from "./env";
+import { clearHwidBinding } from "./hwid-bindings";
 import { subscriptionExpiryMs } from "./db";
 import {
   clearVpnDeviceBindings,
@@ -136,6 +137,25 @@ async function clearPanelClientDbState(
  * приводил к дублированию клиента в каждом инбаунде, из-за чего Xray-core ломал
  * счётчик limitIp и после сброса работали оба устройства.
  */
+/**
+ * Сброс устройства: удаляем клиента в панели (Xray-core разрывает все активные
+ * сессии старого устройства) и пересоздаём с НОВЫМ UUID + тем же subId/expiryTime/
+ * limitIp. После сброса старое устройство реально отключается — слот limitIp
+ * освобождается, а старый кешированный UUID больше не валиден.
+ *
+ * Ротация UUID закрывает баг «после сброса работают оба устройства»: раньше
+ * UUID сохранялся, и старое устройство переподключалось по кешированному UUID.
+ * Теперь старый UUID отзывается вместе с удалением клиента, а новый UUID
+ * сохраняется в D1 (subscriptions.xray_uuid).
+ *
+ * Параллельно очищается HWID-привязка в KV (hwid:{userId}) — это позволяет
+ * привязать новое устройство по HWID, если включена защита HWID_ENFORCE.
+ *
+ * Важно: ensurePanelClientActive/reenableInboundClientAfterReset здесь НЕ вызываем —
+ * клиент уже создан и активирован внутри recreatePanelClient. Повторный addClient
+ * приводил к дублированию клиента в каждом инбаунде, из-за чего Xray-core ломал
+ * счётчик limitIp и после сброса работали оба устройства.
+ */
 export async function resetPanelClient(
   env: BotEnv,
   userId: string,
@@ -143,9 +163,10 @@ export async function resetPanelClient(
 ): Promise<void> {
   const sub = await getSubscription(env, userId);
   if (!sub) throw new Error("Подписка не найдена");
-  if (sub.status !== "active") {
-    throw new Error("Подписка неактивна. Оформите или продлите доступ перед сбросом.");
-  }
+  // Раньше здесь был жёсткий блок при status !== "active" — но сброс имеет смысл
+  // и для истёкшей подписки (отвязать устройство после окончания триала, чтобы
+  // освободить слот при продлении). Панель всё равно удалит/пересоздаст клиента;
+  // если клиента в панели нет — recreatePanelClient выбросит понятную ошибку.
 
   const dbUser = await getUserById(env, userId);
   const telegramId =
@@ -184,16 +205,19 @@ export async function resetPanelClient(
     );
   }
 
-  // Сброс через delete+recreate: удаляем клиента в панели (Xray-core разрывает
-  // все активные сессии старого устройства) и пересоздаём с теми же UUID/subId/
-  // expiryTime/limitIp. clearClientIps для этой задачи не подходит — он чистит
-  // список IP, но не убивает активные VPN-сессии, поэтому работали оба устройства.
+  // Сброс через delete+recreate с ротацией UUID: удаляем клиента в панели
+  // (Xray-core разрывает все активные сессии старого устройства) и пересоздаём
+  // с НОВЫМ UUID + тем же subId/expiryTime/limitIp. Новый UUID отзывает старый —
+  // это закрывает баг «после сброса работают оба устройства».
   const username = dbUser?.username;
+  let newUuid: string | null = null;
   try {
-    await xui.recreatePanelClient(telegramId, panelEmail, {
+    const result = await xui.recreatePanelClient(telegramId, panelEmail, {
       username,
       displayName: dbUser?.display_name ?? null,
+      rotateUuid: true,
     });
+    newUuid = result.uuid;
   } catch (error) {
     console.error("resetPanelClient: recreatePanelClient failed", error);
     throw new DeviceResetPanelError(
@@ -203,9 +227,11 @@ export async function resetPanelClient(
 
   const now = new Date().toISOString();
   await clearPanelClientDbState(env, userId, telegramId, sub);
-  await patchSubscription(env, userId, {
-    last_device_reset: now,
-  });
+  const patch: Record<string, unknown> = { last_device_reset: now };
+  if (newUuid) patch.xray_uuid = newUuid;
+  await patchSubscription(env, userId, patch);
+  // Очищаем HWID-привязку — новое устройство сможет привязаться при первом запросе подписки.
+  await clearHwidBinding(env, userId);
   await clearStuckRotationFlags(env, userId);
 
   // Лучшая попытка синхронизации состояния в панели. Клиент уже создан и

@@ -346,15 +346,26 @@ export async function handleApiRequest(
 
     // HWID-привязка устройства (Happ/v2RayTun/V2Box). Блокируем второе устройство
     // по HWID — IP здесь не важен. Hiddify/v2rayNG без X-HWID пропускаются.
-    const tgIdFromEmail = Number((dbSub.client_email || "").trim());
-    const subTelegramId = Number.isFinite(tgIdFromEmail) && tgIdFromEmail > 0 ? tgIdFromEmail : 0;
+    // telegram_id берём из users по user_id (client_email у нас в формате
+    // @username-N, не числовой), чтобы корректно определить тестер-аккаунт.
+    let subTelegramId = 0;
+    let isTesterSub = false;
+    try {
+      const subUser = await getUserById(env, dbSub.user_id);
+      subTelegramId = subUser?.telegram_id ?? 0;
+      isTesterSub = subUser
+        ? isTesterAccount(env, subTelegramId, subUser.is_tester)
+        : false;
+    } catch (error) {
+      console.error("hwid tester lookup:", error);
+    }
     const hwidAllowed = await checkHwidBinding(
       env,
       request,
       ctx,
       dbSub,
       subTelegramId,
-      subTelegramId > 0 ? isTesterAccount(env, subTelegramId) : false
+      isTesterSub
     );
     if (!hwidAllowed) {
       return emptySubscriptionResponse();
@@ -459,15 +470,24 @@ export async function handleApiRequest(
     }
 
     // HWID-привязка для /json/ маршрута (та же логика, что и для /sub/).
-    const tgIdFromEmail = Number((dbSub.client_email || "").trim());
-    const subTelegramId = Number.isFinite(tgIdFromEmail) && tgIdFromEmail > 0 ? tgIdFromEmail : 0;
+    let subTelegramId = 0;
+    let isTesterSub = false;
+    try {
+      const subUser = await getUserById(env, dbSub.user_id);
+      subTelegramId = subUser?.telegram_id ?? 0;
+      isTesterSub = subUser
+        ? isTesterAccount(env, subTelegramId, subUser.is_tester)
+        : false;
+    } catch (error) {
+      console.error("json hwid tester lookup:", error);
+    }
     const hwidAllowed = await checkHwidBinding(
       env,
       request,
       ctx,
       dbSub,
       subTelegramId,
-      subTelegramId > 0 ? isTesterAccount(env, subTelegramId) : false
+      isTesterSub
     );
     if (!hwidAllowed) {
       return emptySubscriptionResponse();

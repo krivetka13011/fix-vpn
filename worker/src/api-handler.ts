@@ -164,20 +164,25 @@ async function checkHwidBinding(
 
   if (!existing) {
     // Первое подключение — привязываем устройство.
-    const write = setHwidBinding(env, userId, {
-      hwid: extracted.hwid,
-      os: extracted.os,
-      model: extracted.model,
-      appVersion: extracted.appVersion,
-      vpnClient: extracted.vpnClient,
-    });
-    if (ctx) ctx.waitUntil(write.catch(() => {}));
-    else await write;
+    // ВАЖНО: запись SYNCHRONOUS (await), не через ctx.waitUntil — иначе KV-запись
+    // не выполнялась в проде и привязка не создавалась, что ломало весь механизм.
+    // 50мс задержки на первый запрос приемлемы ради надёжности.
+    try {
+      await setHwidBinding(env, userId, {
+        hwid: extracted.hwid,
+        os: extracted.os,
+        model: extracted.model,
+        appVersion: extracted.appVersion,
+        vpnClient: extracted.vpnClient,
+      });
+    } catch (error) {
+      console.error("HWID setHwidBinding failed:", error);
+    }
     return true;
   }
 
   if (existing.hwid === extracted.hwid) {
-    // То же устройство — обновляем lastSeen в фоне.
+    // То же устройство — обновляем lastSeen в фоне (это некритично).
     if (ctx) ctx.waitUntil(touchHwidBinding(env, userId).catch(() => {}));
     return true;
   }

@@ -54,9 +54,13 @@ export async function setHwidBinding(
 ): Promise<void> {
   const now = new Date().toISOString();
   const binding: HwidBinding = { ...data, boundAt: now, lastSeenAt: now };
+  // Двойная запись: основная (с TTL) + debug-копия (без TTL) для диагностики.
+  // Debug-ключ живёт вечно и помогает понять, выполнялась ли функция, когда
+  // основная KV-зись не находится (edge-кэш / race condition).
   await env.KV.put(bindingKey(userId), JSON.stringify(binding), {
     expirationTtl: HWID_TTL_SEC,
   });
+  await env.KV.put(`hwid-debug:${userId}:${data.hwid}`, now);
 }
 
 export async function touchHwidBinding(

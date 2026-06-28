@@ -149,10 +149,18 @@ async function checkHwidBinding(
   telegramId: number,
   isTester: boolean
 ): Promise<boolean> {
+  console.log("HWID checkHwidBinding ENTER", {
+    enforce: isHwidEnforce(env),
+    isTester,
+    telegramId,
+    hasSub: !!subscription,
+    userId: subscription?.user_id,
+  });
   if (!isHwidEnforce(env)) return true;
   if (isTester) return true;
 
   const extracted = extractHwidFromRequest(request);
+  console.log("HWID extracted", { extracted: !!extracted, hwid: extracted?.hwid });
   if (!extracted) {
     // Hiddify/v2rayNG или неизвестный клиент без X-HWID — остаётся IP-лимит.
     return true;
@@ -167,6 +175,12 @@ async function checkHwidBinding(
     // ВАЖНО: запись SYNCHRONOUS (await), не через ctx.waitUntil — иначе KV-запись
     // не выполнялась в проде и привязка не создавалась, что ломало весь механизм.
     // 50мс задержки на первый запрос приемлемы ради надёжности.
+    console.log("HWID first-connect: writing binding", {
+      userId,
+      hwid: extracted.hwid,
+      vpnClient: extracted.vpnClient,
+      key: `hwid:${userId}`,
+    });
     try {
       await setHwidBinding(env, userId, {
         hwid: extracted.hwid,
@@ -175,6 +189,7 @@ async function checkHwidBinding(
         appVersion: extracted.appVersion,
         vpnClient: extracted.vpnClient,
       });
+      console.log("HWID first-connect: write DONE");
     } catch (error) {
       console.error("HWID setHwidBinding failed:", error);
     }

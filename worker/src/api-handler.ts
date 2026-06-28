@@ -149,40 +149,26 @@ async function checkHwidBinding(
   telegramId: number,
   isTester: boolean
 ): Promise<boolean> {
-  console.log("HWID checkHwidBinding ENTER", {
-    enforce: isHwidEnforce(env),
-    isTester,
-    telegramId,
-    hasSub: !!subscription,
-    userId: subscription?.user_id,
-  });
-  if (!isHwidEnforce(env)) return true;
-  // ВРЕМЕННО: if (isTester) return true; — отключён для тестирования блока на тестер-аккаунте
-  // if (isTester) return true;
+  // Весь HWID-чек обёрнут в try/catch: при любой ошибке пропускаем (true),
+  // чтобы HWID-логика НИКОГДА не роняла подписку (error 1101).
+  try {
+    if (!isHwidEnforce(env)) return true;
+    // ВРЕМЕННО: if (isTester) return true; — отключён для тестирования блока на тестер-аккаунте
+    // if (isTester) return true;
 
-  const extracted = extractHwidFromRequest(request);
-  console.log("HWID extracted", { extracted: !!extracted, hwid: extracted?.hwid });
-  if (!extracted) {
-    // Hiddify/v2rayNG или неизвестный клиент без X-HWID — остаётся IP-лимит.
-    return true;
-  }
-  if (!subscription) return true;
+    const extracted = extractHwidFromRequest(request);
+    if (!extracted) {
+      // Hiddify/v2rayNG или неизвестный клиент без X-HWID — остаётся IP-лимит.
+      return true;
+    }
+    if (!subscription) return true;
 
-  const userId = subscription.user_id;
-  const existing = await getHwidBinding(env, userId);
+    const userId = subscription.user_id;
+    if (!userId) return true;
+    const existing = await getHwidBinding(env, userId);
 
-  if (!existing) {
-    // Первое подключение — привязываем устройство.
-    // ВАЖНО: запись SYNCHRONOUS (await), не через ctx.waitUntil — иначе KV-запись
-    // не выполнялась в проде и привязка не создавалась, что ломало весь механизм.
-    // 50мс задержки на первый запрос приемлемы ради надёжности.
-    console.log("HWID first-connect: writing binding", {
-      userId,
-      hwid: extracted.hwid,
-      vpnClient: extracted.vpnClient,
-      key: `hwid:${userId}`,
-    });
-    try {
+    if (!existing) {
+      // Первое подключение — привязываем устройство (синхронная запись).
       await setHwidBinding(env, userId, {
         hwid: extracted.hwid,
         os: extracted.os,
@@ -190,25 +176,26 @@ async function checkHwidBinding(
         appVersion: extracted.appVersion,
         vpnClient: extracted.vpnClient,
       });
-      console.log("HWID first-connect: write DONE");
-    } catch (error) {
-      console.error("HWID setHwidBinding failed:", error);
+      return true;
     }
+
+    if (existing.hwid === extracted.hwid) {
+      // То же устройство — обновляем lastSeen в фоне (это некритично).
+      if (ctx) ctx.waitUntil(touchHwidBinding(env, userId).catch(() => {}));
+      return true;
+    }
+
+    // Другой HWID — блок. Старое устройство остаётся привязанным.
+    console.warn(
+      `HWID block: user=${userId} tg=${telegramId} bound=${existing.hwid} (${existing.vpnClient}) ` +
+        `request=${extracted.hwid} (${extracted.vpnClient})`
+    );
+    return false;
+  } catch (error) {
+    // Логируем ошибку и пропускаем — HWID не должен ломать подписку.
+    console.error("HWID checkHwidBinding ERROR:", error instanceof Error ? error.message : String(error));
     return true;
   }
-
-  if (existing.hwid === extracted.hwid) {
-    // То же устройство — обновляем lastSeen в фоне (это некритично).
-    if (ctx) ctx.waitUntil(touchHwidBinding(env, userId).catch(() => {}));
-    return true;
-  }
-
-  // Другой HWID — блок. Старое устройство остаётся привязанным.
-  console.warn(
-    `HWID block: user=${userId} tg=${telegramId} bound=${existing.hwid} (${existing.vpnClient}) ` +
-      `request=${extracted.hwid} (${extracted.vpnClient})`
-  );
-  return false;
 }
 
 function miniappTrialAvailable(

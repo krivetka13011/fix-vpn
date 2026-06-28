@@ -141,6 +141,11 @@ jobs:
           npx wrangler@4.69.0 secret delete CARDLINK_API_TOKEN 2>/dev/null || true
           npx wrangler@4.69.0 secret delete CARDLINK_SHOP_ID 2>/dev/null || true
 
+      - name: Re-deploy Worker (ensure latest code is active after secret updates)
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: npx wrangler@4.69.0 deploy 2>&1 | tail -5
+
       - name: Verify deployment
         run: |
           URL="${{ steps.url.outputs.url }}"

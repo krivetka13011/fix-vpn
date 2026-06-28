@@ -111,8 +111,8 @@ jobs:
           put_secret CLIENT_BOT_TOKEN "$CLIENT_TOKEN"
           put_secret PARTNER_BOT_TOKEN "$PARTNER_BOT_TOKEN"
           put_secret WEBAPP_URL "$WEBAPP_URL"
-          put_secret XUI_BASE_URL "${{ secrets.XUI_BASE_URL || 'https://fixvp.xyz:54596/LXZo7cOhasXWon5uQu' }}"
-          put_secret XUI_WORKER_BASE_URL "${{ secrets.XUI_WORKER_BASE_URL || 'https://31.76.2.248:54596/LXZo7cOhasXWon5uQu' }}"
+          put_secret XUI_BASE_URL "${{ secrets.XUI_BASE_URL }}"
+          put_secret XUI_WORKER_BASE_URL "${{ secrets.XUI_WORKER_BASE_URL }}"
           put_secret XUI_API_TOKEN "$XUI_API_TOKEN"
           put_secret XUI_INSECURE_SSL "1"
           put_secret XUI_INBOUND_IDS "19,20,21,24"
@@ -137,6 +137,7 @@ jobs:
           put_secret TEST_SUBSCRIPTION_MINUTES "10"
           put_secret TESTER_TELEGRAM_IDS "1159166497"
           put_secret XUI_CLIENT_LIMIT_IP "1"
+          put_secret HWID_ENFORCE "true"
           npx wrangler@4.69.0 secret delete CARDLINK_API_TOKEN 2>/dev/null || true
           npx wrangler@4.69.0 secret delete CARDLINK_SHOP_ID 2>/dev/null || true
 

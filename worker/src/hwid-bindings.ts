@@ -1,3 +1,4 @@
+import { d1First, d1Run } from "./d1-db";
 import type { StorageEnv } from "./storage-env";
 
 /**
@@ -5,12 +6,12 @@ import type { StorageEnv } from "./storage-env";
  *
  * Hiddify и v2rayNG не отправляют X-HWID — для них остаётся IP-лимит панели.
  *
- * Хранение: Workers KV. Ключ `hwid:{userId}` → JSON с HWID первого устройства.
- * KV выбран намеренно: ноль миграций D1, мгновенный деплой.
+ * Хранение: D1 (таблица hwid_bindings). Раньше использовался KV, но его
+ * eventual consistency (edge-кэш ~60с+) ломала механику: после сброса привязки
+ * edge-ноды продолжали отдавать старое значение, и новое устройство не могло
+ * подключиться несколько минут. D1 даёт строгую консистентность — всегда
+ * актуальные данные.
  */
-
-const KEY_PREFIX = "hwid:";
-const HWID_TTL_SEC = 60 * 60 * 24 * 365; // 1 год — привязка живёт, пока юзер не сбросит
 
 export interface HwidBinding {
   /** Сам HWID или синтетический ID (из User-Agent), который присылает устройство. */
@@ -27,23 +28,39 @@ export interface HwidBinding {
   lastSeenAt: string;
 }
 
-function bindingKey(userId: string): string {
-  return `${KEY_PREFIX}${userId}`;
+interface HwidBindingRow {
+  hwid: unknown;
+  os: unknown;
+  model: unknown;
+  app_version: unknown;
+  vpn_client: unknown;
+  bound_at: unknown;
+  last_seen_at: unknown;
+  [key: string]: unknown;
+}
+
+function mapRow(row: HwidBindingRow): HwidBinding {
+  return {
+    hwid: String(row.hwid),
+    os: row.os != null ? String(row.os) : "",
+    model: row.model != null ? String(row.model) : "",
+    appVersion: row.app_version != null ? String(row.app_version) : "",
+    vpnClient: row.vpn_client != null ? String(row.vpn_client) : "",
+    boundAt: String(row.bound_at),
+    lastSeenAt: String(row.last_seen_at),
+  };
 }
 
 export async function getHwidBinding(
   env: StorageEnv,
   userId: string
 ): Promise<HwidBinding | null> {
-  // НЕ используем cacheTtl: 0 — Cloudflare требует cacheTtl >= 60, иначе бросает
-  // исключение и роняет весь HWID-чек. KV и так имеет короткий edge-кэш по умолчанию.
-  const raw = await env.KV.get(bindingKey(userId));
-  if (!raw) return null;
-  try {
-    return JSON.parse(raw) as HwidBinding;
-  } catch {
-    return null;
-  }
+  const row = await d1First<HwidBindingRow>(
+    env.DB,
+    "SELECT hwid, os, model, app_version, vpn_client, bound_at, last_seen_at FROM hwid_bindings WHERE user_id = ? LIMIT 1",
+    userId
+  );
+  return row ? mapRow(row) : null;
 }
 
 export async function setHwidBinding(
@@ -51,30 +68,45 @@ export async function setHwidBinding(
   userId: string,
   data: Omit<HwidBinding, "boundAt" | "lastSeenAt">
 ): Promise<void> {
-  const now = new Date().toISOString();
-  const binding: HwidBinding = { ...data, boundAt: now, lastSeenAt: now };
-  await env.KV.put(bindingKey(userId), JSON.stringify(binding), {
-    expirationTtl: HWID_TTL_SEC,
-  });
+  // INSERT OR REPLACE — если привязка уже есть (маловероятно, т.к. вызывающий
+  // проверил getHwidBinding === null), обновляем; иначе создаём.
+  await d1Run(
+    env.DB,
+    `INSERT INTO hwid_bindings (user_id, hwid, os, model, app_version, vpn_client, bound_at, last_seen_at)
+     VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+     ON CONFLICT(user_id) DO UPDATE SET
+       hwid = excluded.hwid,
+       os = excluded.os,
+       model = excluded.model,
+       app_version = excluded.app_version,
+       vpn_client = excluded.vpn_client,
+       bound_at = datetime('now'),
+       last_seen_at = datetime('now')`,
+    userId,
+    data.hwid,
+    data.os,
+    data.model,
+    data.appVersion,
+    data.vpnClient
+  );
 }
 
 export async function touchHwidBinding(
   env: StorageEnv,
   userId: string
 ): Promise<void> {
-  const existing = await getHwidBinding(env, userId);
-  if (!existing) return;
-  existing.lastSeenAt = new Date().toISOString();
-  await env.KV.put(bindingKey(userId), JSON.stringify(existing), {
-    expirationTtl: HWID_TTL_SEC,
-  });
+  await d1Run(
+    env.DB,
+    "UPDATE hwid_bindings SET last_seen_at = datetime('now') WHERE user_id = ?",
+    userId
+  );
 }
 
 export async function clearHwidBinding(
   env: StorageEnv,
   userId: string
 ): Promise<void> {
-  await env.KV.delete(bindingKey(userId));
+  await d1Run(env.DB, "DELETE FROM hwid_bindings WHERE user_id = ?", userId);
 }
 
 /**

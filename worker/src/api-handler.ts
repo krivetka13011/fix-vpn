@@ -156,6 +156,24 @@ async function checkHwidBinding(
     hasSub: !!subscription,
     userId: subscription?.user_id,
   });
+  // ДИАГНОСТИКА: безусловный маркер вызова функции (без TTL, живёт вечно).
+  // Если этого ключа нет в KV после запроса — функция ВООБЩЕ не вызывается в проде.
+  try {
+    await env.KV.put(
+      "hwid-trace:called",
+      JSON.stringify({
+        ts: Date.now(),
+        enforce: isHwidEnforce(env),
+        isTester,
+        telegramId,
+        userId: subscription?.user_id,
+        ua: request.headers.get("User-Agent") || "",
+        xhwid: request.headers.get("X-HWID") || "",
+      })
+    );
+  } catch (e) {
+    console.error("hwid-trace write failed", e);
+  }
   if (!isHwidEnforce(env)) return true;
   if (isTester) return true;
 

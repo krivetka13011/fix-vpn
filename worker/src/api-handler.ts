@@ -157,7 +157,8 @@ async function checkHwidBinding(
     userId: subscription?.user_id,
   });
   if (!isHwidEnforce(env)) return true;
-  if (isTester) return true;
+  // ВРЕМЕННО: if (isTester) return true; — отключён для тестирования блока на тестер-аккаунте
+  // if (isTester) return true;
 
   const extracted = extractHwidFromRequest(request);
   console.log("HWID extracted", { extracted: !!extracted, hwid: extracted?.hwid });

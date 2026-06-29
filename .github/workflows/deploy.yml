@@ -135,7 +135,7 @@ jobs:
           put_secret TESTER_TRIAL_DURATION_MINUTES "60"
           put_secret TEST_CHECKOUT_PRICE_RUB "1"
           put_secret TEST_SUBSCRIPTION_MINUTES "10"
-          put_secret TESTER_TELEGRAM_IDS "1159166497"
+          put_secret TESTER_TELEGRAM_IDS "0"
           put_secret XUI_CLIENT_LIMIT_IP "1"
           put_secret HWID_ENFORCE "true"
           npx wrangler@4.69.0 secret delete CARDLINK_API_TOKEN 2>/dev/null || true

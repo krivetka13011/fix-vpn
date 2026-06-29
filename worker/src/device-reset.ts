@@ -14,7 +14,9 @@ import {
 import { clearStuckRotationFlags } from "./subscription-rotate";
 import { XuiApi } from "./xui";
 
-export const DEVICE_RESET_COOLDOWN_MS = 24 * 60 * 60 * 1000;
+// Кулдаун сброса отключён для всех пользователей (0 = без ограничений).
+// Временно: тестовый режим, сброс доступен без ограничений по времени.
+export const DEVICE_RESET_COOLDOWN_MS = 0;
 
 export function deviceResetCooldownRemaining(
   lastReset: string | null | undefined
@@ -59,7 +61,7 @@ export class DeviceResetPanelError extends Error {
 }
 
 export const DEVICE_RESET_SUCCESS_NOTICE =
-  "Подключение сброшено. Отключите VPN на телефоне, обновите подписку в Happ на ПК (↻), затем подключите через «Подключить VPN». Следующий сброс — через 24 часа.";
+  "Подключение сброшено. Отключите VPN на старом устройстве, обновите подписку (↻) на новом, затем подключитесь через «Подключить VPN».";
 
 export function deviceResetNotice(): string {
   return DEVICE_RESET_SUCCESS_NOTICE;

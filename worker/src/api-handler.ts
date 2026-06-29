@@ -153,9 +153,7 @@ async function checkHwidBinding(
   // чтобы HWID-логика НИКОГДА не роняла подписку (error 1101).
   try {
   if (!isHwidEnforce(env)) return true;
-  // ТЕСТ-ВРЕМЕННО: тестер-обход отключён для проверки блока. ВЕРНУТЬ ПОСЛЕ ТЕСТА.
-  // if (isTester) return true;
-  void isTester;
+  if (isTester) return true;
 
     const extracted = extractHwidFromRequest(request);
     if (!extracted) {

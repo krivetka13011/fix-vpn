@@ -131,8 +131,11 @@ jobs:
           put_secret PARTNER_DEFAULT_COMMISSION_PERCENT "${{ secrets.PARTNER_DEFAULT_COMMISSION_PERCENT || '30' }}"
           put_secret HAPP_PROVIDER_ID "${{ secrets.HAPP_PROVIDER_ID }}"
           put_secret TEST_MODE "1"
-          put_secret TRIAL_DURATION_MINUTES "5"
-          put_secret TESTER_TRIAL_DURATION_MINUTES "60"
+          # Тестовый режим: триал 24 часа (1440 мин) для всех пользователей,
+          # цена тарифа 1 ₽, платная подписка 10 мин — чтобы проверять потоки
+          # оплаты без реальных платежей и длинных ожиданий.
+          put_secret TRIAL_DURATION_MINUTES "1440"
+          put_secret TESTER_TRIAL_DURATION_MINUTES "1440"
           put_secret TEST_CHECKOUT_PRICE_RUB "1"
           put_secret TEST_SUBSCRIPTION_MINUTES "10"
           put_secret TESTER_TELEGRAM_IDS "0"

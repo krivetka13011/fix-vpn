@@ -26,7 +26,9 @@ export function PlansTab({ catalog, user, onPurchased, onUserUpdate, onTrialActi
   const [planType, setPlanType] = useState<PlanType | null>(null);
   const [months, setMonths] = useState<BillingMonths | null>(null);
   const [extraDevices, setExtraDevices] = useState(0);
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("sbp");
+  // Способ оплаты зафиксирован на СБП (USDT-чипы убраны из UI по запросу).
+  // Поле нужно для payload запроса /api/purchase.
+  const paymentMethod: PaymentMethod = "sbp";
   const [loading, setLoading] = useState(false);
   const [trialLoading, setTrialLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -291,42 +293,20 @@ export function PlansTab({ catalog, user, onPurchased, onUserUpdate, onTrialActi
                     </>
                   )}
 
-                  <div className="tariff-divider" />
-                  <p className="section-label">Способ оплаты</p>
-                  <div className="chip-row">
-                    <button
-                      type="button"
-                      className={`chip ${paymentMethod === "sbp" ? "active" : ""}`}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setPaymentMethod("sbp");
-                      }}
-                    >
-                      📱 СБП
-                    </button>
-                    <button
-                      type="button"
-                      className={`chip ${paymentMethod === "crypto_usdt" ? "active" : ""}`}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setPaymentMethod("crypto_usdt");
-                      }}
-                    >
-                      💎 USDT
-                    </button>
-                  </div>
+                  {total != null && (
+                    <>
+                      <div className="tariff-divider" />
+                      <div className="pay-total-row">
+                        <span className="pay-total-label">Итого</span>
+                        <span className="pay-total-value">{total} ₽</span>
+                      </div>
+                    </>
+                  )}
                 </div>
               )}
             </article>
           );
         })}
-
-        {total != null && (
-          <div className="glass-panel total-bar">
-            <span className="total-label">К оплате</span>
-            <span className="total-price">{total} ₽</span>
-          </div>
-        )}
 
         <button
           type="button"

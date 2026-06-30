@@ -23,6 +23,7 @@ import {
   upsertTelegramUser,
   registerVpnDeviceBinding,
 } from "../repository";
+import { newId } from "../d1-db";
 import { canActivateTrial, isSubscriptionTimeActive } from "../trial-button";
 import { XuiApi } from "../xui";
 import type { TelegramUser } from "../telegram";
@@ -911,16 +912,6 @@ async function handleClientBotUpdateInner(
       const extraDevices = plan === "personal" ? 0 : extraDevicesForTotal(totalDevices);
       const price = calcCheckoutPrice(plan, months, extraDevices, promo, env);
       const user = await upsertTelegramUser(env, tg);
-      const txn = await createTransaction(env, {
-        user_id: user.id,
-        amount: price,
-        billing_months: months,
-        plan_type: plan,
-        extra_devices: extraDevices,
-        payment_method: method,
-        status: "pending",
-        is_first_payment: !Boolean(user.first_payment_done),
-      });
 
       const backend = resolvePaymentBackend(env, method);
 
@@ -956,18 +947,32 @@ async function handleClientBotUpdateInner(
       };
 
       if (backend === "platega") {
+        // Pre-generate the txn id, call Platega first, then INSERT in one step
+        // with the Platega id already present. If createPlategaPayment throws,
+        // no row is created — so we never get an unrecoverable orphan `pending`
+        // row whose platega_transaction_id is NULL.
+        const txnId = newId();
         try {
           const payment = await createPlategaPayment(env, {
             amount: price,
-            orderId: txn.id,
+            orderId: txnId,
             description: `FIX VPN · ${plan} · ${periodLabel(months)}`,
             method,
             telegramId: tg.id,
             username: tg.username,
           });
-          await patchTransaction(env, txn.id, {
+          await createTransaction(env, {
+            id: txnId,
+            user_id: user.id,
+            amount: price,
+            billing_months: months,
+            plan_type: plan,
+            extra_devices: extraDevices,
+            payment_method: method,
             platega_transaction_id: payment.transactionId,
             payment_url: payment.redirect,
+            status: "pending",
+            is_first_payment: !Boolean(user.first_payment_done),
           });
           await showPaymentMessage(payment.redirect, "Platega");
         } catch (error) {
@@ -978,6 +983,17 @@ async function handleClientBotUpdateInner(
         }
         return;
       }
+
+      const txn = await createTransaction(env, {
+        user_id: user.id,
+        amount: price,
+        billing_months: months,
+        plan_type: plan,
+        extra_devices: extraDevices,
+        payment_method: method,
+        status: "pending",
+        is_first_payment: !Boolean(user.first_payment_done),
+      });
 
       await setSession(env, tg.id, "client", "await_receipt", {
         txnId: txn.id,

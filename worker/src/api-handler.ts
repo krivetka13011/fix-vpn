@@ -721,6 +721,22 @@ export async function handleApiRequest(
       return new Response("platega disabled", { status: 503 });
     }
     try {
+      // Diagnostic: capture what Platega sends so we can trace missed bindings
+      // in `wrangler tail`. Headers are masked to avoid leaking secrets.
+      const diagHeaders: Record<string, string> = {};
+      request.headers.forEach((value, key) => {
+        const lk = key.toLowerCase();
+        diagHeaders[lk] =
+          lk === "x-secret" || lk === "authorization"
+            ? `<${value.length} chars>`
+            : value;
+      });
+      const rawBody = await request.clone().text();
+      console.log("platega webhook:", {
+        headers: diagHeaders,
+        body: rawBody.slice(0, 1000),
+      });
+
       if (!verifyPlategaCallback(env, request)) {
         console.error("platega callback: bad auth");
         return new Response("unauthorized", { status: 401 });
@@ -734,7 +750,18 @@ export async function handleApiRequest(
       }
       if (!txn) txn = await getTransactionByPayloadId(env, callback.id);
 
-      if (callback.status === "CONFIRMED" && txn) {
+      if (callback.status === "CONFIRMED") {
+        if (!txn) {
+          // We have no matching row. Return non-200 so Platega retries (it
+          // retries on non-200 per its contract) and we don't silently lose
+          // the binding. Log enough to diagnose the lookup afterward.
+          console.error(
+            "platega webhook: CONFIRMED but no txn matched",
+            "id=", callback.id,
+            "payload=", callback.payload
+          );
+          return new Response("txn not found", { status: 500 });
+        }
         const approve = approvePaidTransaction(env, txn.id).then((result) => {
           if (!result.ok) {
             console.error("platega approve:", result.message, callback.id);

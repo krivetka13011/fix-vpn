@@ -1,8 +1,9 @@
 import { type BillingMonths, type PlanType, TARIFFS } from "./catalog";
 import { calcCheckoutPrice, periodLabel } from "./bots/pricing";
+import { newId } from "./d1-db";
 import type { BotEnv } from "./env";
 import { isPlategaConfigured, createPlategaPayment } from "./platega";
-import { createTransaction, getSubscription, patchTransaction, upsertTelegramUser } from "./repository";
+import { createTransaction, getSubscription, upsertTelegramUser } from "./repository";
 import type { TelegramUser } from "./telegram";
 
 export async function startMiniappPlategaCheckout(
@@ -37,29 +38,35 @@ export async function startMiniappPlategaCheckout(
     env
   );
   const user = await upsertTelegramUser(env, tg);
-  const txn = await createTransaction(env, {
-    user_id: user.id,
-    amount: price,
-    billing_months: input.months,
-    plan_type: input.planType,
-    extra_devices: extra,
-    payment_method: input.method,
-    status: "pending",
-    is_first_payment: !Boolean(user.first_payment_done),
-  });
+
+  // Pre-generate the transaction id so we can (1) call Platega first, then
+  // (2) INSERT the row in a single step with the Platega id already present.
+  // Order matters: if createPlategaPayment throws, no row is created, so we
+  // never end up with an unrecoverable orphan `pending` row whose
+  // platega_transaction_id is NULL (which the webhook/cron could not match).
+  const txnId = newId();
 
   const payment = await createPlategaPayment(env, {
     amount: price,
-    orderId: txn.id,
+    orderId: txnId,
     description: `FIX VPN · ${TARIFFS[input.planType].name} · ${periodLabel(input.months)}`,
     method: input.method,
     telegramId: tg.id,
     username: tg.username,
   });
 
-  await patchTransaction(env, txn.id, {
+  await createTransaction(env, {
+    id: txnId,
+    user_id: user.id,
+    amount: price,
+    billing_months: input.months,
+    plan_type: input.planType,
+    extra_devices: extra,
+    payment_method: input.method,
     platega_transaction_id: payment.transactionId,
     payment_url: payment.redirect,
+    status: "pending",
+    is_first_payment: !Boolean(user.first_payment_done),
   });
 
   return {
